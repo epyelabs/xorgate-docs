@@ -1,0 +1,138 @@
+---
+title: "Media sessions and segments"
+description: "How roughly 60 second fragments become a playable timeline: session identity, ingest, why sessions have no explicit end, and the replay manifest with its undiscoverable caps."
+---
+
+Recorded video is not a file. It is a stream of roughly 60 second fragmented MP4
+**segments** that the device writes locally, uploads when it can, and the
+platform indexes into **sessions** you can replay across.
+
+```
+device  →  ~60 s .mp4 fragment + .json sidecar  →  object storage
+                                                        │
+                                            EventBridge on object created
+                                                        ↓
+                                      media_sessions / media_segments
+                                                        ↓
+                                   sessions, segments, replay manifest
+```
+
+## Segments
+
+One fragment plus one sidecar, uploaded as a pair. Object keys:
+
+```
+media-sessions/v1/{deviceId}/{streamKey}/{sessionId}/{fragment}.mp4
+media-sessions/v1/{deviceId}/{streamKey}/{sessionId}/{fragment}.json
+```
+
+The indexed row carries `seq`, `startTs`, `durationMs`, `sizeBytes`, `keyframe`,
+`finalized`, and a `meta` blob holding the sidecar's provenance passthrough.
+
+<Callout title="`finalized: false` is playable, not corrupt">
+  It means the device cut that fragment mid-write, from a crash or a power loss.
+  Fragmented MP4 degrades gracefully, so the segment plays up to the cut. What
+  it does mean is that `durationMs` is a lie: a stitcher should prefer the
+  **next segment's `startTs`** over this row's duration when computing the
+  timeline.
+</Callout>
+
+### Ingest is driven by the mp4, and it is idempotent
+
+The device uploads **sidecar first, then the mp4**, and only the mp4's object
+event drives ingest. That ordering is what guarantees the sidecar is already
+readable when ingest goes looking for it, without any retry logic.
+
+Idempotency comes from a unique index on the object key. A duplicate event
+inserts nothing and rolls back the session update in the same transaction, so
+EventBridge's at-least-once delivery is harmless.
+
+Failures split deliberately. Permanent ones (an unparseable key, an unknown
+device, an invalid sidecar, an identity mismatch, an implausibly far-future start
+timestamp) are logged and dropped, because no retry could ever succeed. Transient
+ones (storage or database failures) throw, so Lambda's retry and dead-letter queue
+recover them.
+
+## Sessions
+
+A session is one continuous run of recording for one stream key. Its id is
+**minted on the device** as a UUIDv7, so it carries a 48-bit epoch-millisecond
+prefix and sorts by start time. The first segment to arrive creates the session
+row; every subsequent segment rolls `startedAt`, `endedAt` and `lastSegmentAt`
+forward.
+
+A new boot always means a new session. Sessions are never resumed across a
+restart.
+
+<Callout type="warn" title="Sessions have no explicit end signal">
+  A device can die mid-session, so there is no message that says "this session is
+  over". `status` is **advisory**: `open` while segments may still arrive,
+  `closed` once a sweeper has seen no new segment for the close window.
+
+Two consequences. A device that is merely offline in a tunnel has an `open`
+session that will legitimately gain more segments hours later, when the backlog
+uploads. And segments stay queryable regardless of status, so never gate a read
+on `closed`.
+
+</Callout>
+
+Because upload is deferred, **session order is not upload order.** A device that
+recorded through an outage uploads oldest-first when it reconnects, so segments
+for a session that started yesterday can arrive after segments for one that
+started today. Sort by `startTs`, never by `uploadedAt`.
+
+## Reading it back
+
+| Endpoint                            | Returns                                                                                                   |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `GET /devices/{id}/sessions`        | Paginated sessions with per-session rollups. `?group=runs` clusters adjacent sessions into drivable runs. |
+| `GET /media-sessions/{id}/segments` | Every segment of one session, whole. Not paginated, on purpose.                                           |
+| `GET /media-segments/{id}/playback` | A presigned URL for one segment.                                                                          |
+| `GET /devices/{id}/replay-manifest` | A gap-aware timeline with segment URLs batch-presigned.                                                   |
+
+There is **no HLS and no server-side transcoding**. Clients stitch the fragmented
+MP4 themselves through Media Source Extensions. The frontend SDK ships an engine
+that does this; if you are building your own, the two things that will bite are
+setting `timestampOffset` from each fragment's parsed `tfdt` box, and refetching
+the manifest when a presigned URL expires mid-playback.
+
+## The replay manifest
+
+This is the endpoint you actually want for a player. It returns an ordered,
+gap-aware timeline with URLs already presigned in batch, plus an `urlExpiresAt`
+so a client can refresh before playback stalls (the SDKs use a five minute
+margin).
+
+Its caps are hard limits enforced with a `400`:
+
+| Cap                     | Limit    |
+| ----------------------- | -------- |
+| Segments per manifest   | 600      |
+| Sessions, in range mode | 10       |
+| Window, in range mode   | 24 hours |
+
+<Callout
+  type="warn"
+  title="The caps are undiscoverable and there is no partial mode"
+>
+  Nothing in the API tells a client what the limits are, and exceeding one
+  returns an error rather than a truncated result. So a client has to guess a
+  window and narrow on failure. Requesting a run's own window, which the
+  sessions listing gives you, is the way to stay inside them without guessing.
+</Callout>
+
+## What is not recorded
+
+Recording is **off by default** and is configured per device through the
+`recording` namespace. A device that is streaming live is not necessarily
+recording, and the two are independent switches.
+
+Telemetry is also recorded and uploaded as segments, on its own path
+(`telemetry/v1/...`), and when a device is recording telemetry it becomes the
+**authoritative writer of its own history**: live ingest stops writing readings
+for it, because the device's batch upload is more complete. That is what the
+`recording.enabled` flag in the telemetry payload signals.
+
+The full device-side story, including why a dead zone still records and what
+happens when the disk fills, is under
+[on-device recording](/docs/device-sdk/recording).

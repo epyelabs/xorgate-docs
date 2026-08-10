@@ -1,19 +1,138 @@
 ---
 title: "Device SDK"
-description: "The device agent: install, provisioning, the cloud contract, the CLI, and media pipelines."
+description: "What the xorgate device agent is, the two supervision models it runs under, and where everything lives on disk."
 ---
 
-This section documents the software running on xorgate hardware: installing and
-provisioning the agent, the MQTT cloud contract it speaks (telemetry, status,
-retained configuration and its reported counterpart, and the command topic), the
-`xorgate` CLI, the configuration reference, and the GStreamer pipelines that feed
-live video. It also states the current extension limits plainly, since the
-collector set, the topic layout and the command set are all closed today.
+The Device SDK is not a library. It is documentation of software that already
+runs on xorgate hardware: a Node agent (`xorgate-device-agent`) that publishes
+telemetry and applies configuration over MQTT, and a compiled C runtime
+(`xorgate-kvs-webrtc`) that streams live video over WebRTC.
 
-Unlike the other two SDK sections, the Device SDK is documentation of software
-that already exists rather than a design for a new library.
+Everything on these pages was verified against the agent's source and, where the
+answer only exists at runtime, against a provisioned Raspberry Pi. Where the
+agent's own README and its code disagreed, the code won.
 
-<Callout title="Not written yet">
-  Placeholder. Content is adapted from the device agent's own README and the KVS
-  component's configuration.
+<Callout title="No new capabilities">
+  This section describes what exists, including its limits. The collector set,
+  the topic layout and the command set are all closed today.
+  [Extending](/docs/device-sdk/extending) covers what is genuinely pluggable and
+  what is not.
 </Callout>
+
+## The two components
+
+| Component                     | Language               | Role                                                                                                                                            |
+| ----------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device/xorgate-device-agent` | TypeScript, Node >= 20 | The `xorgate` CLI plus a worker daemon. Publishes telemetry, applies retained configuration, executes commands, supervises media and recording. |
+| `device/xorgate-kvs-webrtc`   | C                      | One KVS WebRTC MASTER process per camera. Built from the AWS KVS WebRTC C SDK, vendored unmodified as a submodule.                              |
+
+The two repositories are separate. The agent ships a **prebuilt aarch64 binary**
+of the KVS runtime inside its own tarball at `media/xorgate-kvs-webrtc`; that
+file is a build artifact, not source. The source is
+`device/xorgate-kvs-webrtc` (note its readme is lowercase `readme.md`), which
+also holds `CMakeLists.txt`, `pipeline.example`, `src/` and the SDK submodule
+under `third_party/`.
+
+## Two supervision models
+
+The same build runs two ways, and confusing them is the most common way to break
+a device.
+
+|                    | Dev / local                        | Device (provisioned)                   |
+| ------------------ | ---------------------------------- | -------------------------------------- |
+| Supervisor         | self-managed detached process      | systemd (`xorgate-agent.service`)      |
+| Started by         | `xorgate start`                    | `sudo systemctl start xorgate-agent`   |
+| Runs as            | you                                | the provisioning user (typically `pi`) |
+| Runtime dir        | `~/.xorgate`                       | `/var/lib/xorgate`                     |
+| Pidfile written by | the CLI manager                    | the worker, self-registering on boot   |
+| Logs               | `xorgate logs` (reads `agent.log`) | `journalctl -u xorgate-agent`          |
+
+<Callout type="warn" title="Never run `xorgate start` on a provisioned device">
+  It spawns a second worker that fights the first for the same MQTT clientId.
+  Because the IoT policy scopes `iot:Connect` to one client id, the two
+  connections evict each other in a loop. On a device the CLI is for inspection
+  (`status`, `manage`, `logs`) and for `update`; systemd owns the lifecycle.
+</Callout>
+
+The worker distinguishes the two cases by the `XORGATE_MANAGED_BY` environment
+variable: the CLI manager sets it to `cli` and writes the pidfile itself, so a
+worker that does not see it self-registers instead. That is what lets
+`xorgate status` report on a systemd-run agent.
+
+## On-device layout
+
+Verified on a provisioned Pi rather than transcribed from the installer.
+
+| Path                                        | Owner                | Contents                                                                                                                                                                      |
+| ------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/opt/xorgate`                              | root                 | The build: `dist/`, `node_modules/`, `media/`, `modem/`, `python/`, `system/`, `systemd/`, `package.json`. Root owned but world readable, so the service user can execute it. |
+| `/usr/local/bin/xorgate`                    | root                 | A two line wrapper that execs `node /opt/xorgate/dist/cli.js` with `XORGATE_HOME` defaulted to `/var/lib/xorgate`.                                                            |
+| `/etc/xorgate`                              | service user, `0700` | `agent.env`, `device.cert.pem`, `device.key.pem`, `root-ca.pem`, `kvs.json`, and the `pipelines/` directory.                                                                  |
+| `/var/lib/xorgate`                          | service user, `0700` | All runtime state. A systemd `StateDirectory`, so it survives reboots and is created with the right owner.                                                                    |
+| `/etc/systemd/system/xorgate-agent.service` | root                 | The unit, plus `.d/10-user.conf` (the `User=`/`Group=` drop-in) and `.d/20-workdir.conf`.                                                                                     |
+
+<Callout title="There is no `/etc/xorgate/certs/` directory">
+  The three cert files sit flat in `/etc/xorgate` as `device.cert.pem`,
+  `device.key.pem` and `root-ca.pem`. Older notes describe a `certs/`
+  subdirectory; it does not exist.
+</Callout>
+
+### Runtime files under `XORGATE_HOME`
+
+| File               | Written by                                                      | Purpose                                                                                                                                                                                                                                                      |
+| ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent.pid`        | CLI manager or the worker                                       | JSON pid record (pid, `startedAt`, `deviceId`, `mode`, launch argv). Carries enough to detect a recycled pid via process start time.                                                                                                                         |
+| `state.json`       | worker, every tick (throttled)                                  | Atomic snapshot: connection state, counters, and the whole last telemetry payload under `latest`. This is what `xorgate status` and the `manage` UI read.                                                                                                    |
+| `settings.json`    | `xorgate set`, the `manage` UI, and the retained config applier | The persisted settings the agent actually holds. See the [configuration reference](/docs/device-sdk/configuration-reference).                                                                                                                                |
+| `commands.json`    | worker                                                          | The replay ledger of executed command `requestId`s. On disk precisely because the command it guards reboots the process.                                                                                                                                     |
+| `config-sync.json` | worker                                                          | Reported-config bookkeeping: `lastAppliedRev`, the settings hash, and the namespace baseline the cloud is believed to know. Deliberately its own file, because `loadSettings()` is an allowlist rewriter that would destroy unknown keys in `settings.json`. |
+| `agent.log`        | dev daemon only                                                 | Append-only worker stdout/stderr. Under systemd the worker's output goes to the journal instead, so `xorgate logs` has nothing to read.                                                                                                                      |
+| `recordings/`      | recording manager                                               | The segment tree plus `counters.json`. See [On-device recording](/docs/device-sdk/recording).                                                                                                                                                                |
+| `shm/`             | video capture                                                   | Shared-memory sockets for the camera bridge.                                                                                                                                                                                                                 |
+
+A provisioned device also accumulates `gnss-sky.json` (the GNSS sky-view
+snapshot), `apn-apply.json` (written by the modem daemon, which runs as root),
+and the KVS SDK's own `kvsFileLogFilter.*` files.
+
+## Run modes
+
+`MODE` selects the telemetry source, and it is a persisted setting rather than
+purely an environment variable.
+
+- **`sim`** publishes synthetic telemetry. The project is simulator first: the
+  whole cloud pipeline can be exercised without hardware.
+- **`real`** runs the hardware collectors and the KVS media runtime.
+
+Precedence, highest first: an explicit `--mode` flag, then `settings.json`, then
+the `MODE` environment variable, then `sim`. `settings.json` deliberately beats
+the environment so the `manage` UI and `xorgate set mode` take effect on a
+provisioned device where `agent.env` sets `MODE`.
+
+Separately, `--offline` (or `OFFLINE=1`) swaps in a network-free MQTT stub and
+loads no credentials at all, so the daemon and the terminal UI run end to end on
+a bare checkout.
+
+## Where to go next
+
+<Cards>
+  <Card
+    title="Install and provisioning"
+    href="/docs/device-sdk/installation"
+    description="The zero-touch claim flow, the stable serial, and the dev path."
+  />
+  <Card
+    title="Cloud contract"
+    href="/docs/device-sdk/cloud-contract"
+    description="The six MQTT topics, their payloads, and the identity chain that scopes them."
+  />
+  <Card
+    title="CLI reference"
+    href="/docs/device-sdk/cli"
+    description="All eleven commands, with real output."
+  />
+  <Card
+    title="Extending the agent"
+    href="/docs/device-sdk/extending"
+    description="What is pluggable (pipelines) and what needs a source change."
+  />
+</Cards>

@@ -1,0 +1,159 @@
+---
+title: "Metric names"
+description: "The group.field naming contract, why every value is a number, units, and the three different views the platform offers over the same readings."
+---
+
+Every measurement in xorgate is identified by a **`group.field`** string. There is
+one vocabulary, and it is the same string whether the reading arrived over MQTT,
+came back from the REST API, or was replayed from a recording.
+
+```
+gps.speed
+imu.euler_yaw
+system.cpu_temp
+lte.rssi
+```
+
+In TypeScript this is
+
+```ts
+type MetricName = `${string}.${string}`
+```
+
+which is deliberately a template literal rather than a closed union: the platform
+must accept a metric from a newer device build that an older consumer has never
+heard of.
+
+## Where the name comes from
+
+A device publishes a nested structure, and the ingest path flattens it:
+
+```
+metrics.gps.speed  →  metric "gps.speed"
+```
+
+So the group is the collector that produced the reading and the field is what it
+measured.
+[The metric catalog](/docs/device-sdk/cloud-contract/telemetry#the-metric-catalog)
+lists all of them, verified against the collectors.
+
+Two metric families exist only after flattening, because they come from parts of
+the payload that are not `metrics`:
+
+- `media.kvs` and `media.recording`
+- `recording.enabled`, `recording.uploading`, `recording.backlog_bytes`,
+  `recording.backlog_segments`, `recording.dropped_segments`
+
+That is why a device publishing four metric groups can produce more than four
+groups' worth of metric names.
+
+## Every value is a number
+
+`value` is `number | null`. There are no string, boolean or object readings, and
+this is a hard constraint rather than a convention: readings are stored in a
+single numeric column.
+
+Anything categorical is therefore encoded. Booleans become `1` and `0` with the
+unit `"bool"`. Enumerations become small integers, and the two you will actually
+meet are:
+
+| Metric             | Encoding                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| `gps.sky_state`    | `0` clear, `1` obstructed, `2` no RF                                                         |
+| `lte.gnss_health`  | `0` ok, `1` acquiring, `2` degraded, `3` unhealthy                                           |
+| `system.throttled` | a bitmask: `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit |
+
+<Callout title="Absence is meaningful">
+  A metric that is missing is not zero. A device with no GPS fix omits `gps.lat`
+  entirely rather than sending `0`, and a device with no IMU omits the whole
+  `imu` group. Rendering a missing metric as zero puts assets in the Gulf of
+  Guinea, which is the classic version of this bug.
+</Callout>
+
+## Units
+
+`unit` is `string | null` and travels with the reading rather than being looked
+up from the metric name. It is a display string, not a parseable quantity:
+`"km/h"`, `"°C"`, `"dBm"`, `"m/s^2"`, `"%"`, `"asu"`, `"bool"`.
+
+Some metrics genuinely have no unit (`gps.hdop`, `gps.satellites`,
+`system.throttled`) and correctly report `null`. Do not synthesize one.
+
+The authoritative unit for a device comes from the latest-value table rather than
+from the history rows, which is why the history endpoints look units up
+separately rather than trusting whatever a paged row happened to carry.
+
+## Three views over the same readings
+
+The platform offers the same data three ways, and picking the wrong one is the
+most common performance mistake.
+
+### Latest
+
+`GET /devices/{id}/telemetry/latest` returns one row per metric, at most a few
+dozen for a device. It is backed by a dedicated table keyed on
+`(device, metric)`, so it is a point lookup rather than a scan over history.
+
+The response is an **array**:
+
+```json
+{
+  "latest": [
+    {
+      "metric": "gps.speed",
+      "value": 42.1,
+      "unit": "km/h",
+      "ts": "2026-08-10T18:42:01.000Z"
+    }
+  ]
+}
+```
+
+Both SDKs normalize that into `LatestByMetric`, a
+`Record<MetricName, LatestReading>`, because keying by metric is what every
+consumer does immediately anyway. If you are calling the API directly, that
+conversion is yours to do.
+
+<Callout type="warn" title="Latest carries no staleness signal">
+  It returns the last reading ever ingested, forever. A device that died a month
+  ago still has a `latest`, and nothing in the response says so. Every consumer
+  has to compare `ts` against now and decide its own staleness threshold, and
+  any consumer that forgets ships a dashboard that confidently lies about where
+  an asset is.
+</Callout>
+
+### History
+
+`GET /devices/{id}/telemetry` and `/telemetry/readings` serve time-ranged
+readings, paginated. `/telemetry/readings` is the raw-rows shape and is the only
+endpoint that reports coverage metadata (`totalIsCapped`, `coveredFrom`,
+`coveredTo`) alongside the page, because its table is large enough that counting
+exactly is not free.
+
+`/telemetry/recent` is the short-window variant with a higher limit ceiling.
+
+### Live
+
+The MQTT telemetry topic, subscribed to directly. No history, no API call, and
+about a second of latency. See
+[live versus recorded](/docs/platform-concepts/live-vs-recorded).
+
+## Timestamps
+
+`ts` is an **ISO 8601 string everywhere in the REST API**. On the MQTT plane it
+is **epoch milliseconds in the device's own clock domain**, which may be
+unsynced.
+
+That is not an inconsistency to be tidied away. Devices in this fleet have no
+battery-backed real-time clock and correct their clocks minutes into a boot, so
+the device-side value is genuinely less trustworthy than an ingest-side one. The
+rule that follows applies to every consumer: **compute freshness from when you
+received the message, never from `ts`**. The frontend SDK exposes `receivedAt`
+from the browser clock for exactly this purpose.
+
+## No batch read
+
+There is no endpoint that returns the latest readings for many devices at once. A
+fleet dashboard is one request per device, so a workspace view is N+1 requests
+and a thousand-device fleet is not servable this way. This is the single biggest
+scaling gap in the telemetry surface today.

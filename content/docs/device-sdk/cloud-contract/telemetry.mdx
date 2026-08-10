@@ -1,0 +1,293 @@
+---
+title: "Telemetry payload v1"
+description: "The payload published to the telemetry topic: envelope, the full group.field metric catalog, the media block, and the recording block including the open live-block reason set."
+---
+
+`xorgate/devices/{deviceId}/telemetry`, device to cloud, QoS 0, not retained,
+1 Hz by default (`RATE_HZ`).
+
+This page is the canonical description of the payload. It was derived from the
+agent's publisher and checked against a live device.
+
+## Envelope
+
+```json
+{
+  "v": 1,
+  "deviceId": "a73f7a36-2a9c-45c4-a66c-54d3b018a7f7",
+  "ts": 1786401802272,
+  "seq": 133,
+  "metrics": { "imu": {}, "gps": {}, "lte": {}, "system": {} },
+  "media": { "kvs": {}, "recording": {}, "streams": [] },
+  "recording": {}
+}
+```
+
+<TypeTable
+  type={{
+    v: { type: "1", description: "Payload version. Reject anything else." },
+    deviceId: {
+      type: "string",
+      description:
+        "The canonical device UUID. Equals the topic segment and the MQTT clientId.",
+    },
+    ts: {
+      type: "number",
+      description:
+        "Epoch ms in the DEVICE's clock domain, which may be unsynced. Do not use for freshness.",
+    },
+    seq: {
+      type: "number",
+      description:
+        "Monotonic within one worker run; resets on restart. The reliable ordering key.",
+    },
+    metrics: {
+      type: "Partial<Record<group, Record<field, MetricLeaf>>>",
+      description:
+        "Only groups whose collector produced data are present. A collector with no hardware emits nothing and its group is omitted entirely.",
+    },
+    media: {
+      type: "TelemetryMedia",
+      description: "KVS and recording flags plus per-stream supervisor state.",
+    },
+    recording: {
+      type: "RecordingStatus | undefined",
+      description:
+        "On-device recording. Optional in the schema for older agents; the current worker sends it every tick.",
+    },
+  }}
+/>
+
+Every metric leaf is `{ value: number, unit?: string }`. **Values are always
+numbers.** Anything categorical is encoded numerically, because the ingest path
+flattens leaves into a numeric readings table. `gps.sky_state` and
+`lte.gnss_health` are the two places you will notice.
+
+## The metric catalog
+
+Metric names follow the platform's `group.field` contract, so
+`metrics.gps.speed` becomes the metric name `gps.speed`. This is the same
+`MetricName` type the [backend](/docs/backend-sdk/types) and
+[frontend](/docs/frontend-sdk/types) SDKs use, and the same key you get back from
+`GET /devices/{id}/telemetry/latest`. There is one vocabulary, not two.
+
+The catalog below is what the collectors emit today. Fields marked conditional
+are absent whenever their precondition does not hold, and absence is normal: a
+device with no fix publishes a `gps` group with no `lat`.
+
+### `imu` (BNO085 over I2C)
+
+Always all ten fields together, or the whole group is absent.
+
+| Metric                                              | Unit    | Notes                                                                           |
+| --------------------------------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `imu.quat_r` `imu.quat_i` `imu.quat_j` `imu.quat_k` | none    | Raw rotation quaternion.                                                        |
+| `imu.euler_roll` `imu.euler_pitch` `imu.euler_yaw`  | `°`     | Tait-Bryan angles derived from the quaternion, after the `imuMount` correction. |
+| `imu.accel_x` `imu.accel_y` `imu.accel_z`           | `m/s^2` | Gravity-removed linear acceleration.                                            |
+
+### `gps` (NMEA from the SIM7600 GNSS port)
+
+| Metric                   | Unit   | Conditional | Notes                                                                                    |
+| ------------------------ | ------ | ----------- | ---------------------------------------------------------------------------------------- |
+| `gps.fix_quality`        | none   | no          | GGA fix quality. `0` none, `1` GPS, `2` DGPS.                                            |
+| `gps.satellites`         | none   | no          | Satellites used in the solution (GGA).                                                   |
+| `gps.satellites_in_view` | none   | yes         | Summed across constellations (GSV). Includes satellites the receiver lists from almanac. |
+| `gps.sats_heard`         | none   | yes         | Satellites that actually reported a C/N0. The real RF evidence.                          |
+| `gps.snr_max`            | `dBHz` | yes         | Best C/N0 seen. Answers the antenna-versus-sky question.                                 |
+| `gps.sky_state`          | none   | yes         | `0` clear, `1` obstructed, `2` no RF.                                                    |
+| `gps.hdop`               | none   | yes         | Horizontal dilution of precision (GSA). Lower is better; under 2 is good.                |
+| `gps.lat` `gps.lon`      | none   | yes         | Only while locked.                                                                       |
+| `gps.alt`                | `m`    | yes         |                                                                                          |
+| `gps.speed`              | `km/h` | yes         |                                                                                          |
+| `gps.course`             | `°`    | yes         | Course over ground, true, 0 to 360 (RMC). Present only while moving.                     |
+| `gps.ttff_s`             | `s`    | yes         | Time to first fix, measured across an observed acquiring period.                         |
+
+<Callout title="Stale positions are cleared, not frozen">
+  On lock loss the aggregator drops `lat`, `lon` and `hdop` rather than
+  republishing the last known values. A published position is therefore always
+  current. `fix_quality: 0` with no `lat` means "acquiring", and that is a
+  meaningful state to render rather than an error.
+</Callout>
+
+### `lte` (read from the connection-manager daemon's telemetry file)
+
+| Metric            | Unit  | Conditional | Notes                                                         |
+| ----------------- | ----- | ----------- | ------------------------------------------------------------- |
+| `lte.quality`     | `asu` | no          | Raw CSQ. The whole group is omitted when CSQ is 99 (unknown). |
+| `lte.rssi`        | `dBm` | yes         |                                                               |
+| `lte.modem_temp`  | `°C`  | yes         | Modem PMU temperature.                                        |
+| `lte.gnss_health` | none  | yes         | `0` ok, `1` acquiring, `2` degraded, `3` unhealthy.           |
+| `lte.resets_24h`  | none  | yes         | Modem resets in the daemon's rolling 24 hour budget.          |
+
+### `system` (pure `/proc`, `/sys` and `df` reads)
+
+| Metric                   | Unit | Conditional | Notes                                                                                                                                          |
+| ------------------------ | ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system.cpu_usage`       | `%`  | no          |                                                                                                                                                |
+| `system.ram_usage`       | `%`  | no          |                                                                                                                                                |
+| `system.cpu_temp`        | `°C` | yes         | Absent on hosts with no thermal zone.                                                                                                          |
+| `system.disk_usage`      | `%`  | yes         | Root filesystem.                                                                                                                               |
+| `system.throttled`       | none | yes         | Firmware throttle bitmask, CURRENT state. `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit. Needs `vcgencmd`. |
+| `system.rail_5v`         | `V`  | yes         | EXT5V input rail. Pi 5 family only.                                                                                                            |
+| `system.psu_max_current` | `mA` | yes         | Negotiated at boot: `5000` on a 5 V/5 A PD supply, `3000` otherwise.                                                                           |
+
+### Derived metrics the cloud adds
+
+The ingest path flattens two more families into the readings table that are not
+in `metrics` on the wire:
+
+- `media.kvs` and `media.recording`, from the media block, as `1`/`0` with unit
+  `bool`.
+- `recording.enabled`, `recording.uploading`, `recording.backlog_bytes`,
+  `recording.backlog_segments` and `recording.dropped_segments`, from the
+  recording block.
+
+So a consumer reading `GET /devices/{id}/telemetry/latest` sees more metric names
+than a consumer reading the MQTT payload sees fields. `media.streams` is skipped
+as informational.
+
+## The media block
+
+```json
+{
+  "kvs": { "value": true },
+  "recording": { "value": false },
+  "streams": [
+    {
+      "streamKey": "cam0",
+      "channelName": "a73f7a36-2a9c-45c4-a66c-54d3b018a7f7-cam0",
+      "state": "running",
+      "recording": false
+    },
+    { "streamKey": "cam1", "channelName": "…-cam1", "state": "stopped" }
+  ]
+}
+```
+
+`state` is the supervisor lifecycle for that channel's master process:
+`starting`, `running`, `retrying`, `failed` or `stopped`. A channel parked at
+`failed` has crashed repeatedly and is on a slow retry rather than a tight loop;
+the usual cause is missing KVS SDK shared libraries.
+
+<Callout type="warn" title="`streams[].recording` is stripped by the cloud">
+  The agent publishes a per-stream `recording` flag, verified on the wire.
+  Neither the backend's ingest schema nor the frontend's live schema declares
+  it, and a zod object strips unknown keys, so it reaches nobody. If you need
+  per-camera recording state today, read the aggregate `recording` block
+  instead.
+</Callout>
+
+## The recording block
+
+```json
+{
+  "enabled": false,
+  "sessionId": null,
+  "backlogBytes": 0,
+  "backlogSegments": 0,
+  "droppedSegments": 0,
+  "uploading": false,
+  "lastUploadAt": null,
+  "bootDefer": "skipped"
+}
+```
+
+<TypeTable
+  type={{
+    enabled: {
+      type: "boolean",
+      description:
+        "Also the authority-split signal: when true the DEVICE is the authoritative writer of telemetry history via the batch upload path, and live ingest skips the readings table.",
+    },
+    sessionId: {
+      type: "string | null",
+      description:
+        "UUIDv7, so it sorts by start time. Null when not recording.",
+    },
+    backlogBytes: { type: "number" },
+    backlogSegments: { type: "number" },
+    droppedSegments: {
+      type: "number",
+      description:
+        "LIFETIME counter of segments evicted under disk pressure, not a rate. Reset with `xorgate recording reset-counters`.",
+    },
+    uploading: { type: "boolean" },
+    lastUploadAt: {
+      type: "number | null",
+      description: "Epoch ms, device clock.",
+    },
+    bootDefer: {
+      type: "string | undefined",
+      description:
+        'Boot power-staging verdict: "off", "skipped", "deferring", "gating", or "released:<why>".',
+    },
+    powerShed: {
+      type: "string | undefined",
+      description:
+        'Runtime load-shedding rung: "no-live" or "bridge-only", prefixed "parked:" once the shed-cycle cap is exhausted. Absent at full operation.',
+    },
+    liveBlock: {
+      type: "LiveBlock | undefined",
+      description:
+        "Why live streaming is refused right now. ABSENT means allowed. See below.",
+    },
+  }}
+/>
+
+### `liveBlock` and the open reason set
+
+```json
+{
+  "liveBlock": {
+    "reason": "thermal",
+    "detail": "cpu 84.1°C >= 80°C for 15s",
+    "since": 1786401780000
+  }
+}
+```
+
+Today's reasons are `gps-gate`, `undervoltage` and `thermal`. **That list is not
+a closed set and consumers must not treat it as one.**
+
+The rule, stated from the device's side: a newer agent may publish a reason your
+build has never heard of, and that is a normal deployment state rather than an
+error. So:
+
+- **An unrecognised reason still blocks.** Fall back to generic copy, do not fall
+  through to "not blocked".
+- **Absence means allowed.** A missing block, a malformed block, a stale feed and
+  an agent too old to send the field are all the same thing: not blocked. This is
+  fail-open by design, and the agent never emits the field as `null` or as an
+  empty object, so `undefined` is the only "no block" encoding.
+
+The frontend narrows the reason in exactly one place, a reason-to-descriptor
+registry that supplies copy and icons, and an unmatched reason still blocks the
+viewer. The frontend SDK types it as
+`"gps-gate" | "undervoltage" | "thermal" | (string & {})` for the same reason:
+the union documents today's values without promising completeness.
+
+<Callout type="warn" title="`liveBlock` never reaches the database">
+  The backend's ingest schema does not declare `liveBlock`, so zod strips it
+  before anything is persisted. It is a **live-MQTT-only** field. A consumer
+  polling REST cannot discover that a device is refusing to stream; it has to
+  subscribe to the telemetry topic.
+</Callout>
+
+## Keeping the three copies honest
+
+This payload is described by hand in three repositories: the agent (the writer),
+the backend's ingest schema, and the frontend's live schema. All three carry a
+comment saying "change all three together", and until now nothing enforced it.
+
+`plans/xorgate-sdk-and-api/device-contract-check.mjs` turns the claim into a
+command. It extracts the field set of each block from all three sources, fails on
+any divergence not recorded in its `KNOWN_DIVERGENCES` table with a reason, and
+separately checks this page's metric catalog against what the collectors actually
+emit.
+
+```bash
+node plans/xorgate-sdk-and-api/device-contract-check.mjs
+```
+
+The two divergences called out on this page, `recording.liveBlock` and
+`media.streams[].recording`, are recorded there rather than hidden.

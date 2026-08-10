@@ -1,0 +1,220 @@
+---
+title: "Hardware notes"
+description: "The IMU's CircuitPython shell-out and why, the GNSS and LTE daemon, the status LED ladder, the audio overlay that steals LED pins, and the IMX290 camera overlay requirement."
+---
+
+Five things about the reference hardware that are not obvious from the code and
+have each cost someone a day.
+
+## IMU: a CircuitPython shell-out
+
+The BNO085 collector detects the sensor with `i2cdetect -y 1` (addresses `0x4a`
+and `0x4b`) and, when it finds one, spawns `python/bno085_read.py` to stream the
+rotation vector and linear acceleration as line-delimited JSON.
+
+Shelling out to Python from a Node agent looks like a shortcut. It is not. The
+BNO085 speaks SHTP and has clock-stretching quirks that make a pure-Node I2C
+reader impractical, so the read leans on the proven Adafruit CircuitPython stack
+rather than reimplementing it. The cost is a Python dependency; the benefit is
+that the hard part is someone else's tested code.
+
+It publishes the raw quaternion, the Tait-Bryan euler angles derived from it
+(after the `imuMount` correction), and gravity-removed linear acceleration. With
+no sensor on the bus the collector emits nothing and the daemon stays healthy.
+
+Provisioned devices get the whole stack from the installer: `i2c-tools`, the
+Adafruit libraries system-wide (the agent spawns bare `python3`), the I2C bus
+enabled, and the agent user added to the `i2c` group. For a manual install:
+
+```bash
+sudo apt-get install -y i2c-tools python3-pip python3-dev
+sudo python3 -m pip install --break-system-packages adafruit-circuitpython-bno08x adafruit-blinka
+sudo raspi-config nonint do_i2c 0
+sudo usermod -aG i2c "$USER"
+```
+
+`XORGATE_MOCK=1`, or any non-Linux host, makes detection report a synthetic
+sensor emitting a slowly rotating mock signal, so the path can be exercised
+off-hardware.
+
+<Callout title="The unit's WorkingDirectory is load bearing">
+  The GPIO backend used by Blinka on a Pi 5 (`lgpio`) creates `.lgd-nfy*` notify
+  files in the current directory. The systemd default of `/` is not writable by
+  the service user, which makes `import board` fail. The unit sets
+  `WorkingDirectory=/var/lib/xorgate` for exactly this reason.
+</Callout>
+
+## GNSS and LTE: two processes, one modem
+
+The modem is shared, and ownership is split cleanly:
+
+- **The connection-manager daemon** (`sim7600-lte.service`) owns the AT port
+  `/dev/ttyUSB2`. It configures and starts the GNSS engine, keeps assistance data
+  fresh, brings up the LTE link, and writes a telemetry JSON file.
+- **The agent's gps collector** only ever reads the NMEA stream on
+  `/dev/ttyUSB1`. It never writes AT commands.
+- **The agent's lte collector** only reads the daemon's telemetry file.
+
+<Callout type="warn" title="Never open `/dev/ttyUSB2` while the service runs">
+  Stop `sim7600-lte` first for manual AT debugging. Two writers on the AT port
+  produce interleaved responses that both sides misparse.
+</Callout>
+
+Why time-to-first-fix is fast, in one paragraph: a bare standalone GNSS start has
+to demodulate ephemeris from the satellites at 50 bit/s, which needs a strong
+signal, which is exactly what urban canyons deny. The daemon instead configures
+all constellations (`AT+CGNSSMODE=15,0`), XTRA predicted ephemeris downloaded
+over LTE and valid about seven days, SUPL UE-based assistance
+(`AT+CGPS=1,2`, and mode 3 is broken against public SUPL servers so do not use
+it), and early coarse fixes at `AT+CGPSHOR=100`. Measured assisted cold start on
+the reference module is roughly 90 seconds. The engine is re-asserted every 10
+minutes while connected, because a modem reset comes back with GNSS off.
+
+The full AT flows, hardware quirks and the TTFF measurement procedure are in the
+agent repository's `docs/gnss-bringup.md`.
+
+### Antenna bias
+
+Powering an **active** antenna's LNA is the `gnssAntBias` setting, not an
+environment knob. It drives the module's VDD_AUX LDO at 3.05 V. An absent key
+means passive and bias off, which is the hardware-safe default, and the daemon
+asserts the state at boot and re-reads the file live at roughly 30 seconds with
+no restart and no LTE drop.
+
+Two failure modes worth naming, because they look like software bugs:
+
+- **Bias off with an active antenna** makes the `gps` group vanish entirely
+  rather than degrade. No fix, no satellites, nothing.
+- **Bias on with a passive antenna** puts DC on the coax. Do not.
+
+### The LTE link can strand IPv4 while MQTT keeps working
+
+The modem runs in RNDIS mode and `usb0`'s DHCP lease comes from the modem's
+internal NAT, so a lease proves nothing about the WAN. The daemon therefore
+verifies connectivity with an interface-bound ping before declaring the link up,
+and escalates through a recovery ladder (retry, PS re-attach, radio cycle, modem
+reset) when the network is reachable but the link will not come back. Losing
+signal in a dead zone is deliberately not punished.
+
+`usb0` must be unmanaged by NetworkManager (the installer drops in the
+configuration for this). Otherwise NetworkManager races the daemon for the DHCP
+lease and leaves stale duplicate addresses, after which traffic sources from an
+address the modem's NAT no longer maps and the link never recovers until a
+reboot.
+
+<Callout
+  type="warn"
+  title="A dead `usb0` owning the default route black-holes video, not MQTT"
+>
+  If the antenna is disconnected, a dead `usb0` can still own the IPv4 default
+  route at metric 100. KVS is IPv4-only, so live video black-holes, while MQTT
+  survives over IPv6 on WiFi and the device looks perfectly healthy. This is a
+  routing condition, not a code path, and no gate in the agent catches it.
+</Callout>
+
+## RGB status LED
+
+The carrier's RGB LED is the only indicator visible from outside the enclosure,
+so it is driven as a status light: someone looking at the box can tell whether it
+is working, waiting or broken.
+
+**Strict priority, first match wins.** One `LED_LADDER` array is the single
+definition, and `xorgate led test` walks that same array, so the bench walk
+cannot drift from the real behaviour.
+
+| Priority | Colour | Pattern    | Means                                                                  |
+| -------- | ------ | ---------- | ---------------------------------------------------------------------- |
+| 0        | white  | solid      | Starting up, no real state yet                                         |
+| 1        | red    | solid      | Agent not running (set by the unit's `ExecStopPost`, not the resolver) |
+| 2        | red    | blink-fast | Power fault: undervoltage or shedding                                  |
+| 4        | cyan   | blink-slow | Running hot: thermal shed, still recording                             |
+| 5        | purple | blink-fast | Network trouble: LTE or cloud down, recovering                         |
+| 6        | blue   | blink-slow | Waiting for a GPS fix                                                  |
+| 7        | green  | heartbeat  | Healthy                                                                |
+| n/a      | white  | flash2     | Settings applied or command accepted (pre-empts all)                   |
+
+There is **no rung 3**. A data-loss rung was designed and deferred, because
+`droppedSegments` is a lifetime counter and consuming it would latch a permanent
+false alarm.
+
+**The LED is a renderer, not a policy engine.** The resolver is pure, with no I/O
+and no clocks, and it only _ranks_ verdicts other modules already published. It
+never re-derives one, because a second evaluation is how the reason and the
+reality come apart. Unknowns fail open: a null LTE feed, a missing GNSS receiver
+and an unrecognised `liveBlock.reason` all resolve toward healthy, never to red.
+
+Two rules that look like bugs and are not:
+
+- **A declared dead zone is green, not purple.** Purple means "trying and
+  failing"; settled no-coverage is not a fault. It also suppresses the cloud-link
+  clause, since otherwise "dead zone is green" could never hold: the cloud is
+  necessarily unreachable there.
+- **A thermal shed is cyan even though it sets `powerShed` exactly like a power
+  shed.** Both walk the same ladder, so `liveBlock.reason` is consulted first.
+  Keying off `powerShed` alone would paint overheating boxes red and send
+  somebody to check the power supply.
+
+**No yellow or amber.** Measured on real hardware, the red die on this package is
+weak, so red plus green reads as "yellowish, leaning green" and cannot be
+identified on its own. Everything amber would have carried is purple instead.
+
+Pins are hardcoded for the Argus CM5 Rev1 carrier (r=12, g=21, b=16, active
+high). The driver self-gates: off a Pi, without `pinctrl`, or with a pin already
+held by another driver, it goes inert and everything else stays healthy.
+`pinctrl` needs no root, and adding `sudo` is a mistake.
+
+## Audio: present on the board, deliberately unused
+
+The carrier has an input-only I2S MEMS microphone on GPIO18, 19 and 20. Nothing
+in this product uses it: there is no `audio0` channel in any `kvs.json`, no audio
+pipeline, and the agent never opens the card. An `audio0` entry in a device
+model's `io_capabilities` is aspirational.
+
+<Callout type="warn" title="Do not enable it with `dtoverlay=googlevoicehat-soundcard`">
+  That overlay describes a microphone **plus a speaker amplifier** board, so it
+  also reserves GPIO16 and GPIO21, which on this carrier are the **blue and green
+  status LEDs**. GPIO16 in particular gets a real gpiod consumer (`sdmode`), so
+  libgpiod refuses the line and the LED driver cannot own it.
+
+Use `dtoverlay=audioinjector-bare-i2s` instead: the same three microphone pins,
+no GPIO claims. The evidence and the device-tree alternative are in the agent
+repository's `docs/audio-i2s.md`.
+
+</Callout>
+
+## Cameras: the IMX290 overlay is not automatic
+
+The CM5 fleet ships dual IMX290 sensors, and they are **not auto-detected**. Both
+need an explicit overlay in `/boot/firmware/config.txt` and a reboot:
+
+```
+dtoverlay=imx290,cam0
+dtoverlay=imx290,cam1
+```
+
+Without these the sensors do not appear to libcamera at all, so a correct
+pipeline referencing a correct `camera-name` still produces nothing. The
+installer now sets the overlays and writes default pipelines, but a device
+imaged before that, or one where the cameras were added later, needs it by hand.
+
+The two sensors sit on different I2C buses, which is what distinguishes them in a
+pipeline's `camera-name`:
+
+```
+cam0  /base/axi/pcie@1000120000/rp1/i2c@88000/imx290@1a
+cam1  /base/axi/pcie@1000120000/rp1/i2c@70000/imx290@1a
+```
+
+Note `i2c@88000` versus `i2c@70000`. The agent records the resolved name in
+`<streamKey>.camera` next to the pipeline files so it survives a bridge rewrite.
+
+## Power budget
+
+`system.psu_max_current` reports what the supply negotiated at boot: `5000` on a
+5 V/5 A USB-PD supply, `3000` otherwise. That number drives real behaviour rather
+than being informational. Boot staging and the GPS gate are budget-gated on it by
+default, so a 5 A device starts everything immediately and a 3 A device stages.
+
+Camera count is an install-time capacity decision that follows from the same
+number: one camera on 3 A, two on 5 A. It is deliberately never something the
+load-shedding ladder toggles at runtime.

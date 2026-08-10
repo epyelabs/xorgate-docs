@@ -1,0 +1,188 @@
+---
+title: "Configuration reference"
+description: "The three configuration layers: environment and flags, cloud-managed settings namespaces, and local xorgate set, plus how local edits are reported upstream."
+---
+
+A device is configured in three layers, and they do not overlap much. Knowing
+which layer a knob lives in tells you how to change it and how long it takes to
+take effect.
+
+| Layer                      | Where it lives                                    | Changed by                                        | Takes effect                |
+| -------------------------- | ------------------------------------------------- | ------------------------------------------------- | --------------------------- |
+| **Environment and flags**  | `/etc/xorgate/agent.env`, or CLI flags            | editing the file, or the installer                | next agent start            |
+| **Cloud-managed settings** | `settings.json`, from the retained `config` topic | the web application, `PATCH /devices/{id}/config` | live, by a poller           |
+| **Local settings**         | `settings.json`, directly                         | `xorgate set`, the `manage` UI, an editor         | live, and reported upstream |
+
+The bottom two layers write the same file. That is deliberate, and the
+[reported-config loop](/docs/device-sdk/cloud-contract/configuration#local-edits-flow-back)
+is what stops them from fighting.
+
+## Layer 1: environment and flags
+
+Read once at startup by `loadConfig`. On a provisioned device these come from
+`agent.env`, which systemd reads as root before dropping privileges, so it does
+not need to be world readable.
+
+### Identity and transport
+
+| Variable             | Flag               | Default                     | Notes                                                                                          |
+| -------------------- | ------------------ | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `DEVICE_ID`          | `--device-id`      | required unless `--offline` | The canonical `devices.id` UUID. Also the thing name, the MQTT clientId and the topic segment. |
+| `IOT_DATA_ENDPOINT`  | `--endpoint`       | required unless `--offline` | The `iot:Data-ATS` endpoint from provisioning.                                                 |
+| `MODE`               | `--mode`           | `sim`                       | `sim` or `real`. **Overridden by `settings.json`**; only the flag beats it.                    |
+| `RATE_HZ`            | `--rate`           | `1`                         | Telemetry publish rate. Must be positive and finite.                                           |
+| `MQTT_KEEPALIVE_SEC` | `--mqtt-keepalive` | `60`                        | Controls Last-Will latency: the broker fires the will at roughly 1.5x this.                    |
+| `OFFLINE`            | `--offline`        | off                         | Stub MQTT plus simulator. Loads no credentials.                                                |
+
+### Credentials
+
+| Variable    | Flag     | Default               |
+| ----------- | -------- | --------------------- |
+| `CERT_PATH` | `--cert` | `./creds/cert.crt`    |
+| `KEY_PATH`  | `--key`  | `./creds/private.key` |
+| `CA_PATH`   | `--ca`   | `./creds/ca.pem`      |
+
+On a provisioned device these point at `/etc/xorgate/device.cert.pem`,
+`device.key.pem` and `root-ca.pem`. `CA_PATH` is Amazon Root CA 1 and validates
+**MQTT only**; see the [KVS CA gotcha](/docs/device-sdk/media).
+
+If any of the three cannot be read the agent throws at startup with an actionable
+message rather than spawning a worker that would crash-loop.
+
+### Media runtime
+
+| Variable                 | Flag                    | Default                                                  |
+| ------------------------ | ----------------------- | -------------------------------------------------------- |
+| `KVS_RUNTIME_BIN`        | `--media-bin`           | `/opt/xorgate/media/xorgate-kvs-webrtc`                  |
+| `KVS_RUNTIME_LIB_DIR`    | `--media-lib`           | `/opt/xorgate/media/lib`                                 |
+| `KVS_MANIFEST`           | `--media-manifest`      | `./creds/kvs.json` (`/etc/xorgate/kvs.json` on a device) |
+| `KVS_PIPELINE_DIR`       | `--media-pipeline-dir`  | `/etc/xorgate/pipelines`                                 |
+| `KVS_CACERT_PATH`        | `--media-cacert`        | `<binary-dir>/cert.pem`                                  |
+| `KVS_GST_PIPELINE`       | none                    | unset. Global pipeline fallback, environment-only.       |
+| `MEDIA_SOURCE`           | `--media-source`        | `testsrc`. Also `devicesrc`, `rtspsrc`.                  |
+| `MEDIA_TYPE`             | `--media-type`          | `video-only`. Also `audio-video`.                        |
+| `AWS_KVS_LOG_LEVEL`      | `--media-log`           | `3` (INFO). 1 verbose to 7 silent.                       |
+| `KVS_IDLE_TEARDOWN_SECS` | `--media-idle-teardown` | `30`. `0` disables.                                      |
+
+<Callout type="warn" title="`MEDIA_ENABLED` no longer exists">
+  There is no media master switch. The runtime is enabled for any device that is
+  not `--offline`, and it self-gates on architecture, binary and manifest, so
+  "on" is safe on a host that cannot start it. Turn cameras off individually
+  with `recording.video.cameras`.
+</Callout>
+
+### Other
+
+| Variable                  | Default          | Notes                                                                        |
+| ------------------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `XORGATE_HOME`            | `~/.xorgate`     | Runtime directory. The unit sets `/var/lib/xorgate`.                         |
+| `XORGATE_STOP_TIMEOUT_MS` | `5000`           | Graceful-stop timeout before SIGKILL.                                        |
+| `XORGATE_PYTHON_DIR`      | package root     | Override the `python/` helper directory.                                     |
+| `XORGATE_MANAGED_BY`      | unset            | Set to `cli` by the CLI manager so the worker does not also write a pidfile. |
+| `XORGATE_MOCK`            | unset            | `1` makes IMU detection report a synthetic sensor.                           |
+| `DEVICE_DIST_BUCKET_URL`  | from `agent.env` | Where `xorgate update` pulls builds from.                                    |
+| `DEVICE_DIST_VERSION`     | from `agent.env` | The installed build's version.                                               |
+
+## Layer 2: cloud-managed settings
+
+Six namespaces arrive on the retained `config` topic and are persisted into
+`settings.json`. Each is REPLACE, never merge. Full semantics are on
+[Configuration sync](/docs/device-sdk/cloud-contract/configuration).
+
+### `gnssAntBias` (boolean)
+
+Powers an active GPS antenna's LNA from the modem's VDD_AUX LDO. Absent or
+`false` means passive, bias off, which is the hardware-safe default. Applied live
+by the modem daemon at roughly a 30 second poll, with no service restart and no
+LTE drop.
+
+<Callout
+  type="warn"
+  title="Bias off with an active antenna makes GPS metrics vanish"
+>
+  An active antenna with no bias is not a degraded antenna, it is a dead one.
+  The `gps` group disappears entirely rather than reporting a poor fix.
+</Callout>
+
+### `imuMount`
+
+`{ enabled, rollDeg, pitchDeg, yawDeg }`. How the sensor is rotated relative to
+the vehicle. Applied live by the IMU collector, which re-reads the file each
+tick. Absent means publish sensor-frame angles as-is.
+
+### `recording`
+
+The largest namespace. Sections:
+
+| Section         | Fields                                                                                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry`     | `enabled`, `rateHz` (clamped 1 to 20; the IMU caps at 20 Hz)                                                                                                                        |
+| `video`         | `enabled`, `preset`, `segmentSeconds`, `bootDefer`, `bootDeferMaxSecs`, `bootDeferMinBudgetMa`, `gpsGate`, `gpsGateMaxSecs`, `gpsGateNoProgressSecs`, `spawnStaggerSecs`, `cameras` |
+| `upload`        | `mode`: `auto` or `off`                                                                                                                                                             |
+| `retention`     | `maxBytes`, `minFreeBytes`                                                                                                                                                          |
+| `powerShedding` | `enabled`, plus undervoltage, rail, thermal and hysteresis thresholds                                                                                                               |
+
+`video.cameras` is `Record<streamKey, boolean>`. An **absent key means enabled**,
+so `{}` is "every detected camera runs". Stream keys must match
+`^[A-Za-z0-9_-]{1,32}$`. Camera count is an install-time capacity choice (one
+camera on a 3 A supply, two on 5 A) and is never toggled by the load-shedding
+ladder.
+
+### `lteRecovery`
+
+`gpsFixResetPolicy` (`defer` or `veto-deadzone`) and `deadZoneProfile`
+(`conservative`, `balanced` or `aggressive`). Read live by the modem daemon at
+each recovery decision.
+
+### `timeSync`
+
+`offlineSources` (default on), `stepThresholdSecs` (default 10, clamped 2 to 600)
+and `maxStepsPerBoot` (default 4, clamped 1 to 20). Governs GPS and NITZ clock
+stepping while NTP is unsynced. The stepper self-disarms for the whole boot once
+NTP has ever synchronized.
+
+### `cellular`
+
+`{ apn }`. An absent namespace or an empty APN leaves the modem's stored APN
+alone, which is the safe default for every fielded device. A non-empty APN is
+applied with confirm-and-rollback. The value must match
+`^[A-Za-z0-9.-]{0,100}$`, and an invalid one is **dropped rather than repaired**:
+a wrong APN can strand a device.
+
+## Layer 3: local `xorgate set`
+
+The [CLI reference](/docs/device-sdk/cli#set) has the full key catalog. The
+important property is what happens afterwards.
+
+**Local edits are detected and reported upstream.** A fingerprint watcher over
+`settings.json` notices any change the config applier did not make, and publishes
+a `config/reported` message with `origin: "local"` carrying the namespaces that
+moved. The cloud folds those into the desired document, so the edit stops being
+reverted on the next retained redelivery and starts showing up in the web
+application instead.
+
+If the device is offline when the edit happens, `localPending` in
+`config-sync.json` survives the restart and the report goes out on the next
+connect.
+
+<Callout title="Cloud authority still wins on the next write">
+  Reporting a local edit updates the cloud's copy. It does not make the device
+  authoritative. The next time anyone changes that namespace from the cloud, the
+  whole namespace is replaced, and your local field-level tweak inside it is
+  gone.
+</Callout>
+
+## `settings.json` is an allowlist
+
+`loadSettings()` rewrites the file through a known-key allowlist and **destroys
+unknown keys on the next save by any writer**. Two consequences worth knowing
+before you put anything in that file by hand:
+
+- Adding a key the parser does not know is not persistent. It survives until the
+  next write, then vanishes.
+- Anything that needs to persist alongside settings has to live in its own file.
+  That is why sync bookkeeping is in `config-sync.json`, the command ledger is in
+  `commands.json`, and `uploadBucket` goes into `kvs.json`.
+
+The modem daemon also greps `settings.json` by exact path, so the file's
+structure is a contract with a shell script as well as with the agent.

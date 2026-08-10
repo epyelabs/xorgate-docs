@@ -1,0 +1,4 @@
+{
+  "title": "Cloud contract",
+  "pages": ["index", "telemetry", "status", "configuration", "commands"]
+}

@@ -1,0 +1,123 @@
+---
+title: "Live versus recorded"
+description: "Two planes with different transports, different credentials and different guarantees, and how to choose between them."
+---
+
+Almost everything a device produces is available two ways, and they are not two
+views of one system. They are two systems with different transports, different
+authentication, different latencies and different guarantees.
+
+|                                   | Live                                         | Recorded                                   |
+| --------------------------------- | -------------------------------------------- | ------------------------------------------ |
+| Telemetry transport               | MQTT over WebSocket, direct to the broker    | REST, `GET /devices/{id}/telemetry*`       |
+| Video transport                   | KVS WebRTC, browser to device                | Presigned segment URLs from object storage |
+| Goes through the API              | **no**                                       | yes                                        |
+| Credentials                       | AWS credentials from a Cognito Identity Pool | your normal API auth                       |
+| Latency                           | about a second                               | minutes to hours, bounded by upload        |
+| History                           | none                                         | complete                                   |
+| Delivery                          | best effort, QoS 0                           | durable, retried until acknowledged        |
+| Works while the device is offline | no                                           | yes, for anything already uploaded         |
+
+## The live plane bypasses the API entirely
+
+This is the single most surprising thing about the platform's architecture, and
+it shapes everything downstream.
+
+For **live telemetry**, a browser calls `POST /iot/attach-policy` once, then
+subscribes to `xorgate/devices/{id}/telemetry` over MQTT-over-WebSocket, signed
+with SigV4 using Identity Pool credentials. The readings never touch the REST
+API.
+
+For **live video**, `GET /devices/{id}/kvs-channels` returns channel metadata and
+nothing else. The browser then mints its own credentials and runs a KVS WebRTC
+VIEWER session against the device, which is connected to the same channel as
+MASTER. The video never touches the API either.
+
+Two consequences that matter more than they first appear:
+
+1. **A server-side consumer cannot use the live plane through the REST API.**
+   There is no live endpoint to call. You either speak MQTT yourself or you poll
+   `/telemetry/latest`.
+2. **Live access requires a different credential than the API.** Today that
+   credential comes from Cognito federation, so a consumer authenticating with an
+   API key can read history and cannot watch live at all. Closing that gap is
+   known platform work.
+
+<Callout type="warn" title="The browser-side policies are org-blind">
+  The **device** IoT policy is properly scoped to its own topic subtree. The
+  policy attached to browser identities, and the KVS access a browser mints for
+  itself, are not: any authenticated user can subscribe to any device's telemetry
+  topic, across organizations.
+
+There is also no counterpart that detaches, so a user removed from an
+organization keeps the policy attached to their identity indefinitely. Both
+are tracked platform gaps and both must be fixed before third parties touch the
+live plane.
+
+</Callout>
+
+## The live plane has no memory
+
+An MQTT subscription starts empty. There is no replay, no retained telemetry
+message, and no "last known value" on connect. A dashboard that mounts and
+subscribes shows nothing until the next payload arrives, which at 1 Hz is under a
+second but is still a real state to render.
+
+The idiomatic pattern is to seed from `/telemetry/latest` and then let the live
+feed take over. Both SDKs are built around this, and it is also why they
+normalize the live and REST reading shapes onto one type: you want to swap the
+source without changing the component.
+
+Telemetry is also published at **QoS 0**, so a dropped reading is simply gone.
+`seq` lets you observe loss; nothing prevents it. Do not build anything that
+requires a gapless live sequence.
+
+## The recorded plane has no immediacy
+
+Uploads only run while the device is online and only when its upload mode is
+`auto`, one transfer at a time, with backoff on failure. A device in a tunnel
+records happily and uploads nothing until it surfaces.
+
+So "no segments for the last hour" means one of: the device was not recording,
+the device was offline, or the backlog has not drained yet. The telemetry
+payload's `backlogBytes` and `backlogSegments` are what disambiguate, and they
+arrive on the **live** plane. The two planes answer each other's questions.
+
+## A device can refuse to stream
+
+Live video has a third state beyond "playing" and "broken": the device may be
+deliberately refusing, because it is thermally shedding, on a failing power rail,
+or still waiting at the boot GPS gate.
+
+The device publishes this as `recording.liveBlock` in its telemetry payload, with
+a machine `reason`, a human `detail` and a `since` timestamp. A viewer should
+check it before mounting a player, because otherwise the user sees a spinner and
+concludes the product is broken.
+
+Two rules govern it, and both are the wire contract rather than an
+implementation detail:
+
+- **The reason set is open.** Today's values are `gps-gate`, `undervoltage` and
+  `thermal`, but a newer device may publish one your build has never heard of.
+  An unrecognised reason **still blocks**; fall back to generic copy.
+- **Absence means allowed.** A missing block, a malformed one, a stale feed and
+  an agent too old to send the field are all the same thing: not blocked. Fail
+  open.
+
+<Callout type="warn" title="`liveBlock` is live-only, and not by design">
+  The backend's ingest schema does not declare the field, so it is stripped
+  before anything is persisted. A consumer polling REST cannot discover that a
+  device is refusing to stream. The device side is documented under
+  [telemetry](/docs/device-sdk/cloud-contract/telemetry).
+</Callout>
+
+## Choosing
+
+- **Watching one device now:** live, both planes. Seed telemetry from `latest`.
+- **A fleet map:** REST `latest` polling. There is no batch endpoint, so this is
+  one request per device, and it is the platform's biggest scaling gap.
+- **Charts over a window, or anything historical:** REST history.
+- **Reviewing an incident:** the replay manifest, plus recorded telemetry over
+  the same window.
+- **A server-side integration:** REST only today, because the live plane needs a
+  credential an API key cannot obtain yet.

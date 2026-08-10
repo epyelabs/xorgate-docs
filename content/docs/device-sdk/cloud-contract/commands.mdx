@@ -1,0 +1,150 @@
+---
+title: "Commands"
+description: "The four one-shot commands, why the topic is deliberately not retained, the TTL and disk-backed replay ledger that guard them, and the acknowledgement shapes."
+---
+
+| Topic                                         | Direction       | Retained | QoS |
+| --------------------------------------------- | --------------- | -------- | --- |
+| `xorgate/devices/{deviceId}/command`          | cloud to device | **no**   | 1   |
+| `xorgate/devices/{deviceId}/command/response` | device to cloud | no       | 1   |
+
+## The command set is closed, and has four members
+
+```json
+{
+  "v": 1,
+  "requestId": "b6d2…",
+  "command": "reboot",
+  "ts": 1786401802272,
+  "expiresAt": 1786401862272
+}
+```
+
+| Command     | Privileged | What it does                                                                                                                                               |
+| ----------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reboot`    | yes        | `sudo -n systemctl reboot`                                                                                                                                 |
+| `power_off` | yes        | `sudo -n systemctl poweroff`                                                                                                                               |
+| `refresh`   | **no**     | Re-probe what the device can (SIM identity, applied APN, antenna bias) and publish a fresh config report. Handled in-process; never reaches the sudo path. |
+| `update`    | yes        | `sudo -n systemctl start --no-block xorgate-updater.service`                                                                                               |
+
+Anything outside that set is dropped without an acknowledgement, as is any
+payload that is not well-formed `v: 1`. That is deliberate: a malformed message
+may have no `requestId` to acknowledge against.
+
+<Callout title="`update` is often left out of older summaries">
+  The command set is frequently described as three members. The agent's parser
+  accepts four; `update` was added with the device update-management work. If
+  you are enumerating commands, read the `DeviceCommandName` union rather than
+  prose.
+</Callout>
+
+## Why the topic is not retained
+
+Retaining a `reboot` would replay it on every reconnect. That is a boot loop, and
+on a fielded device it is an expensive one.
+
+Non-retained plus a clean session means a command published while the device is
+offline is simply **dropped**. That is the correct semantics rather than a
+limitation: you only reboot a device that is online right now. If you want a
+device to do something when it next appears, that is desired state and belongs on
+the [config topic](/docs/device-sdk/cloud-contract/configuration).
+
+## Two independent guards
+
+A stale command causing a surprise reboot is exactly the failure worth spending
+two mechanisms on, and the two are chosen to fail differently.
+
+### 1. TTL, via `expiresAt`
+
+Catches a command delayed in flight by a degraded link. The device clamps the
+cloud's `expiresAt` to `ts + 120000` on parse, so **the maximum window is 120
+seconds regardless of what the publisher asks for**. A buggy or hostile publisher
+cannot mint a command that stays armed for hours.
+
+This guard depends on the device clock being roughly sane, which is a real
+assumption on hardware with no RTC.
+
+### 2. A disk-backed replay ledger
+
+Catches QoS 1 redelivery, and depends on no clock at all. Executed `requestId`s
+are recorded in `commands.json` under `XORGATE_HOME`, retained for one hour and
+capped at 100 entries.
+
+**The ledger is on disk precisely because the command it guards reboots the
+process that would otherwise hold it in memory.** And it is written _before_
+executing, never after: `systemctl reboot` does not return, so an
+execute-then-record ordering would leave no record at all and let the same
+command fire again on the next connect.
+
+<Callout type="warn" title="The ledger dedups redelivery, not repeated presses">
+  Two clicks of a UI button produce two distinct `requestId`s, and both slip
+  past the ledger. For `update` that is harmless: `systemctl start` on an
+  already-activating oneshot coalesces into the running job, so N commands cause
+  one updater run. For `reboot` it means the second command reboots a device
+  that just came back up.
+</Callout>
+
+`refresh` additionally carries a **device-side rate limit** of 30 seconds between
+honoured commands, because a hammered UI button must not turn into unbounded AT
+traffic on the modem.
+
+## Acknowledgements
+
+```json
+{
+  "v": 1,
+  "deviceId": "a73f7a36-…",
+  "ts": 1786401802272,
+  "requestId": "b6d2…",
+  "command": "reboot",
+  "status": "accepted",
+  "reason": "expired"
+}
+```
+
+| `status`   | Meaning                                            | `reason` values seen                                 |
+| ---------- | -------------------------------------------------- | ---------------------------------------------------- |
+| `accepted` | Validated, claimed in the ledger, about to execute | absent                                               |
+| `rejected` | Refused before doing anything                      | `expired`, `duplicate`, `rate-limited`               |
+| `failed`   | Accepted but the action itself did not work        | the underlying error text, or a ledger write failure |
+
+The acknowledgement is **awaited before executing**. A reboot severs the
+connection, so an unflushed acknowledgement would be lost and the cloud would
+never learn the command landed. A 3 second timeout stops that wait from hanging
+the command if the publish callback never fires.
+
+### What "success" looks like
+
+For `reboot` and `power_off` there is no success acknowledgement, and there
+cannot be. The sequence is: publish `accepted`, flush, execute, and the box goes
+down. The only time those commands publish `failed` is when the privileged call
+itself was refused, in which case the device is very much alive and the operator
+needs to know why nothing happened.
+
+For `update`, the acknowledgement means the updater was started. The signal that
+it worked is the **new build appearing in the next config report**, not the
+acknowledgement.
+
+<Callout type="warn" title="`sudo -n` is not optional, and neither is the sudoers drop-in">
+  The agent runs as the provisioning user, not root. The installer writes a
+  narrow sudoers drop-in granting exactly the argv words the agent uses, matched
+  **byte for byte**, so a reordered or extra flag is simply refused. That is the
+  point: no wildcard means no arbitrary root. `-n` (non-interactive) means a
+  device whose drop-in is missing fails fast and loudly rather than hanging on a
+  password prompt nobody can answer.
+
+`--no-block` on the `update` call is load bearing for a subtler reason: a
+blocking `systemctl start` on a oneshot waits for the unit to finish, and the
+updater finishes by restarting the agent. Without it the agent hangs inside
+`exec` while systemd kills it, and the acknowledgement path never runs.
+
+</Callout>
+
+## Role gates
+
+Commands are not uniformly privileged at the API layer either. `reboot`,
+`power_off` and `update` require `owner` or `admin`; `refresh-state` is
+deliberately open to `member`, since it changes nothing. The full per-endpoint
+table is on
+[the resources page](/docs/backend-sdk/resources), verified against the handlers
+rather than the specification.

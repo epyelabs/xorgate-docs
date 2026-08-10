@@ -1,0 +1,142 @@
+---
+title: "Device models and capabilities"
+description: "What a device model is, what io_capabilities declares, the three things it actually controls, and the two places it is not enforced."
+---
+
+A **device model** is a hardware kit definition, shared platform-wide rather than
+owned by an organization. Every device is an instance of one, and the model
+carries an `io_capabilities` document describing what that kit can do.
+
+<Callout title="Device models are a platform-level catalog">
+  Writing them requires the platform-level `users.role === 'admin'`, and
+  membership role is ignored entirely. That is the only place in the API where
+  organization membership does not decide the answer.
+</Callout>
+
+## The shape of `io_capabilities`
+
+```json
+{
+  "schemaVersion": 1,
+  "media": {
+    "video": [
+      {
+        "key": "cam0",
+        "codec": "h264",
+        "maxWidth": 1920,
+        "maxHeight": 1080,
+        "maxFps": 30
+      }
+    ],
+    "audio": []
+  },
+  "sensors": {
+    "imu": {
+      "accel": ["x", "y", "z"],
+      "quaternion": ["r", "i", "j", "k"],
+      "euler": ["roll", "pitch", "yaw"],
+      "unit": "m/s^2",
+      "rateHz": 20
+    }
+  },
+  "comm": {
+    "module": "4g-lte",
+    "gps": { "fields": ["lat", "lon", "alt", "speed"] },
+    "signal": { "fields": ["rssi", "quality"] }
+  },
+  "system": { "fields": ["cpu_usage", "cpu_temp", "ram_usage", "disk_usage"] }
+}
+```
+
+`schemaVersion: 1` is required and is a literal. Every section is optional, so a
+partial-capability kit validates: a telemetry-only tracker with no cameras simply
+omits `media`.
+
+Each declared leaf names a metric under the corresponding
+[`group.field`](/docs/platform-concepts/metrics) namespace. So
+`sensors.imu.accel: ["x","y","z"]` declares `imu.accel_x`, `imu.accel_y` and
+`imu.accel_z`. `sensors.imu.axes` is a legacy alias for `accel`, retained for
+older accel-only models.
+
+The canonical media stream keys are `cam0`, `cam1` and `audio0`.
+
+## The three things it actually controls
+
+1. **KVS signaling channels.** At provisioning time, each `media.video[].key`
+   becomes a channel named `${deviceId}-${streamKey}`. This is the load-bearing
+   one.
+2. **Object storage paths.** Stream keys appear in segment keys, so they are part
+   of the recorded-media layout.
+3. **What consumers render.** A frontend building a metric picker or a camera
+   grid reads the model.
+
+Notably absent from that list: **what the device actually collects.** The agent's
+worker instantiates its collectors from a hardcoded set rather than from the
+model, relying on each collector self-gating on whether its hardware is present.
+See [the device SDK](/docs/device-sdk/extending#the-enabled-capability-set-is-hardcoded).
+
+## Two places it is not enforced
+
+These are the failure modes worth knowing before you write a model.
+
+### It is not validated on write
+
+`POST` and `PATCH` on device models accept **any JSON object** in
+`io_capabilities`. There is no schema check at the API boundary.
+
+### It is strictly parsed at provisioning
+
+Provisioning does validate, with a strict parse. And a parse failure does not
+raise an error anywhere: it yields **zero KVS channels**, so the device provisions
+successfully, appears healthy, and live video simply never works.
+
+<Callout type="warn" title="This is the silent failure to watch for">
+  A malformed capabilities document is accepted on write, provisions without
+  complaint, and produces a device whose `GET /devices/{id}/kvs-channels` returns
+  `[]`. Nothing in the API, the logs the operator can see, or the UI distinguishes
+  that from a device whose model legitimately declares no video.
+
+Validate client-side before writing. The backend SDK does this by default on
+every device-model write, with an opt-out, precisely because the API does not.
+
+</Callout>
+
+The API reference carries the zod-derived schema for the document, generated from
+the same source the provisioning parse uses, so it is the accurate description of
+what will pass.
+
+## What `[]` from `kvs-channels` means
+
+Three different situations, one response:
+
+| Situation                                          | Response |
+| -------------------------------------------------- | -------- |
+| Device was never provisioned                       | `[]`     |
+| Model legitimately declares no video               | `[]`     |
+| Model's capabilities failed the provisioning parse | `[]`     |
+
+A client cannot tell them apart, which is unfortunate because it is exactly the
+distinction a support engineer needs first. Checking whether the device has been
+provisioned at all narrows it to two.
+
+## Capabilities are a declaration, not an observation
+
+Nothing reconciles `io_capabilities` against what a device actually publishes.
+The model says what the kit is supposed to be able to do; the telemetry stream
+says what it is doing. A device with a broken IMU keeps its declaration and stops
+publishing `imu.*`, and no part of the platform notices.
+
+There is also no endpoint that answers "which metrics does this device actually
+report". A frontend building a metric picker has to either trust the model or
+scrape `/telemetry/latest` and infer.
+
+## One model is chosen for you
+
+`POST /device-registrations` does not take a model. It silently picks the **most
+recently created device model, fleet-wide**, and nothing surfaces which one was
+chosen until after the claim completes.
+
+The consequence is worth stating plainly: adding a model to the platform-wide
+catalog changes what every new registration in every organization assumes. If you
+operate mixed hardware, check the model on the device after claiming rather than
+assuming.

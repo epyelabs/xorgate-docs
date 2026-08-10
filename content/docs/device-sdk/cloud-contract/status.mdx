@@ -1,0 +1,101 @@
+---
+title: "Status and Last-Will"
+description: "The connect and stop markers, the MQTT Last-Will that covers an ungraceful death, and why offline detection has three different latencies."
+---
+
+`xorgate/devices/{deviceId}/status`, device to cloud, QoS 0, not retained.
+
+The smallest payload in the contract, and the one that answers "is this device
+there".
+
+```json
+{ "v": 1, "deviceId": "a73f7a36-…", "ts": 1786401802272, "online": true }
+```
+
+Four fields, no variants. `ts` is epoch milliseconds in the device's clock
+domain, with the [usual caveat](/docs/device-sdk/cloud-contract#clocks).
+
+## Three ways it gets published
+
+| Event            | `online` | Published by                                           | Latency                |
+| ---------------- | -------- | ------------------------------------------------------ | ---------------------- |
+| Worker connects  | `true`   | the agent, immediately on the MQTT `connect` event     | instant                |
+| Graceful stop    | `false`  | the agent's SIGTERM handler, before closing the socket | instant                |
+| Ungraceful death | `false`  | **the broker**, from the registered Last-Will          | roughly 1.5x keepalive |
+
+The graceful path is deliberately ordered: the agent publishes the offline
+status, waits for the publish callback, and only then ends the client and exits.
+A 2 second timer forces the exit if the publish never completes, so a wedged
+socket cannot hang the shutdown.
+
+## The Last-Will
+
+The will is registered at connect time, not published by the agent:
+
+```js
+{
+  topic:   "xorgate/devices/{deviceId}/status",
+  payload: { v: 1, deviceId, ts: <connect time>, online: false },
+  qos:     0,
+  retain:  false
+}
+```
+
+Two things follow from that, and both surprise people.
+
+**`ts` in a Last-Will is the connect time, not the death time.** The payload is
+serialized when the connection is established and handed to the broker to hold.
+It cannot know when it will be delivered. So a will message can carry a `ts` that
+is hours old. Use the time you received it, which is the same rule the rest of
+the contract already asks for.
+
+**Latency is a function of `MQTT_KEEPALIVE_SEC`.** The broker fires the will
+roughly 1.5 keepalive intervals after the device stops talking. The default
+keepalive is 60 seconds, so an unplugged device is detectably offline in about 90
+seconds. Lowering it detects power loss faster at the cost of more MQTT traffic
+on a metered cellular link, which is a real trade in this fleet rather than a
+theoretical one.
+
+<Callout title="Power-off looks like an ungraceful death, on purpose">
+  The `power_off` command runs `systemctl poweroff`, which sends SIGTERM to the
+  agent, so the agent's own graceful `online: false` normally gets out first.
+  But a device on a failing supply, or one whose battery gives out mid-write,
+  has no such courtesy. The Last-Will is what makes both cases converge on the
+  same observable state.
+</Callout>
+
+## Why the status topic is not the whole offline story
+
+Three independent mechanisms report a device as gone, at three different
+latencies, and they do not always agree:
+
+1. **The graceful status publish**, instant, but only on a clean stop.
+2. **The Last-Will**, about 90 seconds at the default keepalive, covering power
+   loss and hard crashes.
+3. **The cloud-side sweeper**, a scheduled job that ages out devices whose
+   telemetry has stopped arriving. It is the backstop for the case where the
+   broker held the connection open but the agent stopped producing.
+
+A device that loses its cellular link but keeps the TCP session alive briefly is
+"online" by the broker's reckoning and silent by the telemetry stream's. That is
+why the recording path uses dead-air rather than a status message to decide a
+session ended.
+
+<Callout
+  type="warn"
+  title="The Last-Will is published but not consumed everywhere"
+>
+  The will lands on the status topic like any other message, and the status
+  ingest path handles it. Not every downstream consumer subscribes to `status`
+  though; the recording lifecycle in particular infers the end of a session from
+  30 seconds of dead air rather than from a status message. Reconciling the two
+  is open platform work, not something a device can fix.
+</Callout>
+
+## Subscribing to it
+
+The topic is inside the device's own subtree, so the device policy grants it
+without any extra configuration. A browser reaches it through the same
+`POST /iot/attach-policy` path as telemetry, and inherits the same org-blind
+scoping caveat described on
+[the overview](/docs/device-sdk/cloud-contract#the-identity-chain).

@@ -1,4 +1,14 @@
 {
   "title": "Device SDK",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "installation",
+    "cloud-contract",
+    "media",
+    "recording",
+    "cli",
+    "configuration-reference",
+    "extending",
+    "hardware"
+  ]
 }

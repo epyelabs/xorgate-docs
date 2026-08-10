@@ -1,0 +1,168 @@
+---
+title: "Extending the agent"
+description: "GStreamer pipelines are the one supported extension point. Collectors, topics and the command set are closed, and this page says exactly how closed."
+---
+
+One thing on a device is designed to be changed without touching source. This
+page is about that thing, and about being honest that the rest is not.
+
+## GStreamer pipelines
+
+Each KVS channel resolves its sender pipeline in this order:
+
+1. `<KVS_PIPELINE_DIR>/<streamKey>.gst` if the file exists (default directory
+   `/etc/xorgate/pipelines`)
+2. the global `KVS_GST_PIPELINE` file, if the environment variable is set
+3. the runtime's compiled-in default
+
+So dropping a `cam0.gst` in place is enough to change what `cam0` streams, with
+no rebuild and no code change. Manage them with the CLI:
+
+```bash
+xorgate pipeline list
+xorgate pipeline set cam0 ./cam0.gst
+xorgate pipeline show cam0
+xorgate pipeline clear cam0
+```
+
+The change applies when that channel's master restarts.
+
+### Rules a pipeline must follow
+
+```
+libcamerasrc camera-name=/base/axi/pcie@1000120000/rp1/i2c@88000/imx290@1a !
+video/x-raw,format=I420,width=1280,height=720,framerate=15/1 !
+x264enc bframes=0 speed-preset=ultrafast bitrate=1000 byte-stream=TRUE tune=zerolatency threads=2 !
+video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline !
+appsink sync=TRUE emit-signals=TRUE name=appsink-video
+```
+
+- **It must end in `appsink … name=appsink-video`.** The runtime pulls frames by
+  that exact element name. Anything else produces a pipeline that builds and
+  streams nothing.
+- **A software encoder should keep `name=sampleVideoEncoder`,** because that is
+  the element TWCC bitrate adaptation reaches for. Without it the stream still
+  works but stops adapting to network feedback, which on a cellular link is
+  exactly when it matters.
+- **Multiple cameras need `camera-name=`.** With two IMX290 sensors, `cam0.gst`
+  and `cam1.gst` differ only in that argument.
+- If the file is missing, empty or unreadable the runtime **warns and falls back**
+  to its built-in default rather than failing. A typo in a filename is therefore a
+  silent downgrade to `testsrc`, not an error.
+
+`pipeline.example` in the KVS repository is a `videotestsrc` pipeline that needs
+no camera, which makes it the right thing to try first when debugging.
+
+### The bridged variant
+
+When video recording is on, the camera is owned by a capture daemon and the
+master reads from shared memory instead. `xorgate pipeline bridge` rewrites the
+`.gst` into a `shmsrc` consumer and keeps the original at
+`<streamKey>.gst.direct`; `xorgate pipeline direct` restores it.
+
+The same channel, bridged, taken off a real device:
+
+```
+shmsrc socket-path=/var/lib/xorgate/shm/cam0.sock is-live=true do-timestamp=true !
+video/x-raw,format=I420,width=1280,height=720,framerate=15/1 !
+x264enc name=sampleVideoEncoder bframes=0 speed-preset=ultrafast bitrate=1000 byte-stream=TRUE tune=zerolatency threads=2 !
+video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline !
+appsink sync=TRUE emit-signals=TRUE name=appsink-video
+```
+
+Only the source element changes. The caps, the encoder and the appsink name are
+identical, which is what lets one master run against either form. The
+shared-memory caps are a fixed contract on both sides (I420 1280x720 15/1)
+because `shmsrc` does no negotiation. A companion `<streamKey>.camera` file
+records which libcamera device the capture daemon should open, so the camera
+identity survives the rewrite. See
+[the camera bridge](/docs/device-sdk/recording#the-camera-bridge).
+
+## Collectors are a fixed registry of five
+
+`src/agent/collectors/` holds exactly five modules: `gps`, `imu`, `lte`, `media`
+and `system`. **There is no plugin API.** Adding a metric group means editing the
+agent's source, rebuilding, and shipping a new tarball.
+
+Four of the five produce metric groups. `media` is the odd one out: it is the KVS
+supervisor and produces the payload's `media` block rather than a `group.field`
+family.
+
+A new metric additionally has to be landed in **three repositories at once**. See
+[the three copies](/docs/device-sdk/cloud-contract/telemetry#keeping-the-three-copies-honest). That is the real cost, not the collector itself.
+
+<Callout type="warn" title="The agent's own metric interface is not the catalog">
+  `TelemetryMetrics` in `src/agent/telemetry.ts` looks like the authoritative
+  list of metric fields. It is not. Collectors return
+  `Record<string, unknown>`, so TypeScript never checks one against the other,
+  and three `gps` fields (`sats_heard`, `snr_max`, `sky_state`) are on the wire
+  today without being declared there. Read the collectors, or
+  [the catalog](/docs/device-sdk/cloud-contract/telemetry#the-metric-catalog).
+</Callout>
+
+## The enabled capability set is hardcoded
+
+In `MODE=real` the worker instantiates collectors from a **literal**, not from
+the device model's declared `io_capabilities`:
+
+```ts
+createCollector(
+  { sensors: { imu: true }, system: true, comm: { gps: true, signal: true } },
+  config.media,
+)
+```
+
+`src/worker.ts:102`. Wiring the exact set from per-device `io_capabilities` is a
+later step, and the reasoning for leaving it is stated in the code: enabling
+everything is safe **because each collector self-gates**.
+
+- `imu` runs `i2cdetect` and emits nothing when no BNO085 is on the bus.
+- `system` is pure `/proc`, `/sys` and `df` reads, always available on Linux.
+- `gps` reads NMEA off the SIM7600 port and returns `{}` until a fix lands.
+- `lte` reads the connection manager's telemetry file and returns `{}` if absent.
+
+A collector that produces nothing has its group omitted from the payload
+entirely, so a device without a sensor is indistinguishable from a device whose
+model never declared one. That is exactly why enabling all four is harmless, and
+also why it is not free: there is no way, today, to ask a device which metrics it
+_should_ be reporting.
+
+`io_capabilities` is still consulted at provisioning time, where it determines
+the KVS stream keys. It is just not consulted at collection time.
+
+<Callout title="`io_capabilities` is a declaration, not an observation">
+  It describes what a hardware model can do, it is not validated when written,
+  and nothing reconciles it against what a device actually publishes. A frontend
+  building a metric picker has to either trust the model or scrape
+  `telemetry/latest`.
+</Callout>
+
+## Topics and commands are closed
+
+The [six topics](/docs/device-sdk/cloud-contract) are built from the device id in
+`loadConfig` and are not configurable. That is not an oversight: the device IoT
+policy grants publish and subscribe on
+`topic/xorgate/devices/${iot:Connection.Thing.ThingName}/*`, so a seventh topic
+inside that subtree would work and one outside it would be silently denied by the
+broker.
+
+The command set is the four-member union
+`reboot | power_off | refresh | update`. A payload naming anything else is
+dropped without an acknowledgement. Adding one means a source change on the
+device _and_ a matching entry in the sudoers drop-in, which grants argv
+byte-for-byte with no wildcards, on purpose.
+
+## What a new device capability actually costs
+
+Collected in one place, since this is the question the section exists to answer.
+
+| You want                                 | You must change                                                                                                                                     |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A different camera pipeline              | one file on the device. Nothing else.                                                                                                               |
+| A new tuning knob for existing behaviour | the agent's settings parser, the cloud config registry, and `config-contract.json`, which the frontend imports and the agent contract-tests against |
+| A new metric                             | the collector, the agent's telemetry types, the backend ingest schema, the frontend live schema, and the docs catalog                               |
+| A new command                            | the agent's command union, the worker's dispatch, the sudoers drop-in, the backend command handler, and the UI                                      |
+| A new topic                              | the above plus the device IoT policy, if it falls outside the device subtree                                                                        |
+| A new collector                          | all of the metric row, plus a self-gating detection path, because "enable everything" is only safe while every collector self-gates                 |
+
+The pattern is that the device side is rarely the expensive half.

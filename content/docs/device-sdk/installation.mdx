@@ -1,0 +1,194 @@
+---
+title: "Install and provisioning"
+description: "The zero-touch claim flow, the stable serial that makes it idempotent, the one-shot certificate, and the developer path."
+---
+
+A device joins the platform through a **claim code**. An operator mints one in
+the web application, runs one command on the device, and the device appears in
+the fleet and starts streaming. Nothing is typed into the device by hand.
+
+## The zero-touch flow
+
+<Steps>
+
+<Step>
+
+**Mint a code.** `POST /device-registrations` against
+
+<ApiBaseUrl /> creates a short-lived registration. It requires an
+`X-Workspace-Id` header (this is the one place that header is mandatory rather
+than a filter), and it returns `200`, not `201`, even when it mints a fresh
+code. Its body is a bare object rather than the named envelope the rest of the
+API uses:
+
+```json
+{
+  "code": "…",
+  "status": "pending",
+  "deviceId": null,
+  "expiresAt": "2026-08-10T18:30:00.000Z",
+  "installUrl": "…"
+}
+```
+
+The web application shows this as a copy-paste command.
+
+</Step>
+
+<Step>
+
+**Run the installer on the device.**
+
+```bash
+curl -s https://<api-host>/get/<code> -o install.sh
+sudo bash install.sh
+```
+
+The script is rendered per request by the backend. It is not a static asset, and
+it is not meant to be edited on the host.
+
+</Step>
+
+<Step>
+
+**The script claims the code.** It derives a stable serial for the host, posts it
+to the claim endpoint, and receives the device identity plus a one-shot
+certificate bundle. Claiming is what creates the `devices` row: before this
+point the registration knows no device.
+
+</Step>
+
+<Step>
+
+**The script installs everything else.** Node and system dependencies, the I2C
+tooling and Adafruit CircuitPython stack that back the IMU collector, the agent
+tarball from the distribution bucket, the certificates into `/etc/xorgate`, the
+`xorgate` CLI wrapper, the systemd unit with its `User=` drop-in, and a narrow
+sudoers drop-in. Then it starts the service.
+
+</Step>
+
+</Steps>
+
+<Callout title="Two routes are internal">
+  `GET /get/{code}` and `POST /device-registrations/{code}/claim` are marked
+  `x-internal: true` in the OpenAPI document and are stripped from the API
+  reference. They return an executable install script and private key material
+  respectively. They exist for the installer, not for API consumers, and their
+  response bodies are deliberately not documented anywhere public.
+</Callout>
+
+## Why it is safe to re-run
+
+The installer is idempotent per physical host, and the mechanism is a **stable
+serial** derived on the device in this order:
+
+1. `/etc/machine-id`
+2. `/sys/class/dmi/id/product_uuid`
+3. the hostname
+
+The backend treats `serial` as unique per workspace. A second claim from the same
+host therefore lands on a clean **`409 CONFLICT`** telling you to delete the
+device first, rather than silently minting a duplicate fleet entry or letting the
+unique index throw a 500.
+
+If the device sends no serial at all, the backend falls back to `xg-<code>`,
+which is unique by construction. That keeps the not-null constraint satisfied but
+gives up the idempotency, so a host without any of the three identifiers can be
+registered twice.
+
+<Callout type="warn" title="Provision with `sudo`, not from a root login">
+  The installer needs root for apt, `/etc`, `/opt` and systemd, but it captures
+  `$SUDO_USER` and runs the **service** as that user via
+  `xorgate-agent.service.d/10-user.conf`. Logging in as root and running the
+  script directly means no `$SUDO_USER`, so the agent falls back to running as
+  root and its state directory becomes unreadable to the operator account.
+</Callout>
+
+## The certificate is minted exactly once
+
+`POST /devices/{id}/provision` creates the IoT thing, certificate and policy
+attachments, and returns the private key **in that response and never again**.
+There is no rotation endpoint and no way to re-read the key.
+
+Practical consequences:
+
+- A device that loses `/etc/xorgate/device.key.pem` cannot be recovered by
+  re-provisioning the same `devices` row. It has to be deleted and claimed
+  fresh.
+- Provisioning is not idempotent in the way claiming is. Treat the response as
+  the only copy.
+- The Amazon Root CA at `root-ca.pem` is public and is fetched by URL rather than
+  carried in the response.
+
+The same response supplies `iot.dataEndpoint`, which becomes `IOT_DATA_ENDPOINT`
+in `agent.env`, and the KVS manifest that lands at `/etc/xorgate/kvs.json`.
+
+## The identity chain
+
+Provisioning fixes an equality that everything downstream depends on:
+
+```
+devices.id  ==  IoT thingName  ==  MQTT clientId  ==  the {deviceId} topic segment
+```
+
+All four are the same UUID. The device IoT policy scopes `iot:Connect` to
+`client/${iot:Connection.Thing.ThingName}` and publish/subscribe to
+`topic/xorgate/devices/${iot:Connection.Thing.ThingName}/*`, so breaking the
+equality anywhere does not produce a warning: it produces a device that cannot
+connect, or one that connects and is silently denied every publish. The KVS
+signaling channel names extend the same chain as `${deviceId}-${streamKey}`.
+
+## The developer path
+
+Two ways to run without going through the installer.
+
+<Tabs items={["Provisioned test device", "Fully offline"]}>
+
+<Tab value="Provisioned test device">
+
+`scripts/provision-test-device.mjs` creates and provisions a device against the
+API and writes the credential bundle into `./creds`, then prints the run command.
+It needs a Cognito ID token for an owner or admin user.
+
+```bash
+npm install && npm run build
+ID_TOKEN="<idToken>" node scripts/provision-test-device.mjs
+DEVICE_ID=<uuid> IOT_DATA_ENDPOINT=<...-ats.iot.us-east-1.amazonaws.com> xorgate start
+```
+
+This is a real device on the platform, streaming simulated telemetry. It appears
+in the web application and can be watched live. `xorgate stop` publishes an
+offline status immediately; an ungraceful kill is covered by the MQTT Last-Will
+and the cloud sweeper instead.
+
+</Tab>
+
+<Tab value="Fully offline">
+
+`--offline` needs no credentials, no network and no AWS account. It substitutes a
+stub MQTT client and the simulator, so the daemon, the state file and the
+terminal UI all work on a bare checkout.
+
+```bash
+npm install && npm run build
+node dist/cli.js --offline start
+node dist/cli.js status
+node dist/cli.js manage
+node dist/cli.js stop
+```
+
+</Tab>
+
+</Tabs>
+
+## Getting a device off the platform
+
+There is no decommission command. Deleting the `devices` row is what frees the
+serial for a re-claim. The agent on the host keeps running and keeps trying to
+connect with a certificate whose policy attachments may or may not have been
+cleaned up, so stop and disable the unit on the device as well:
+
+```bash
+sudo systemctl disable --now xorgate-agent
+```

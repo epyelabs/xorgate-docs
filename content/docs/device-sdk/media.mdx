@@ -1,0 +1,185 @@
+---
+title: "Media and KVS"
+description: "One MASTER process per camera, the IoT credential-provider environment contract, the CA-bundle gotcha, supervision and backoff, and idle teardown."
+---
+
+Live video is the one plane that does not go through the agent's MQTT
+connection at all. The agent supervises a **separate compiled binary**, one
+process per camera, and that binary talks WebRTC to a browser viewer directly.
+
+```
+xorgate-agent (Node)
+  └── media collector, one supervisor per channel
+        ├── xorgate-kvs-webrtc  <deviceId>-cam0   (C, KVS MASTER)
+        └── xorgate-kvs-webrtc  <deviceId>-cam1
+```
+
+## One MASTER per channel
+
+The runtime is **always MASTER**, never viewer. Channel names extend the
+platform's identity chain:
+
+```
+channelName == `${deviceId}-${streamKey}`
+```
+
+`streamKey` comes from the device model's declared media capabilities and is
+typically `cam0`, `cam1`. The on-device manifest at `/etc/xorgate/kvs.json`,
+written by the installer from the claim response, is the list the supervisor
+works from:
+
+```json
+{
+  "deviceId": "a73f7a36-2a9c-45c4-a66c-54d3b018a7f7",
+  "region": "us-east-1",
+  "credentialEndpoint": "xxxx.credentials.iot.us-east-1.amazonaws.com",
+  "roleAlias": "XorgateDeviceCredsDev",
+  "channels": [
+    { "streamKey": "cam0", "channelName": "a73f7a36-…-cam0" },
+    { "streamKey": "cam1", "channelName": "a73f7a36-…-cam1" }
+  ],
+  "uploadBucket": "…"
+}
+```
+
+A device with two cameras gets two masters automatically. The browser connects to
+the same channel as VIEWER after reading `GET /devices/{id}/kvs-channels`.
+
+<Callout
+  type="warn"
+  title="An empty channel list has two very different causes"
+>
+  `GET /devices/{id}/kvs-channels` returns `[]` both for a device that was never
+  provisioned and for one provisioned from a model whose `io_capabilities`
+  declared no video. That second case includes a silent failure: the
+  capabilities document is not validated on write but *is* strictly parsed at
+  provisioning time, so a malformed document yields **zero KVS channels with no
+  error raised anywhere**, and live video simply never works. A client cannot
+  tell "not set up yet" from "set up wrong", which is exactly the distinction a
+  support engineer needs first.
+</Callout>
+
+## Credentials: the IoT credential provider
+
+There are no static AWS keys on a device. The runtime authenticates to KVS using
+the device's existing IoT certificate through the IoT credential provider, and it
+chooses that mode **at runtime** rather than at compile time.
+
+The environment the agent hands each child process:
+
+| Variable                           | Source                                         |
+| ---------------------------------- | ---------------------------------------------- |
+| `AWS_DEFAULT_REGION`               | `kvs.json` `region`                            |
+| `AWS_IOT_CORE_CREDENTIAL_ENDPOINT` | `kvs.json` `credentialEndpoint`                |
+| `AWS_IOT_CORE_ROLE_ALIAS`          | `kvs.json` `roleAlias`                         |
+| `AWS_IOT_CORE_THING_NAME`          | the device id                                  |
+| `AWS_IOT_CORE_CERT`                | `CERT_PATH`                                    |
+| `AWS_IOT_CORE_PRIVATE_KEY`         | `KEY_PATH`                                     |
+| `AWS_KVS_CACERT_PATH`              | `KVS_CACERT_PATH`                              |
+| `AWS_KVS_LOG_LEVEL`                | `AWS_KVS_LOG_LEVEL`, default `3` (INFO)        |
+| `KVS_GST_PIPELINE`                 | the resolved per-channel pipeline file, if any |
+| `KVS_IDLE_TEARDOWN_SECS`           | `KVS_IDLE_TEARDOWN_SECS`, default `30`         |
+| `LD_LIBRARY_PATH`                  | `KVS_RUNTIME_LIB_DIR`                          |
+
+Setting `AWS_IOT_CORE_CREDENTIAL_ENDPOINT` is what selects IoT mode; without it
+the binary falls back to static `AWS_ACCESS_KEY_ID` credentials. The channel name
+is passed as `argv[1]`, and the full argv is
+`<channelName> <mediaType> <source>`.
+
+<Callout type="warn" title="The CA bundle gotcha">
+  The runtime verifies TLS to the IoT credential provider **and** to the KVS
+  control and signaling endpoints against the SDK's own `cert.pem` bundle
+  (Starfield Services Root CA G2), shipped next to the binary and pointed at by
+  `KVS_CACERT_PATH`.
+
+The device's `root-ca.pem` (Amazon Root CA 1) validates **MQTT only**. The KVS
+endpoints chain to a different root, so reusing `root-ca.pem` here fails TLS.
+This is the single most common misconfiguration in this component, because the
+two files look interchangeable and are not.
+
+</Callout>
+
+A second failure with a distinctive signature: a binary built before the runtime
+credential-mode change compiles to static-keys-only, because the credential code
+sat behind `#ifdef IOT_CORE_ENABLE_CREDENTIALS`. It fails with
+`AWS_ACCESS_KEY_ID must be set` even though every `AWS_IOT_CORE_*` variable is
+correctly present.
+
+## Self-gating and supervision
+
+The media runtime follows the same "safe when absent" rule as the collectors.
+Hard gates before anything starts: 64-bit Linux, `arch() === "arm64"`, and the
+binary present at `KVS_RUNTIME_BIN`. Off a device (macOS, x86) the collector
+reports `media` idle and the daemon stays healthy. GStreamer presence is reported
+but not required, since the binary links libgstreamer directly.
+
+Once running, each channel has its own supervisor:
+
+| Constant                      | Value | Meaning                                                                     |
+| ----------------------------- | ----- | --------------------------------------------------------------------------- |
+| stable threshold              | 15 s  | A master alive this long counts as up, and its backoff resets.              |
+| base backoff                  | 2 s   | First retry delay after a crash.                                            |
+| max backoff                   | 30 s  | Exponential doubling caps here.                                             |
+| quick failures before parking | 3     | Crashes inside the stable threshold.                                        |
+| parked retry                  | 60 s  | A parked channel re-attempts on this slow cadence rather than staying dead. |
+
+Parking rather than tight-looping matters because the usual cause of repeated
+quick crashes is missing KVS SDK shared libraries, and the second most common is
+the LTE link being down. The first needs a human; the second heals itself, and the
+slow retry means it heals without a daemon restart. The parked state surfaces as
+`state: "failed"` in the telemetry payload's `media.streams`.
+
+Three ways a master is deliberately held down rather than restarted:
+
+- **Shed.** Power load-shedding rung 1 parks every master, reversibly.
+- **Disabled camera.** A stream key turned off in `recording.video.cameras` is
+  parked so the sensor path stays cold entirely.
+- **Bridge restart.** When the capture daemon feeding a bridged stream is
+  respawned, its master must be bounced: a master whose pipeline attached to the
+  _old_ shared-memory writer does not crash when that writer dies. Its `shmsrc`
+  wedges silently and viewers see black. This is hardware-verified behaviour, and
+  the supervisor SIGINTs the master so its normal restart path reattaches.
+
+`stop()` sends SIGINT, which is the runtime's graceful-shutdown signal.
+
+## Idle teardown
+
+`KVS_IDLE_TEARDOWN_SECS` (default `30`) is the number of seconds with zero
+viewers after which the runtime stops its x264 encoder pipeline and returns to
+idle CPU, restarting transparently on the next viewer offer. `"0"` disables it,
+restoring the older behaviour where the encoder runs from the first viewer until
+the process exits.
+
+It is environment-only rather than a cloud-managed setting, and that is a
+deliberate stance: a live stream nobody is watching has no legitimate reason to
+keep encoding, so this is a safety valve rather than a product knob. It is also
+what makes leaving media on for every provisioned device cheap.
+
+## Pipelines are the extension point
+
+Each channel resolves its GStreamer pipeline in this order:
+
+1. `<KVS_PIPELINE_DIR>/<streamKey>.gst` if it exists (default directory
+   `/etc/xorgate/pipelines`)
+2. the global `KVS_GST_PIPELINE` file, if set
+3. the runtime's built-in default
+
+So `cam0.gst` and `cam1.gst` drive the two masters with their own
+`libcamerasrc camera-name=…`. This is the supported way to change what a device
+streams, and it is covered in full under
+[GStreamer pipelines](/docs/device-sdk/extending#gstreamer-pipelines).
+
+## What is not here
+
+- **No audio.** The carrier has an I2S microphone, but there is no `audio0`
+  channel in any manifest, no audio pipeline, and the agent never opens the card.
+  The `audio0` entry that appears in some device models' `io_capabilities` is
+  aspirational. See the [hardware notes](/docs/device-sdk/hardware#audio-i2s) for
+  the overlay warning, which is a real trap.
+- **No cloud recorder.** A Fargate viewer-recorder used to join device channels
+  and remux to MP4. It was removed in July 2026; recording is now owned entirely
+  by the device. See [On-device recording](/docs/device-sdk/recording).
+- **No `mediaEnabled` switch.** The operator-facing media master switch, its
+  `--media` flag and its `MEDIA_ENABLED` environment variable were all removed.
+  Media is enabled for any device that is not `--offline`. Turn cameras off
+  individually with `recording.video.cameras` instead.

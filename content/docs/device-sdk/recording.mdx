@@ -1,0 +1,186 @@
+---
+title: "On-device recording"
+description: "Segment files, the shared-memory camera bridge, the single-flight uploader with its sidecar ordering rule, disk quota and eviction, and why a dead zone still records."
+---
+
+Recording happens on the device and uploads when it can. Nothing about it depends
+on the cloud being reachable, which is the whole point: a vehicle in a tunnel or
+a rural dead zone keeps recording, and the backlog drains when the link returns.
+
+Recording is **off by default**. It is turned on through the `recording`
+configuration namespace, either from the cloud or with `xorgate set recording.*`.
+
+## Two kinds of segment
+
+| Kind      | Format                             | Rotation        | Lands at                                                        |
+| --------- | ---------------------------------- | --------------- | --------------------------------------------------------------- |
+| Telemetry | JSONL, gzipped on close            | by size and age | `telemetry/<sessionId>/seg-<startTsMs>-<seq>.jsonl.gz`          |
+| Video     | fMP4 fragments from `splitmuxsink` | roughly 60 s    | `<streamKey>/<sessionId>/<fragment>.mp4` plus a `.json` sidecar |
+
+A **segment is the unit of upload, retry, loss and eviction.** There is no
+journal: "a closed segment exists" _is_ the pending-upload state, which is what
+makes the whole thing crash-safe without bookkeeping to corrupt.
+
+Telemetry durability is deliberately asymmetric. Lines go through a plain file
+descriptor with no per-line fsync, so a power cut costs at most the tail of the
+**active** segment. Rotation fsyncs both the gzip file and its directory. On
+startup, any leftover plain `.jsonl` from a previous run is gzipped and its torn
+last line truncated.
+
+### Sessions
+
+A session is one continuous run of recording, minted when recording turns on
+(including at boot with recording already enabled) and **never reused across
+restarts**: a new boot id always means a new session.
+
+Session ids are **UUIDv7**, so they carry a 48-bit epoch-millisecond prefix and
+sort roughly by start time. That is not decorative: oldest-first upload and
+oldest-first eviction both rely on it.
+
+Every segment header records where wall-clock time came from: `ntp`, `gps`,
+`nitz`, `rtc` or `unsynced`. A device with no charged RTC can boot with a bogus
+clock, and `unsynced` is the signal that the cloud may need to re-anchor those
+timestamps against the monotonic clock and boot id rather than trusting them.
+
+## The camera bridge
+
+Recording and live streaming want the same camera, and only one process can own
+it. The resolution is a bridge.
+
+```
+gst-launch-1.0 (one per camera, OWNS the sensor)
+  ├── tee → x264 high quality → splitmuxsink → ~60 s .mp4 on disk
+  └── tee → low-res raw       → shmsink
+                                   └── xorgate-kvs-webrtc reads via shmsrc
+```
+
+So live streaming keeps working with viewers or without, online or offline, and
+the KVS-side encoder keeps adapting its bitrate to network feedback
+independently of what is being recorded.
+
+<Callout type="warn" title="The shared-memory caps are a hard contract">
+  `shmsrc` does no caps negotiation, so both sides must state the format
+  identically: **I420, 1280x720, 15/1**. The record branch takes its caps from
+  the preset; the bridge branch scales and rates down to this fixed shape.
+  Change one side without the other and you get no video, not a warning.
+</Callout>
+
+Switching a stream into bridged mode rewrites its `.gst` to a `shmsrc` consumer
+and keeps a backup of the direct pipeline at `<streamKey>.gst.direct`, alongside
+a `<streamKey>.camera` file recording which libcamera device to open. Ground
+truth for "is this stream bridged" is whether the `.gst` the master will actually
+load contains `shmsrc`.
+
+Capture-daemon supervision mirrors the KVS supervisor: crash, backoff 2 s to
+30 s, and three quick deaths under 15 s parks the channel on a 60 s retry.
+Stopping sends SIGINT, which with `gst-launch`'s `-e` flag forces an EOS so
+`splitmuxsink` finalizes the current fragment with a clean `moov` atom rather
+than leaving an unplayable file.
+
+## Upload
+
+One generic single-flight uploader drains both sources. Ordering is by source
+priority (telemetry first: tiny and high value) and chronological oldest-first
+within a source.
+
+The rules, in the order they matter:
+
+- **One transfer at a time.** No parallelism, because the link is the scarce
+  resource.
+- **Delete the local file only on a confirmed PUT.** S3 is the durable copy;
+  until it acknowledges, the device still holds the only one.
+- **Run only while online and `recording.upload.mode === "auto"`.**
+- **Pause immediately on disconnect,** aborting the in-flight PUT.
+- **Exponential backoff on failure,** 2 s to 5 minutes, reset on success or
+  reconnect.
+
+### The sidecar ordering rule
+
+A video segment is a pair: the `.mp4` and a `.json` sidecar. The sidecar is PUT
+**immediately before** the main file and deleted with it only after the main PUT
+succeeds.
+
+That ordering exists because the cloud ingest is event-driven on the `.mp4`
+object landing. If the sidecar were not already in S3 at that moment, ingest
+would find an mp4 with no metadata. A failure between the two PUTs simply re-PUTs
+the sidecar on retry, which is free because S3 PUTs are idempotent.
+
+### Object keys
+
+```
+telemetry/v1/{deviceId}/{sessionId}/{startTsMs}-{seq}.jsonl.gz
+media-sessions/v1/{deviceId}/{streamKey}/{sessionId}/{fragment}.mp4
+media-sessions/v1/{deviceId}/{streamKey}/{sessionId}/{fragment}.json
+```
+
+Both carry a `v1` path segment, and every component is validated against a
+pattern before a key is built: an unparseable name yields a null key and the
+uploader skips that segment rather than writing something unpredictable into the
+bucket. The target bucket comes from `uploadBucket` in `kvs.json`.
+
+## Disk quota and eviction
+
+The disk manager enforces two limits over the whole recordings tree at once:
+`retention.maxBytes` and `retention.minFreeBytes` of filesystem headroom.
+
+Under pressure it deletes the **oldest closed segments first**, in mtime order
+across the entire tree, so telemetry and video interleave chronologically rather
+than one starving the other. Two things are never touched: the active segment,
+registered by its writer, and any file type it does not recognise. Evicting an
+`.mp4` also removes its `.json` sidecar, because the pair is one upload unit and
+a sidecar alone is junk.
+
+Each eviction increments `droppedSegments` in `recordings/counters.json`.
+
+<Callout title="`droppedSegments` is a lifetime counter, not a rate">
+  It is deliberate loss accounting for the life of the recordings tree, so it
+  never goes down on its own. That is also why the status LED has no "data loss"
+  rung: consuming a lifetime counter would latch a permanent false alarm.
+
+Zero it on a redeployed or repurposed device with
+`xorgate recording reset-counters`. The write is atomic and the running agent
+re-reads the file on its status tick, so it shows up in telemetry within about
+5 seconds with no restart.
+
+</Callout>
+
+## Boot staging and load shedding
+
+Two mechanisms hold video back rather than letting it start unconditionally, and
+both report themselves in the telemetry payload's `recording` block.
+
+**Boot staging** (`bootDefer`) has two stages and five reported values:
+
+| Value            | Meaning                                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off`            | The feature is disabled.                                                                                                                                                                       |
+| `skipped`        | The negotiated PSU budget was high enough that no staging was needed.                                                                                                                          |
+| `deferring`      | Stage 1: holding heavy encoders while the modem settles.                                                                                                                                       |
+| `gating`         | Stage 2: holding video (recording **and** live) until the modem has converted power into value: LTE connected with a GPS fix, a declared dead zone, a sustained no-RF sky, or the give-up cap. |
+| `released:<why>` | Released, with the reason.                                                                                                                                                                     |
+
+Telemetry recording is never gated. Both stages are budget-gated on
+`bootDeferMinBudgetMa` by default, which in practice means a 5 V/5 A supply skips
+them entirely and a 3 A supply does not.
+
+**Runtime load shedding** (`powerShed`) reacts to a rail that measurably fails or
+a SoC that runs hot. Rung 1 is `no-live` (park the KVS masters), rung 2 is
+`bridge-only`. Once the shed-cycle cap for the hour is exhausted the value is
+prefixed `parked:`. The thermal arm caps at rung 1 by design: overheating never
+stops recording.
+
+When either mechanism blocks live streaming it also publishes a
+[`liveBlock`](/docs/device-sdk/cloud-contract/telemetry#liveblock-and-the-open-reason-set),
+which is how a viewer learns why the video will not start.
+
+## A dead zone still records
+
+Worth stating plainly, because it is the behaviour the whole design exists for.
+Losing the cellular link changes exactly one thing: the uploader pauses. Capture
+continues, segments keep rotating and closing, the backlog grows against the
+retention limits, and the moment the link returns the queue drains oldest-first.
+
+The failure mode to watch is not the outage. It is an outage long enough that
+`retention.maxBytes` starts evicting segments that were never uploaded, at which
+point `droppedSegments` climbs and that footage is gone. `backlogBytes` and
+`backlogSegments` in the telemetry payload are the early warning.

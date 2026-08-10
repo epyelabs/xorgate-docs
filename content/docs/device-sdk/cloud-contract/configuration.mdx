@@ -1,0 +1,210 @@
+---
+title: "Configuration sync"
+description: "The retained desired document, whole-namespace REPLACE semantics, the rev guard against reconnect redelivery, and the reported document with its per-namespace verdicts."
+---
+
+Configuration is a two-topic loop. The cloud states what it wants on a **retained**
+topic; the device states what it actually holds on a second topic. The gap
+between them is what lets the platform say "applied", "adjusted" or "rejected"
+instead of only "saved".
+
+| Topic                                        | Direction       | Retained | QoS |
+| -------------------------------------------- | --------------- | -------- | --- |
+| `xorgate/devices/{deviceId}/config`          | cloud to device | **yes**  | 1   |
+| `xorgate/devices/{deviceId}/config/reported` | device to cloud | no       | 1   |
+
+## The desired document
+
+The cloud publishes its **complete stored configuration**, not a delta. It is
+idempotent by design, which is what makes retention safe.
+
+```json
+{
+  "v": 1,
+  "rev": 42,
+  "ts": 1786401802272,
+  "gnssAntBias": true,
+  "imuMount": { "enabled": true, "rollDeg": 0, "pitchDeg": 90, "yawDeg": 0 },
+  "recording": { "telemetry": {}, "video": {}, "upload": {}, "retention": {} },
+  "lteRecovery": {
+    "gpsFixResetPolicy": "defer",
+    "deadZoneProfile": "balanced"
+  },
+  "timeSync": {
+    "offlineSources": true,
+    "stepThresholdSecs": 10,
+    "maxStepsPerBoot": 4
+  },
+  "cellular": { "apn": "" }
+}
+```
+
+There are **six** cloud-managed namespaces:
+
+| Namespace     | Apply class  | Applied by                                                                   |
+| ------------- | ------------ | ---------------------------------------------------------------------------- |
+| `gnssAntBias` | `modem-poll` | the SIM7600 daemon, re-reading the file roughly every 30 s                   |
+| `imuMount`    | `agent-poll` | the IMU collector, re-reading per sample                                     |
+| `recording`   | `agent-poll` | the recording manager, 5 s poll plus a forced re-read on every cloud message |
+| `lteRecovery` | `modem-poll` | the SIM7600 daemon, at each recovery decision                                |
+| `timeSync`    | `agent-poll` | the clock stepper, roughly every 30 s                                        |
+| `cellular`    | `modem-poll` | the SIM7600 daemon, with confirm-and-rollback                                |
+
+**No namespace requires an agent restart.** The `agent-restart` apply class
+exists in the type so a future key has somewhere to declare itself, and nothing
+uses it. Never restart the modem daemon to apply a setting either: it drops the
+LTE link, and every one of its namespaces is polled precisely so that is
+unnecessary.
+
+`uploadBucket` may also appear at the top level. It is a backfill for devices
+fielded before provisioning wrote it, and it is persisted into `kvs.json` rather
+than `settings.json`, so it is not a settings namespace.
+
+## Three semantics that are easy to get wrong
+
+### REPLACE, never merge
+
+When a message carries a namespace key, that namespace in `settings.json` becomes
+**exactly** the cloud value. There is no per-field merge. Sending
+`{"recording": {"telemetry": {"enabled": true}}}` does not preserve a locally set
+`recording.video.preset`; it erases it.
+
+This is the correct behaviour for a retained authoritative document, and it is
+also the reason a local `xorgate set recording.*` tweak is expected to be
+overwritten on the next redelivery.
+
+### Absent, empty and null are three different things
+
+| The message contains            | Meaning                          | Effect                                                                     |
+| ------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| no key at all                   | never cloud-configured           | local settings untouched                                                   |
+| `"recording": {}`               | cloud manages it, all defaults   | the local key is **removed**, so the device falls back to its own defaults |
+| `"recording": {"…": "garbage"}` | nothing valid survives the parse | same as `{}`: the key is removed                                           |
+
+The empty object is the cloud's revert-to-defaults marker. Treating it as
+"absent" was a real bug once: `PATCH {"imuMount": null}` emptied the cloud side
+while the device kept running its old mounting angles, with nothing on either
+side saying so.
+
+<Callout title="`cellular` is stricter than its siblings">
+  Every other namespace is forgiving: numbers are clamped rather than rejected,
+  mistyped keys are dropped, and a partially valid object still applies. The APN
+  parser instead **drops** an invalid value outright, because a clamped `rateHz`
+  degrades gracefully but a "repaired" APN is a different APN, and a wrong APN
+  strands a device with no way to reach it. Dropping resolves to "do not touch
+  the modem", which is the only safe fallback.
+</Callout>
+
+### The `rev` guard
+
+`rev` is the cloud's monotonic `devices.config_rev`. It is metadata, not
+configuration: nothing ever writes it into `settings.json`.
+
+Because the topic is retained and the session is clean, the device re-receives
+the current document on **every single reconnect**. Without a guard, a device
+that flaps its cellular link would re-apply the same document repeatedly and,
+more importantly, would keep reverting any local edit made in between. So the
+worker records `lastAppliedRev` in `config-sync.json` and skips a document it has
+already applied.
+
+A missing or zero `rev` means the backend predates the field. The worker then
+applies unconditionally, exactly as it did before, which is what keeps a new
+agent working against an old backend.
+
+## The reported document
+
+The device answers on `config/reported`, QoS 1 and **not** retained, because
+Postgres is the durable mirror and a retained report would only add a stale-clear
+lifecycle.
+
+```json
+{
+  "v": 1,
+  "deviceId": "a73f7a36-…",
+  "ts": 1786401802272,
+  "rev": 42,
+  "origin": "cloud",
+  "effective": { "gnssAntBias": true, "imuMount": {}, "recording": {} },
+  "status": {
+    "gnssAntBias": { "state": "applied", "at": 1786401802272 },
+    "recording": {
+      "state": "adjusted",
+      "at": 1786401802272,
+      "detail": "rateHz clamped to 20"
+    }
+  },
+  "changed": {}
+}
+```
+
+<TypeTable
+  type={{
+    rev: {
+      type: "number",
+      description:
+        "The last desired rev applied. 0 means the device has never received one.",
+    },
+    origin: {
+      type: '"cloud" | "local" | "boot"',
+      description:
+        'Why this report was sent. "boot" covers both the on-connect assertion and the periodic heartbeat: the same claim made for different reasons.',
+    },
+    effective: {
+      type: "Record<namespace, unknown>",
+      description: "The value actually in force on the device.",
+    },
+    status: {
+      type: "Record<namespace, NamespaceStatus>",
+      description:
+        '{ state, at, detail?, reason? } where state is "applied", "adjusted" or "rejected".',
+    },
+    changed: {
+      type: "Record<namespace, unknown> | undefined",
+      description:
+        'origin "local" ONLY. The namespaces that moved, as the device now holds them. null for a namespace removed locally.',
+    },
+  }}
+/>
+
+`pending` is a cloud-side computation and is never reported by a device: from the
+device's point of view a namespace is in force or it is not.
+
+### Local edits flow back
+
+A fingerprint watcher over `settings.json` notices a change the config applier
+did not make, whether from `xorgate set`, the `manage` UI, or someone with an
+editor. It then publishes `origin: "local"` carrying `changed`, and the cloud
+folds those namespaces into the desired document. Without that, the next retained
+redelivery would simply undo the operator's edit.
+
+Two details matter:
+
+- **`changed` carries the settings values, never `effective`.** For
+  `gnssAntBias`, `effective` reports the modem's _applied_ value, which can still
+  be the pre-edit one for about 30 seconds after a local change. Mirroring that
+  would republish the old value and undo the very edit being reported.
+- **A detected local edit survives a restart.** `localPending` in
+  `config-sync.json` means the edit was seen but has not gone out on a live link
+  yet, so an edit made while offline converges on the next connect instead of
+  being lost.
+
+### The report path cannot break the config path
+
+The reporting module is one-directionally isolated by rule, not by accident. It
+reads `settings.json`, the modem's telemetry file and already-published status
+objects. It never writes settings, never restarts anything, and is never awaited
+by an apply path, and every entry point swallows its own errors. A completely
+broken report path degrades to "config still delivers, the cloud just shows no
+report yet".
+
+Its bookkeeping also lives in its own file rather than in `settings.json`,
+because `loadSettings()` is an allowlist rewriter that destroys unknown keys on
+the next save by any writer, and the modem daemon greps `settings.json` by exact
+path.
+
+## No optimistic concurrency
+
+`PATCH /devices/{id}/config` replaces each namespace whole with no `If-Match` on
+`configRev`. Two writers silently clobber each other and the loser is never told.
+Read, merge and write in your own client if that matters to you; it is a
+mitigation rather than a fix, and closing it properly is platform work.

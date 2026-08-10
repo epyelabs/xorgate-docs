@@ -1,0 +1,120 @@
+---
+title: "Cloud contract"
+description: "The six MQTT topics a device speaks, their direction, retention and QoS, and the identity chain that scopes them."
+---
+
+Everything a device says to the platform, and everything the platform says back,
+travels over six MQTT topics under one prefix. The transport is AWS IoT Core over
+mTLS, MQTT v5, port 8883, with a clean session.
+
+## The six topics
+
+All six are `xorgate/devices/{deviceId}/…`. The table is the contract; each row
+links to the page that specifies its payload.
+
+| Topic                                                              | Direction       | Retained             | QoS | Purpose                                                       |
+| ------------------------------------------------------------------ | --------------- | -------------------- | --- | ------------------------------------------------------------- |
+| [`telemetry`](/docs/device-sdk/cloud-contract/telemetry)           | device to cloud | no                   | 0   | Sensor readings, media and recording status. 1 Hz by default. |
+| [`status`](/docs/device-sdk/cloud-contract/status)                 | device to cloud | no                   | 0   | Connect and graceful-stop markers, plus the Last-Will.        |
+| [`config`](/docs/device-sdk/cloud-contract/configuration)          | cloud to device | **yes**              | 1   | The desired configuration document.                           |
+| [`config/reported`](/docs/device-sdk/cloud-contract/configuration) | device to cloud | no                   | 1   | What the device actually holds, per namespace.                |
+| [`command`](/docs/device-sdk/cloud-contract/commands)              | cloud to device | **no, deliberately** | 1   | One-shot imperatives.                                         |
+| [`command/response`](/docs/device-sdk/cloud-contract/commands)     | device to cloud | no                   | 1   | Acknowledgement for a command.                                |
+
+The device subscribes to `config` and `command` at QoS 1. It publishes
+`telemetry` and `status` at QoS 0, and `config/reported` and `command/response`
+at QoS 1.
+
+<Callout title="Telemetry is QoS 0 on purpose">
+  A dropped 1 Hz reading is worth less than the delivery machinery needed to
+  guarantee it, and the next one is a second away. Do not build anything that
+  assumes a gapless sequence. `seq` increments monotonically so a consumer can
+  *observe* loss, not prevent it.
+</Callout>
+
+## Retained versus not, and why it matters
+
+The split between the config plane and the command plane is the single most
+important design decision on this page.
+
+- **`config` is retained.** It is desired state. A device that was offline
+  through a settings change receives the current document the moment it
+  subscribes, and converges. Republishing the same document is a no-op, because
+  applying it is idempotent.
+- **`command` is not retained.** It is a one-shot imperative. Retaining a
+  `reboot` would replay it on every reconnect, which is a boot loop. Combined
+  with the clean session, a command published while a device is offline is
+  simply dropped, and that is the correct semantics: you only reboot a device
+  that is online right now.
+
+## The identity chain
+
+```
+devices.id  ==  IoT thingName  ==  MQTT clientId  ==  the {deviceId} topic segment
+```
+
+This equality is load bearing rather than cosmetic. The device IoT policy is
+written in terms of the connection's thing name:
+
+- `iot:Connect` is scoped to `client/${iot:Connection.Thing.ThingName}`
+- publish and subscribe are scoped to
+  `topic/xorgate/devices/${iot:Connection.Thing.ThingName}/*`
+
+So the policy grants a device exactly its own subtree and nothing else, without
+anyone maintaining a per-device policy document. Break the chain and the failure
+is silent: a mismatched clientId cannot connect at all, and a device publishing
+under another device's `{deviceId}` segment is denied by the broker with no
+error surfaced to the agent's publish callback path.
+
+The chain extends into video. KVS signaling channels are named
+`${deviceId}-${streamKey}`, so `cam0` on device `a73f7a36-…` is channel
+`a73f7a36-…-cam0`.
+
+<Callout type="warn" title="The browser-side policies are org-blind today">
+  The **device** policy above is properly scoped. The policy attached to browser
+  identities by `POST /iot/attach-policy`, and the KVS access a browser mints
+  for itself, are not: any authenticated user can subscribe to any device's
+  telemetry topic. That is a known platform gap, tracked for the
+  platform-readiness work, and it is why the live plane is not yet safe for
+  third-party consumers.
+</Callout>
+
+## Clocks
+
+Every device-to-cloud payload carries `ts` in **epoch milliseconds, in the
+device's own clock domain**. That clock is not guaranteed to be right.
+
+Devices in this fleet have no battery-backed RTC. They boot with whatever time
+the filesystem's fake-hwclock last recorded, and correct it minutes into the boot
+once NTP reaches them, or from a GNSS fix or the modem's NITZ clock if the
+network does not. The agent even carries a clock stepper for exactly this, with
+its own `timeSync` settings namespace and a per-boot cap on how many corrections
+it will make.
+
+The practical rules that follow:
+
+- **Never compute freshness from `ts`.** Use the time your own process received
+  the message. Every consumer in this platform does: the frontend SDK exposes
+  `receivedAt` from the browser clock for precisely this reason.
+- **Expect `ts` to jump backwards** across a correction, including inside one
+  device's stream.
+- `seq` is monotonic within a worker run and resets when the worker restarts. It
+  orders payloads reliably where `ts` does not.
+- The REST API is a different world: it serves ISO 8601 strings, having stamped
+  ingest-side values where it can. The epoch-millisecond, device-clock rule is
+  specific to the MQTT planes.
+
+Recording segments carry an explicit provenance field for the same reason:
+`ntp`, `gps`, `nitz`, `rtc` or `unsynced`, so a segment recorded before the clock
+settled can be re-anchored cloud-side rather than trusted.
+
+## Versioning
+
+Every payload on every topic carries `v: 1`. Readers must reject a payload whose
+`v` they do not recognise rather than attempt a partial parse; the agent's own
+command and config parsers both do exactly that, returning `null` for anything
+that is not `v: 1`.
+
+There is no `v: 2` and no migration story yet. When one is needed, the retained
+`config` topic is the awkward case: a retained document written by a new backend
+sits there waiting for old devices to read it.

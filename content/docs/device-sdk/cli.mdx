@@ -1,0 +1,234 @@
+---
+title: "CLI reference"
+description: "All eleven xorgate commands, the complete set key catalog, and which settings apply live versus needing a restart."
+---
+
+`xorgate` is a single dispatcher (`dist/cli.js`) with eleven subcommands. On a
+provisioned device it is installed at `/usr/local/bin/xorgate` as a two-line
+wrapper that defaults `XORGATE_HOME` to `/var/lib/xorgate`, so the CLI always
+reflects the running systemd service.
+
+```bash
+xorgate <command> [agent flags]
+```
+
+`monitor` is a deprecated alias for `manage`. It still works and prints a hint.
+
+## The eleven commands
+
+| Command     | Needs sudo | What it does                                                                 |
+| ----------- | ---------- | ---------------------------------------------------------------------------- |
+| `start`     | no         | Launch the agent as a detached background daemon. **Dev only.**              |
+| `stop`      | no         | Stop the daemon gracefully, publishing an offline status first.              |
+| `restart`   | no         | Stop then start, reusing the running daemon's launch flags.                  |
+| `status`    | no         | Running, stale or stopped, plus identity, connection and telemetry counters. |
+| `logs`      | no         | Print or follow `agent.log`.                                                 |
+| `manage`    | no         | The live terminal dashboard (ink).                                           |
+| `set`       | no         | Persist a setting and apply it.                                              |
+| `pipeline`  | no         | Manage per-stream GStreamer pipelines.                                       |
+| `recording` | no         | On-device recording maintenance.                                             |
+| `led`       | no         | Drive the RGB status LED by hand.                                            |
+| `update`    | **yes**    | Fetch, install and activate a new agent build.                               |
+
+<Callout type="warn" title="`start`, `stop` and `restart` are for the dev daemon">
+  On a provisioned device systemd owns the lifecycle. Running `xorgate start`
+  there launches a second worker that fights the first for the same MQTT
+  clientId. Use `sudo systemctl {start,stop,restart} xorgate-agent` instead. The
+  inspection commands work either way.
+</Callout>
+
+## Lifecycle and inspection
+
+### `status`
+
+Real output from a provisioned device:
+
+```
+● running   pid 946   up 2h 19m   (identity verified)
+  device     a73f7a36-2a9c-45c4-a66c-54d3b018a7f7   mode real   rate 1 Hz
+  build      0.2.0 (3afae1b, dev)
+  endpoint   a2sxxfymj3zcz4-ats.iot.us-east-1.amazonaws.com
+  connection connected   since 2h ago
+  telemetry  seq 125  published 126  errors 0  last just now  (fresh)
+  video      cam0 idle
+  log        /var/lib/xorgate/agent.log
+```
+
+Three verdicts are possible. **running** means the pid is alive, its identity
+verified against the pid record's start time, and `state.json` is fresh.
+**stale** means a pidfile was left by a crashed or recycled process; it is
+auto-cleaned on the next start or stop. **stopped** means no daemon.
+
+A fourth outcome is worth recognising: if the state directory belongs to a
+different user, `status` prints "unreadable, try sudo" rather than the misleading
+"stopped".
+
+### `logs`
+
+```bash
+xorgate logs            # print
+xorgate logs -f         # follow (also --follow)
+xorgate logs -n 200     # last N lines
+xorgate logs --clear    # truncate
+```
+
+The log is append-only with no rotation, which is why `--clear` exists.
+
+<Callout title="`logs` is empty on a systemd device">
+  Under systemd the worker's stdout goes to the journal, and only the
+  self-managed dev daemon writes `agent.log`. On a device, follow the journal
+  instead: `journalctl -u xorgate-agent -f`.
+</Callout>
+
+### `manage`
+
+The live dashboard: a header with connection and daemon stats, a sidebar of
+telemetry modules (IMU, GPS, LTE, System, Media, Activity) with live status, and
+a detail pane. It also has a Settings pane and can start, stop and restart the
+daemon from inside.
+
+Quitting with `q` never stops the daemon. It is detached and independent.
+
+### `update`
+
+```bash
+sudo xorgate update                            # pull `latest` and restart
+sudo xorgate update --tag v1.2.3               # pin a build
+sudo xorgate update --from https://<bucket>    # override the source
+```
+
+The source defaults to `DEVICE_DIST_BUCKET_URL` from `agent.env`. `update` stages
+the tarball on the `/opt` filesystem, validates it, runs `npm ci`, **atomically
+swaps** `/opt/xorgate` (rolling back on failure), reinstalls the unit and
+wrapper, refreshes the modem assets, and restarts the agent. Your `User=` drop-in
+and your certificates survive.
+
+The CLI ships inside the tarball, so this upgrades the CLI too.
+
+Two things it deliberately does not do. It does not restart `sim7600-lte`, since
+that would drop the LTE link mid-update; the refreshed modem scripts apply on the
+next boot or a manual restart. And the cloud-triggered `update` command grants
+sudo for exactly the no-argument form, because supporting `--tag`/`--from`
+remotely would require a wildcard sudo grant, which means installing an arbitrary
+URL as root.
+
+## `set`
+
+```bash
+xorgate set <key> <value> [--no-restart] [--force] [--no-wait]
+```
+
+The complete catalog, verified against the dispatcher:
+
+| Key                           | Values                                                                               | Applied                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `mode`                        | `sim` \| `real`                                                                      | **Restarts the daemon.** The only key that does.                           |
+| `gps-antenna`                 | `active` \| `passive`                                                                | Live, by the modem daemon within about a minute. Writes `gnssAntBias`.     |
+| `gps-fix-reset-policy`        | `defer` \| `veto-deadzone`                                                           | Live, at the modem daemon's next recovery decision.                        |
+| `deadzone-profile`            | `conservative` \| `balanced` \| `aggressive`                                         | Live, at the next dead-zone nudge.                                         |
+| `apn`                         | an APN string, or `""` to leave the modem alone. `--no-wait` skips the outcome watch | Live, with confirm-and-rollback.                                           |
+| `wifi`                        | `on` \| `off`, `--force` to override the guard                                       | Immediately, via NetworkManager. An OS-level toggle, not a settings write. |
+| `recording.<section>.<field>` | see below                                                                            | Live, by the recording manager's 5 s poll.                                 |
+| `timeSync.<field>`            | see below                                                                            | Live, by the clock stepper.                                                |
+
+`recording.video.cameras.<streamKey>` is one level deeper than the others and is
+how a single camera is turned off:
+
+```bash
+xorgate set recording.telemetry.enabled on
+xorgate set recording.telemetry.rateHz 10
+xorgate set recording.video.cameras.cam1 off
+```
+
+<Callout type="warn" title="`set media` was removed">
+  The media master switch is gone. `xorgate set media` is kept as a tombstone
+  that errors with a pointer to the replacement, because it lived in muscle
+  memory and in older documentation:
+
+```
+'media' was removed: turn cameras off individually instead, e.g.
+xorgate set recording.video.cameras.cam0 off
+```
+
+</Callout>
+
+Only `mode` restarts. `--no-restart` persists the value without restarting, which
+is why it only means anything for `mode`. On a systemd device the automatic
+restart cannot work, and `set` says so, telling you to run
+`sudo systemctl restart xorgate-agent`.
+
+`set` also warns if you run it with `sudo` when the agent runs as an unprivileged
+user: it writes anyway, but `settings.json` keeps its existing ownership.
+
+## `pipeline`
+
+```bash
+xorgate pipeline <list|show|set|clear|bridge|direct> [streamKey] [file]
+```
+
+Six subcommands, not four. `bridge` rewrites a stream's `.gst` into a `shmsrc`
+consumer for the recording camera bridge, backing up the direct pipeline to
+`<streamKey>.gst.direct`; `direct` restores it. Both are covered on
+[On-device recording](/docs/device-sdk/recording#the-camera-bridge).
+
+```bash
+xorgate pipeline list
+xorgate pipeline set cam0 ./cam0.gst
+xorgate pipeline show cam0
+xorgate pipeline clear cam0
+```
+
+Pipeline changes take effect when the channel's master restarts.
+
+## `recording`
+
+One subcommand:
+
+```bash
+xorgate recording reset-counters
+```
+
+Zeroes the cumulative `droppedSegments` counter. The write is atomic and the
+running agent re-reads the file on its status tick, so it appears in `state.json`
+and in telemetry within about 5 seconds with no restart. Racing an in-flight
+eviction is harmless: both writers are atomic and last one wins.
+
+## `led`
+
+```bash
+xorgate led test                  # walk every rung, printing each label
+xorgate led purple blink-fast     # hold one state (Ctrl-C leaves it dark)
+xorgate led off
+```
+
+Colours are `red`, `green`, `blue`, `purple`, `cyan`, `white` and `off`. `test`
+walks the same `LED_LADDER` array the agent resolves against, so the bench walk
+and the real behaviour cannot drift.
+
+Two hook forms, `boot` and `exit-state`, exist for the systemd unit rather than
+for people. They are wired as `ExecStartPre` and `ExecStopPost`, both `-`
+prefixed so a failing LED can never stop the agent.
+
+The driver needs no root: `pinctrl` does not require it, and adding `sudo` is a
+mistake. Off a Pi, or with a pin held by another driver, it goes inert and
+everything else stays healthy.
+[The LED ladder](/docs/device-sdk/hardware#rgb-status-led) and the audio overlay
+conflict are in the hardware notes.
+
+## Agent flags
+
+These are forwarded to `start`, `restart` and `manage`:
+
+```
+--offline              run without AWS (stub MQTT + simulator), no creds needed
+--device-id <uuid>     DEVICE_ID
+--endpoint <host>      IOT_DATA_ENDPOINT
+--mode <sim|real>      telemetry source
+--rate <hz>            publish rate
+```
+
+Only `--offline` is a boolean flag. Every other flag consumes the next token as
+its value even when that token starts with `--`, so a typo like
+`--rate --mode sim` surfaces as an invalid value rather than silently falling
+back to a default. The full environment and flag table is in the
+[configuration reference](/docs/device-sdk/configuration-reference).

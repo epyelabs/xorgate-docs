@@ -1,4 +1,10 @@
 {
   "title": "Platform concepts",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "metrics",
+    "device-models",
+    "media-sessions",
+    "live-vs-recorded"
+  ]
 }
