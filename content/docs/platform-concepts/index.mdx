@@ -1,0 +1,17 @@
+---
+title: "Platform concepts"
+description: "The models and vocabulary the API and SDKs are built on."
+---
+
+This section explains the platform's data model so the endpoint-by-endpoint
+reference reads as more than a list of routes: device models and the
+`io_capabilities` that describe what a given hardware kit can do, the telemetry
+model (`group.field` metric names, units, the latest-value view), media sessions
+and the roughly 60 second segments they are made of, and the split between the
+**live** planes (MQTT telemetry and KVS WebRTC video, both reached directly
+rather than through the API) and the **recorded** plane (segments uploaded to
+object storage and indexed for replay).
+
+<Callout title="Not written yet">
+  Placeholder. This section is filled in after the API reference lands.
+</Callout>

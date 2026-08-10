@@ -1,0 +1,96 @@
+name: Docs — deploy dev
+
+# Builds xorgate-docs and syncs the static export (out/) to the dev docs bucket
+# (docs-dev.xorgate.io) on every push to main. See deploy-prod.yml's header for
+# the one-time AWS + GitHub setup; both workflows share the same machine-user
+# secrets.
+#
+# CloudFront invalidation is NOT automated: the distributions are managed
+# outside this repo and invalidated by hand after a deploy.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-dev
+  cancel-in-progress: false # --delete syncs must not overlap
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: development # scopes vars.NEXT_PUBLIC_* to the dev environment
+    env:
+      # Override with a `DOCS_BUCKET` environment variable if the target moves.
+      BUCKET: ${{ vars.DOCS_BUCKET || 'docs-dev.xorgate.io' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Write build env (.env)
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_AWS_REGION: ${{ vars.NEXT_PUBLIC_AWS_REGION }}
+          NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL }}
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+          NEXT_PUBLIC_AWS_REGION=${NEXT_PUBLIC_AWS_REGION}
+          NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
+          EOF
+
+      - name: Build
+        run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Sync out/ to S3
+        run: |
+          # Unlike the SPA, a docs static export is mostly UNhashed HTML: one
+          # index.html per page, plus llms.txt, the OG images, and the Orama
+          # search index. Only _next/static/** is content-hashed, so only that
+          # is safe to cache forever. Everything else must revalidate.
+          #
+          # --delete prunes files dropped since the last deploy. The exclude
+          # filter applies to both sides, so hashed assets are neither uploaded
+          # nor deleted by this first pass.
+          aws s3 sync out/ "s3://$BUCKET" \
+            --delete \
+            --cache-control "no-cache" \
+            --exclude "_next/static/*"
+          aws s3 sync out/_next/static/ "s3://$BUCKET/_next/static/" \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable"
+          # The static search index is an extensionless key, so `sync` guesses
+          # its content type wrong. Re-upload it explicitly.
+          aws s3 cp out/api/search "s3://$BUCKET/api/search" \
+            --content-type "application/json" \
+            --cache-control "no-cache"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Docs dev deploy"
+            echo ""
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Bucket: \`s3://$BUCKET\`"
+            echo ""
+            echo "> Invalidate the CloudFront distribution manually to publish this build."
+          } >> "$GITHUB_STEP_SUMMARY"

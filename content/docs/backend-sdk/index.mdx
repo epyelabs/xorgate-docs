@@ -1,0 +1,16 @@
+---
+title: "Backend SDK (JS)"
+description: "The server-to-server JavaScript client for xorgate."
+---
+
+This section documents the backend JavaScript and TypeScript SDK: a client for
+Node and edge runtimes built around `createClient({ baseUrl, auth,
+organizationId, workspaceId })`, with resource modules mirroring the API, one
+uniform pagination iterator, and a single error type carrying the platform's
+`{ code, message, details }` envelope. It is the right entry point when your own
+backend talks to xorgate, for example to sync devices or pull telemetry history.
+
+<Callout title="Not written yet">
+  Placeholder. These pages are written as a design document before the package
+  exists: the docs are the specification the SDK is built against.
+</Callout>

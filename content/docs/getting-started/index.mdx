@@ -1,0 +1,80 @@
+---
+title: "What is xorgate"
+description: "The platform, what it gives you, and how the pieces fit together."
+---
+
+Xorgate is an end-to-end platform for **Physical AI and Edge IoT**. It sits
+between rugged sensing hardware in the field and the cloud workflows that make
+sense of what that hardware sees, so product teams can ship sensor-driven
+systems without rebuilding the hardware, connectivity, streaming, and AI
+infrastructure every time.
+
+## What the platform provides
+
+- **Hardware kits.** Rugged sensing devices (cameras, GPS, accelerometer,
+  environmental sensors) shipped as turnkey kits, with customization for
+  bespoke form factors and sensor combinations.
+- **SDKs.** First-party libraries for the **edge** (the device agent), the
+  **cloud** (server-to-server integrations), and the **client** (web and mobile
+  apps), so the same telemetry model flows end to end.
+- **Video and IoT streaming.** Cellular-first, low-bandwidth-tolerant pipelines
+  that move H.264 video and structured sensor data from device to cloud, and
+  keep recording through dead zones.
+- **A workflow-based AI layer.** Vision and sensor-fusion pipelines composed as
+  templates (model, thresholds, alert rules) and run against live streams.
+
+The AI layer is not documented here yet. These docs cover the core platform: the
+tenancy model, devices, telemetry, media, and the API and SDKs you use to reach
+them.
+
+## How the pieces fit together
+
+<Steps>
+<Step>
+
+**Edge.** A device runs the xorgate agent. It collects telemetry once a second,
+records video locally in roughly 60 second MP4 segments, and streams live video
+peer to peer over WebRTC. It talks to the cloud over MQTT on a per-device X.509
+identity.
+
+</Step>
+<Step>
+
+**Cloud.** `xorgate-core-service` ingests telemetry, indexes uploaded media
+segments, and exposes everything over a REST API. It also provisions devices:
+minting their IoT identity and signaling channels.
+
+</Step>
+<Step>
+
+**Client.** Your application reads the REST API for device state, telemetry
+history, and recorded media, and connects directly to the live planes (MQTT for
+telemetry, KVS WebRTC for video) for real-time data.
+
+</Step>
+</Steps>
+
+An important consequence of that last step: **the live planes bypass the REST
+API.** Live telemetry and live video are direct browser-to-AWS connections that
+the API only bootstraps. See
+[Live versus recorded](/docs/platform-concepts) for what that means in practice.
+
+## Next
+
+<Cards>
+  <Card
+    title="Tenancy model"
+    href="/docs/getting-started/tenancy"
+    description="Users, organizations, workspaces, devices, and the headers that scope every request."
+  />
+  <Card
+    title="Authentication"
+    href="/docs/getting-started/authentication"
+    description="How requests are authenticated today, and where API keys stand."
+  />
+  <Card
+    title="Quickstart"
+    href="/docs/getting-started/quickstart"
+    description="Claim a device and read its latest telemetry."
+  />
+</Cards>

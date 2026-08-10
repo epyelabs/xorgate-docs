@@ -1,0 +1,24 @@
+---
+title: "API reference"
+description: "Every REST endpoint of xorgate-core-service, generated from its OpenAPI document."
+---
+
+This section is the reference for `xorgate-core-service`: users and `/me`,
+organizations, memberships, API keys, workspaces, device models, devices
+(including configuration, commands and provisioning), media sessions and
+playback, video channels, and telemetry. Pages are generated from the service's
+OpenAPI document, so each one carries the real parameters, schemas, response
+codes, code samples, and a playground that calls the API from your browser.
+
+<Callout title="Not generated yet">
+  Placeholder. The OpenAPI document is currently hand-written and covers roughly
+  half the routes. Truthing that document and wiring the generator into this
+  section is the next piece of work.
+</Callout>
+
+Two routes are excluded on purpose and will not appear here: `GET /get/{code}`,
+which renders the device install script, and
+`POST /device-registrations/{code}/claim`, which returns private key material.
+Both are internal to the installer. See
+[Quickstart](/docs/getting-started/quickstart) for how they fit into device
+onboarding.

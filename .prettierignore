@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.source/
+out/
+build/
+coverage/
+openapi/
+package-lock.json
+next-env.d.ts

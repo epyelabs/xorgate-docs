@@ -1,0 +1,119 @@
+---
+title: "Authentication"
+description: "How requests are authenticated today, where API keys stand, and how the live planes get their credentials."
+---
+
+There is **no API Gateway authorizer** in front of xorgate-core-service. Every
+route is reachable at the gateway and each handler enforces its own auth. A route
+described as unauthenticated is simply one whose handler does not check.
+
+## Today: Cognito ID tokens
+
+The only credential the API verifies is a **Cognito ID token** (not an access
+token) on the `Authorization` header, plus the tenancy headers from
+[Tenancy model](/docs/getting-started/tenancy):
+
+```http
+GET /devices HTTP/1.1
+Host: h357muxy3k.execute-api.us-east-1.amazonaws.com
+Authorization: Bearer <cognito-id-token>
+X-Organization-Id: 8f1c1e2a-....
+```
+
+The token is verified against the platform user pool. On the first request from a
+new identity, a `users` row is created from the token's `sub`, `email` and
+`name`, so there is no separate registration step.
+
+## Target: API keys
+
+For server-to-server integrations, an ID token is the wrong shape: it is
+short-lived and tied to an interactive login. The platform's answer is API keys,
+and the endpoints to manage them already exist:
+
+```http
+POST /api-keys
+Content-Type: application/json
+Authorization: Bearer <cognito-id-token>
+X-Organization-Id: 8f1c1e2a-....
+
+{ "name": "alocate-backend", "scope": "cloud" }
+```
+
+```json
+{
+  "api_key": {
+    "id": "...",
+    "name": "alocate-backend",
+    "scope": "cloud",
+    "...": "..."
+  },
+  "plaintext_key": "xg_9c1f...."
+}
+```
+
+The key is returned **exactly once**, at creation. Only its SHA-256 hash is
+stored, so a lost key has to be replaced rather than recovered. Keys are
+organization-scoped, and creating or deleting one requires the `owner` or `admin`
+role.
+
+<Callout type="warn" title="Key authentication is not live yet">
+
+API keys can currently be minted, listed and deleted, but **nothing verifies
+them**. There is no `X-Api-Key` request path, the `scope` value
+(`edge`, `cloud`, `client`) is validated on write and then unused, and keys have
+no expiry or last-used tracking. Until verification ships, a server-side
+integration still has to present a Cognito ID token. Treat the shape above as the
+committed direction, not as something you can build against today.
+
+</Callout>
+
+Once key verification exists, the API reference will carry it as a first-class
+security scheme and the backend SDK will accept it directly. Until then this page
+is the honest answer.
+
+## The live planes
+
+Live telemetry and live video do not go through the REST API, and so they do not
+use the same credential.
+
+- **Live telemetry** is MQTT over a SigV4-signed WebSocket to AWS IoT Core. The
+  browser gets temporary AWS credentials from a Cognito Identity Pool (federated
+  from the same user pool), calls `POST /iot/attach-policy` once to attach its IoT
+  policy, then subscribes to `xorgate/devices/<deviceId>/telemetry`.
+- **Live video** is KVS WebRTC. `GET /devices/{id}/kvs-channels` returns channel
+  metadata only. The browser mints its own credentials the same way and joins the
+  channel as a viewer, with media flowing peer to peer from the device.
+
+<Callout type="warn" title="Live-plane policies are not organization-scoped">
+
+The IoT and KVS browser policies are currently broad but authenticated: any
+authenticated user can subscribe to any device's telemetry topic. This is a known
+cross-tenant gap and has to be closed before third parties touch the live plane.
+It is tracked on the platform-readiness backlog.
+
+</Callout>
+
+Because API keys cannot be exchanged for AWS credentials today, an application
+that authenticates its own users (rather than federating them into xorgate's
+Cognito) has no live-plane path yet. The REST endpoints for telemetry history and
+recorded media work regardless.
+
+## CORS
+
+Browser callers are gated by a **fixed origin allowlist** in the API stack, not by
+a wildcard. Allowed request headers are exactly `Authorization`, `Content-Type`,
+`X-Request-ID`, `X-Organization-Id` and `X-Workspace-Id`. A new browser origin
+(including this documentation site, whose API playground calls the API directly)
+has to be added to that allowlist before it can call the API.
+
+## Unauthenticated routes
+
+Two routes are deliberately open, both part of the device install flow:
+`GET /get/{code}` renders the install script, and
+`POST /device-registrations/{code}/claim` exchanges a registration code for a
+device identity. The short-lived registration code is the bearer secret in both
+cases.
+
+The claim route returns **private key material** for the device's X.509
+certificate. It is meant to be called once, by the installer, on the device
+itself. Do not build against it.

@@ -1,0 +1,176 @@
+---
+title: "Quickstart"
+description: "Take a device from unboxed to streaming telemetry, using the REST API directly."
+---
+
+This walkthrough goes from a fresh device to its first telemetry reading using
+nothing but the REST API and a shell on the device. There is no SDK yet, so every
+step is an HTTP call you can copy.
+
+The dev API base URL is <ApiBaseUrl />, in region <AwsRegion />. Everything below
+assumes two shell variables:
+
+```bash
+API="https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
+TOKEN="<your cognito id token>"
+ORG="<your organization id>"
+WS="<the workspace the device belongs in>"
+```
+
+<Callout title="Before you start">
+
+You need an organization and at least one workspace. Create them with
+`POST /organizations` and `POST /workspaces` if you do not have them yet, and see
+[Authentication](/docs/getting-started/authentication) for how to obtain a token.
+
+</Callout>
+
+## 1. Mint a registration code
+
+Registration is code-based: you mint a short-lived code in the cloud, and the
+device redeems it. The workspace comes from the `X-Workspace-Id` header, and is
+required here.
+
+```bash
+curl -sS -X POST "$API/device-registrations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG" \
+  -H "X-Workspace-Id: $WS"
+```
+
+```json
+{
+  "code": "K7QF4M2P",
+  "status": "pending",
+  "deviceId": null,
+  "expiresAt": "2026-08-10T18:15:00.000Z",
+  "installUrl": "https://h357muxy3k.execute-api.us-east-1.amazonaws.com/get/K7QF4M2P"
+}
+```
+
+Codes live for **15 minutes**. The call is idempotent per workspace: while a
+pending, un-expired code exists it is returned again rather than a new one being
+minted, so retrying costs nothing.
+
+The device model is picked automatically from the catalog. Today there is a
+single seeded model, so there is nothing to choose.
+
+## 2. Run the installer on the device
+
+`installUrl` serves a ready-to-run install script with the code, the API base and
+the agent download location baked in. On the device:
+
+```bash
+curl -s https://h357muxy3k.execute-api.us-east-1.amazonaws.com/get/K7QF4M2P -o install.sh
+sudo bash install.sh
+```
+
+An invalid, used or expired code still returns runnable bash. It just exits with a
+clear message, so a mistyped code fails loudly instead of producing a broken
+install.
+
+## 3. The device claims itself
+
+You do not call this. The installer does, and it is worth knowing what happens
+because it is where the device's identity is created.
+
+`install.sh` posts the machine's serial to
+`POST /device-registrations/{code}/claim` (unauthenticated, the code is the
+secret). The service then, in order:
+
+1. Flips the code from `pending` to `claimed` in a single atomic update, so only
+   one concurrent claim can win.
+2. Creates the `devices` row. The serial is unique per workspace, so re-running
+   the installer on an already-registered device returns `409`.
+3. Provisions AWS IoT: a thing, an X.509 certificate, and the device's KVS
+   signaling channels.
+4. Links the new device back to the registration.
+
+If anything fails after step 2 it rolls back (device row and IoT thing deleted,
+code returned to `pending`) so the same code can be retried.
+
+The response carries the one-shot certificate bundle and the IoT data endpoint.
+It never leaves the device.
+
+## 4. Poll until claimed
+
+Meanwhile, poll the code from your side until it flips:
+
+```bash
+curl -sS "$API/device-registrations/K7QF4M2P" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG"
+```
+
+```json
+{
+  "code": "K7QF4M2P",
+  "status": "claimed",
+  "deviceId": "3b9a7c40-1f0e-4d21-9a55-2b6c0d3e77aa",
+  "expiresAt": "2026-08-10T18:15:00.000Z",
+  "installUrl": "https://h357muxy3k.execute-api.us-east-1.amazonaws.com/get/K7QF4M2P"
+}
+```
+
+Status moves `pending` to `claimed`, or to `expired` if the fifteen minutes ran
+out. Expiry is evaluated lazily on read, so a stale code flips the moment you look
+at it. `deviceId` is what you want: it is the device's id everywhere else in the
+platform.
+
+## 5. Read the device's latest telemetry
+
+Once the agent is up it publishes telemetry once per second. The most recent
+value per metric is a single call:
+
+```bash
+DEVICE="3b9a7c40-1f0e-4d21-9a55-2b6c0d3e77aa"
+
+curl -sS "$API/devices/$DEVICE/telemetry/latest" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG"
+```
+
+```json
+{
+  "latest": [
+    {
+      "metric": "gps.lat",
+      "value": 45.4215,
+      "unit": "deg",
+      "ts": "2026-08-10T18:03:11.000Z"
+    },
+    {
+      "metric": "gps.speed",
+      "value": 12.4,
+      "unit": "km/h",
+      "ts": "2026-08-10T18:03:11.000Z"
+    },
+    {
+      "metric": "system.cpu_temp",
+      "value": 51.2,
+      "unit": "C",
+      "ts": "2026-08-10T18:03:11.000Z"
+    }
+  ]
+}
+```
+
+Metrics are named `group.field`. That naming is the interop contract across the
+whole platform: live MQTT telemetry, the history endpoints, and replayed
+telemetry all use it.
+
+An empty `latest` array means the device has not reported yet. Check that the
+agent is running and has connectivity.
+
+## Where to go next
+
+- **History and charts.** `GET /devices/{id}/telemetry` for a time window,
+  `/telemetry/recent` for the newest N samples, `/telemetry/readings` for raw
+  paginated rows.
+- **Live telemetry.** Subscribe over MQTT rather than polling. See
+  [Authentication](/docs/getting-started/authentication) for how the browser gets
+  credentials.
+- **Video.** `GET /devices/{id}/kvs-channels` for the live WebRTC channel, or
+  `GET /devices/{id}/sessions` and `/replay-manifest` for what the device
+  recorded.
+- **Everything else.** The [API reference](/docs/api-reference).

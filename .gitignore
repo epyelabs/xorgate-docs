@@ -1,0 +1,29 @@
+# deps
+/node_modules
+
+# generated content
+.source
+
+# test & build
+/coverage
+/.next/
+/out/
+/build
+*.tsbuildinfo
+
+# misc
+.DS_Store
+*.pem
+/.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# others
+# `.env` is written by CI from GitHub Environment variables; `.env.local` is the
+# local override. `.env.example` is the checked-in template.
+/.env
+.env*.local
+.vercel
+next-env.d.ts

@@ -1,0 +1,91 @@
+---
+title: "Tenancy model"
+description: "Users, organizations, workspaces and devices, and the headers that scope every request."
+---
+
+Every resource in xorgate hangs off an organization. Understanding that chain is
+the first thing to get right, because two request headers depend on it.
+
+## The chain
+
+```
+user ──(membership: owner | admin | member)──> organization
+                                                   │
+                                                   ├── workspace ──> device ──> telemetry, media, sessions
+                                                   ├── workspace ──> device
+                                                   └── api key
+```
+
+**User.** Created automatically the first time an identity presents a valid
+token. There is no separate signup call against the API.
+
+**Membership.** Joins a user to an organization with a role. A user can belong to
+several organizations, and their role can differ in each. The pair
+(user, organization) is unique.
+
+**Organization.** The tenant boundary. Workspaces, devices, telemetry, media and
+API keys all live inside exactly one organization and never cross between them.
+
+**Workspace.** A grouping of devices inside an organization: a site, a fleet, a
+customer, whatever fits. Workspaces are the unit a device is registered into.
+
+**Device.** Belongs to exactly one workspace, and to one **device model** (a
+platform-wide catalog entry that describes the hardware and its capabilities).
+Its `id` is also its AWS IoT thing name, its MQTT client id, and the segment in
+every one of its MQTT topics. That identity chain is load-bearing.
+
+## Roles
+
+Membership roles are `owner`, `admin`, and `member`. Roles gate writes: creating
+and deleting API keys, for instance, requires `owner` or `admin`, while any
+member can read them.
+
+Separately, a user carries a **platform** role. Only platform admins can mutate
+the device-model catalog, since it is shared across all organizations rather than
+owned by one.
+
+## Scoping headers
+
+Two headers carry tenancy on every request.
+
+### `X-Organization-Id`
+
+Selects the active organization. The server resolves it like this:
+
+| Situation                                             | Result                      |
+| ----------------------------------------------------- | --------------------------- |
+| Header present, and you are a member                  | Scoped to that organization |
+| Header present, and you are not a member              | `403 FORBIDDEN`             |
+| Header absent, you belong to exactly one organization | Scoped to that one          |
+| Header absent, you belong to several                  | `400 ORGANIZATION_REQUIRED` |
+| Header absent, you belong to none                     | `403 NO_ORGANIZATION`       |
+
+The single-membership fallback is a convenience, not a contract. **Always send
+`X-Organization-Id`**, otherwise your integration breaks the day someone adds
+your service account to a second organization.
+
+### `X-Workspace-Id`
+
+Narrows a request to one workspace inside the active organization. It is
+**optional** on reads (`GET /devices` returns the whole organization without it,
+and one workspace with it) and **required** where a resource has to be created
+somewhere specific, such as minting a device registration code.
+
+A workspace id that does not belong to the active organization is not an error on
+list endpoints. It simply matches nothing, and you get an empty page.
+
+## Errors
+
+Every error response uses the same envelope:
+
+```json
+{
+  "error": {
+    "code": "ORGANIZATION_REQUIRED",
+    "message": "Multiple organizations available. Send X-Organization-Id header.",
+    "details": {}
+  }
+}
+```
+
+`details` is optional. Match on `code`, never on `message`.

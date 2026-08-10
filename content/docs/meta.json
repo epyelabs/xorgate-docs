@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Top-level sidebar order. Section slugs are stable: later phases write into",
+    "api-reference (Phase 2), backend-sdk (Phase 3), frontend-sdk (Phase 4) and",
+    "device-sdk (Phase 5).",
+    "",
+    "Reserved slot, deliberately not written yet (Workflows/AI is out of scope",
+    "for the SDK-and-API plan). Add \"workflows\" to `pages` below, after",
+    "\"device-sdk\", when that section exists:",
+    "  \"workflows\""
+  ],
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "getting-started",
+    "platform-concepts",
+    "api-reference",
+    "backend-sdk",
+    "frontend-sdk",
+    "device-sdk"
+  ]
+}

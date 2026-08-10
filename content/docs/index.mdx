@@ -1,0 +1,53 @@
+---
+title: "Overview"
+description: "What lives in the xorgate developer documentation, and where to start."
+---
+
+Xorgate is an end-to-end platform for **Physical AI and Edge IoT**: the connective
+layer between rugged sensing hardware in the field and intelligent cloud
+workflows. It ships hardware kits, a device agent, cellular-first video and
+telemetry pipelines, a REST API, and SDKs for the edge, the cloud, and the
+client.
+
+These docs are for engineers integrating with xorgate: reading devices and their
+telemetry, embedding live or recorded video, and provisioning hardware from your
+own product.
+
+## Where to start
+
+<Cards>
+  <Card
+    title="Getting started"
+    href="/docs/getting-started"
+    description="The tenancy model, how authentication works, and a quickstart that takes a device from unboxed to streaming telemetry."
+  />
+  <Card
+    title="Platform concepts"
+    href="/docs/platform-concepts"
+    description="Devices and models, capabilities, the telemetry model, and the difference between the live and recorded planes."
+  />
+  <Card
+    title="API reference"
+    href="/docs/api-reference"
+    description="Every REST endpoint of the core service, with schemas and examples."
+  />
+  <Card
+    title="Device SDK"
+    href="/docs/device-sdk"
+    description="Installing and provisioning the agent, the MQTT cloud contract, and the CLI."
+  />
+</Cards>
+
+## Status of these docs
+
+The site is being written alongside the SDKs it describes, so sections land at
+different times. Pages that describe something not yet shipped say so plainly
+rather than implying it exists. In particular:
+
+- The **API reference** is generated from the core service's OpenAPI document,
+  which does not yet cover every route.
+- The **Backend SDK** and **Frontend SDK** sections are design documents first.
+  The packages follow the docs, not the other way around.
+- API-key authentication is documented as the target for server-to-server
+  integrations, but the API does not verify keys yet. See
+  [Authentication](/docs/getting-started/authentication).

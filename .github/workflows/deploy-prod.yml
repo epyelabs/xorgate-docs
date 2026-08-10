@@ -1,0 +1,124 @@
+name: Docs — deploy prod
+
+# Builds the released tag of xorgate-docs and syncs the static export (out/) to
+# the production docs bucket (docs.xorgate.io).
+#
+# One-time setup (shared with deploy-dev.yml):
+#   AWS — the buckets exist already: docs.xorgate.io (prod) and
+#     docs-dev.xorgate.io (dev). The CloudFront distributions and DNS in front
+#     of them are managed outside this repo, and are invalidated by hand after a
+#     deploy. These workflows only sync objects.
+#   AWS — IAM machine user with an inline policy allowing, on BOTH
+#     docs.xorgate.io and docs-dev.xorgate.io:
+#       s3:PutObject, s3:DeleteObject   (resource: arn:aws:s3:::<bucket>/*)
+#       s3:ListBucket                   (resource: arn:aws:s3:::<bucket>)
+#     Same shape as xorgate-web's policy, just two more buckets. No CloudFront
+#     permissions are needed, since invalidation is manual.
+#   GitHub repo SECRETS:  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   GitHub repo VARIABLE (optional): AWS_REGION  (defaults to us-east-1)
+#   GitHub ENVIRONMENTS "development" + "production", each with Variables:
+#     NEXT_PUBLIC_API_BASE_URL   the core-service endpoint the playground and
+#                                the examples target. Dev today:
+#                                https://h357muxy3k.execute-api.us-east-1.amazonaws.com
+#     NEXT_PUBLIC_AWS_REGION     us-east-1
+#     NEXT_PUBLIC_SITE_URL       public origin of this site: for production
+#                                https://docs.xorgate.io, for development
+#                                https://docs-dev.xorgate.io
+#     DOCS_BUCKET                optional. Only set it to move a deploy off the
+#                                default bucket baked into each workflow.
+#
+# The docs origins are already in the core-service CORS allowlist
+# (backend/xorgate-core-service/lib/stacks/api-stack.ts). Add the CloudFront
+# domains there too if the site is reached by distribution domain rather than
+# by docs.xorgate.io / docs-dev.xorgate.io.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      # Override with a `DOCS_BUCKET` environment variable if the target moves.
+      BUCKET: ${{ vars.DOCS_BUCKET || 'docs.xorgate.io' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Write build env (.env)
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_AWS_REGION: ${{ vars.NEXT_PUBLIC_AWS_REGION }}
+          NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL }}
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+          NEXT_PUBLIC_AWS_REGION=${NEXT_PUBLIC_AWS_REGION}
+          NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
+          EOF
+
+      - name: Build
+        run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Sync out/ to S3
+        run: |
+          # Only _next/static/** is content-hashed. Every HTML page, llms.txt,
+          # the OG images and the search index are unhashed and must revalidate.
+          # --delete filters apply to both sides, so the exclude below also
+          # protects the hashed assets from being pruned by the first pass.
+          aws s3 sync out/ "s3://$BUCKET" \
+            --delete \
+            --cache-control "no-cache" \
+            --exclude "_next/static/*"
+          aws s3 sync out/_next/static/ "s3://$BUCKET/_next/static/" \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable"
+          # The static search index is an extensionless key, so `sync` guesses
+          # its content type wrong. Re-upload it explicitly.
+          aws s3 cp out/api/search "s3://$BUCKET/api/search" \
+            --content-type "application/json" \
+            --cache-control "no-cache"
+
+      - name: Summary
+        if: always()
+        env:
+          REF: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: |
+          {
+            echo "## Docs prod deploy"
+            echo ""
+            echo "- Tag: \`$REF\`"
+            echo "- Bucket: \`s3://$BUCKET\`"
+            echo ""
+            echo "> Invalidate the CloudFront distribution manually to publish this build."
+          } >> "$GITHUB_STEP_SUMMARY"
