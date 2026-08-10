@@ -1,4 +1,19 @@
 {
-  "title": "API reference",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "users",
+    "organizations",
+    "memberships",
+    "api-keys",
+    "workspaces",
+    "device-models",
+    "devices",
+    "device-registrations",
+    "telemetry",
+    "media-sessions",
+    "live",
+    "search",
+    "meta"
+  ],
+  "title": "API reference"
 }

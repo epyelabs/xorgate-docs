@@ -23,18 +23,21 @@ API. Without it, the dev values in `lib/shared.ts` apply.
 
 ## Layout
 
-| Path | What it is |
-| --- | --- |
-| `content/docs/**` | The documentation itself, MDX plus `meta.json` sidebar ordering |
-| `content/docs/meta.json` | Top-level section order, and the reserved Workflows/AI slot |
-| `lib/source.ts` | Content source adapter (Fumadocs `loader()`) |
-| `lib/shared.ts` | Site name, routes, and all build-time environment values |
-| `lib/layout.shared.tsx` | Shared layout options (nav title, GitHub link) |
-| `lib/openapi.ts` | Stub. Where the OpenAPI reference generator gets wired up |
-| `app/(home)` | Landing page |
-| `app/docs` | Docs layout and pages |
-| `app/api/search/route.ts` | Emits the static Orama search index at build time |
-| `scripts/refresh-openapi.mjs` | Refreshes the checked-in OpenAPI snapshot |
+| Path                           | What it is                                                                |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `content/docs/**`              | The documentation itself, MDX plus `meta.json` sidebar ordering           |
+| `content/docs/meta.json`       | Top-level section order, and the reserved Workflows/AI slot               |
+| `lib/source.ts`                | Content source adapter (Fumadocs `loader()`)                              |
+| `lib/shared.ts`                | Site name, routes, and all build-time environment values                  |
+| `lib/layout.shared.tsx`        | Shared layout options (nav title, GitHub link)                            |
+| `lib/openapi.ts`               | OpenAPI server instance, document paths, and the schema id                |
+| `lib/openapi-slice.ts`         | Trims the document to one page's operations before it ships to the client |
+| `components/openapi-page.tsx`  | Server wrapper the generated reference pages render                       |
+| `app/(home)`                   | Landing page                                                              |
+| `app/docs`                     | Docs layout and pages                                                     |
+| `app/api/search/route.ts`      | Emits the static Orama search index at build time                         |
+| `scripts/refresh-openapi.mjs`  | Refreshes the checked-in OpenAPI snapshot                                 |
+| `scripts/generate-openapi.mjs` | Derives the public document and generates the reference pages             |
 
 ## Sections
 
@@ -43,8 +46,8 @@ Getting started, Platform concepts, API reference, Backend SDK (JS), Frontend SD
 (React), Device SDK. A seventh, Workflows/AI, is reserved in that file as a
 comment and deliberately unwritten.
 
-Only Getting started carries real prose today. The other five are placeholders
-with a "what lives here" paragraph, filled in by later phases of the
+Getting started and API reference carry real prose today. The other four are
+placeholders with a "what lives here" paragraph, filled in by later phases of the
 [SDK and API plan](../../plans/xorgate-sdk-and-api/README.md).
 
 ## Static export, and what it costs
@@ -70,24 +73,52 @@ the serving path. Consequences worth knowing before adding a feature:
 - **Content is baked in.** Refreshing the OpenAPI snapshot, or editing any page,
   requires a rebuild and a re-sync. Nothing updates in place.
 
-## OpenAPI snapshot
+## API reference generation
+
+Two documents and one generator:
 
 ```sh
 npm run refresh-openapi     # curls ${NEXT_PUBLIC_API_BASE_URL}/openapi.json into openapi/xorgate.json
+npm run refresh-openapi -- ../../backend/xorgate-core-service/openapi.json   # ...or from a local file
+npm run generate-openapi    # derives openapi/xorgate.public.json + writes content/docs/api-reference/**
 ```
 
-The snapshot is checked in so builds are reproducible and work offline. Refresh
-it, review the diff, and commit. Reference pages are not generated from it yet:
-see `lib/openapi.ts` for what wiring that up involves.
+`openapi/xorgate.json` is the truthful snapshot of the served document,
+internal routes and all. It is checked in so builds are reproducible and work
+offline. Refresh it, review the diff, and commit.
+
+`openapi/xorgate.public.json` is derived from it at generation time: operations
+flagged `x-internal` are dropped (the device installer's private routes) and
+`servers` is pointed at `NEXT_PUBLIC_API_BASE_URL`. It is a build artifact and
+gitignored.
+
+`generate-openapi` runs automatically before `dev` and `build`, so the pages can
+never be generated from a document the site is not serving. It writes one MDX
+page per operation into a folder per tag, plus the `meta.json` sidebar files. It
+only writes, never deletes:
+
+- The hand-written `index.mdx` overview in each tag folder survives, and the
+  generator splices it back to the top of each `meta.json`.
+- Renaming or removing an operation leaves its old page behind. Delete it by
+  hand.
+
+The spec itself lives in the backend, at
+`backend/xorgate-core-service/src/openapi/`, one module per resource. Change it
+there, run `npm run openapi:emit` in that project, refresh the snapshot here,
+and regenerate. A test in the backend fails if a route in the CDK route table
+has no entry in the document.
+
+Generated pages are ignored by Prettier (`.prettierignore`); the hand-written
+overviews are not.
 
 ## Deploy
 
 Two GitHub Actions workflows in `.github/workflows/`:
 
-| Workflow | Trigger | Bucket | Environment |
-| --- | --- | --- | --- |
-| `deploy-dev.yml` | push to `main`, or manual | `docs-dev.xorgate.io` | `development` |
-| `deploy-prod.yml` | release published, or manual with a tag | `docs.xorgate.io` | `production` |
+| Workflow          | Trigger                                 | Bucket                | Environment   |
+| ----------------- | --------------------------------------- | --------------------- | ------------- |
+| `deploy-dev.yml`  | push to `main`, or manual               | `docs-dev.xorgate.io` | `development` |
+| `deploy-prod.yml` | release published, or manual with a tag | `docs.xorgate.io`     | `production`  |
 
 Both build the export and sync `out/` to their bucket. Set a `DOCS_BUCKET`
 environment variable only to override the default baked into each workflow.

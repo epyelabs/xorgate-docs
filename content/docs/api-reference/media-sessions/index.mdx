@@ -1,0 +1,76 @@
+---
+title: "Overview"
+description: "Video recorded on the device: sessions, runs, segments, and replay manifests."
+---
+
+This is the recorded plane, which is entirely separate from live video. The
+device records to local storage and uploads roughly 60-second MP4 segments to
+object storage; an ingest pipeline indexes them into sessions and segments. What
+you read here is that index, plus presigned URLs for the bytes.
+
+## The model
+
+A **session** is one continuous recording run for ONE camera. A dual-camera
+drive is therefore two sessions with near-identical `startedAt`, not one. A
+**segment** is one ~60 s MP4 within a session, addressed by `seq`. A **run** is
+the human notion of "one drive": the set of sessions whose intervals fall within
+60 seconds of each other, clustered server-side. Runs have no database row and
+no device-side id; a run is identified by its earliest member session's id,
+which is stable across polls.
+
+`GET /devices/{id}/sessions` lists sessions by default and runs with
+`group=runs`. Under `group=runs` the envelope key changes to `runs`, `page.total`
+counts runs, and filters select which RUNS to return rather than which sessions
+to cluster. So `streamKey=cam0` returns the runs cam0 recorded in with all their
+cameras present, and a from/to range returns overlapping runs whole rather than
+clipped. It requires `sort=startedAt`, since a run has no `createdAt` of its own.
+
+Two behaviours that surprise people. The time filter matches sessions
+OVERLAPPING `[from, to)`, not only those that started inside it, because a
+session spans a window. And `status` is advisory: a session closes about ten
+minutes after segments stop arriving and reopens if a straggler lands later.
+Listing sessions also closes stale ones as a side effect, so a session can flip
+from `open` to `closed` between two reads with nothing else having happened.
+
+## Getting the bytes
+
+`GET /devices/{id}/sessions/{sessionId}/segments` returns the whole ordered
+index in one response (`seq` ascending is chronological). It is deliberately
+unpaginated, because it is the stitching input. It returns the index only, with
+no URLs.
+
+For one segment, `.../segments/{seq}/playback` presigns a single URL with a
+one-hour TTL. For anything longer, use the replay manifest instead of looping
+over that route.
+
+## The replay manifest
+
+`GET /devices/{id}/replay-manifest` is the one call a player needs. It returns
+per-session timelines with `effectiveDurationMs` and explicit `gaps`, computed
+server-side so every client renders the same timeline, plus a presigned URL per
+segment in one batch.
+
+Address it by `sessionId` (single session) OR by `from`/`to` (every overlapping
+session, segments clipped, optional `streamKey`), never both. Caps: 600 segments
+in total, and in range mode 10 sessions and 24 hours. Exceeding one is a `400`
+telling you to narrow the request.
+
+<Callout title="Refetch before urlExpiresAt">
+  Every timestamp in the manifest is epoch MILLISECONDS, unlike the ISO strings
+  everywhere else in this API. `urlExpiresAt` is the real URL TTL minus a
+  five-minute safety margin, so refetch the manifest before that instant rather
+  than waiting for a 403 on a segment. A player that has been paused for an hour
+  needs a fresh manifest before it resumes.
+</Callout>
+
+The format is deliberately neutral: no HLS, no DASH, no playlist syntax and no
+codec strings in the URLs. Clients stitch fragmented MP4 themselves and read
+media details from the segment bytes. Two details matter when stitching: prefer
+the next segment's `startTs` delta over the recorded `durationMs`, and expect a
+roughly two-second hole at the first seam of a session, because segment 0
+includes pipeline startup.
+
+Deleting a session removes its objects and index rows and is owner/admin only,
+since device-recorded video is not re-creatable. Ingest is at-least-once, so a
+segment still uploading after the delete recreates the session index; delete
+again once the device has drained.

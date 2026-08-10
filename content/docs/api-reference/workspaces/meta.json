@@ -1,0 +1,12 @@
+{
+  "title": "Workspaces",
+  "description": "The grouping devices belong to, one level below an organization.",
+  "pages": [
+    "index",
+    "list-workspaces",
+    "create-workspace",
+    "get-workspace",
+    "delete-workspace",
+    "update-workspace"
+  ]
+}

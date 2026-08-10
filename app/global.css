@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
+/* Styles the generated API reference: method badges, schema tables, playground. */
+@import "fumadocs-openapi/css/preset.css";
 
 html {
   scrollbar-gutter: stable;

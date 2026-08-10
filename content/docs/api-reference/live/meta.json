@@ -1,0 +1,9 @@
+{
+  "title": "Live",
+  "description": "Bootstrap for the live plane: KVS channel metadata and the IoT policy attachment a browser needs.",
+  "pages": [
+    "index",
+    "get-device-kvs-channels",
+    "attach-iot-policy"
+  ]
+}

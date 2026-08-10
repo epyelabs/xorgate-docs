@@ -1,0 +1,12 @@
+{
+  "title": "Media Sessions",
+  "description": "Video recorded on the device and uploaded as segments: sessions, runs, segment index, playback URLs, and replay manifests.",
+  "pages": [
+    "index",
+    "list-media-sessions",
+    "delete-media-session",
+    "list-media-session-segments",
+    "get-media-segment-playback",
+    "get-replay-manifest"
+  ]
+}

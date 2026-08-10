@@ -1,0 +1,21 @@
+{
+  "title": "Devices",
+  "description": "Device records, their configuration document, their IoT identity, and the one-shot commands you can send them.",
+  "pages": [
+    "index",
+    "list-devices",
+    "create-device",
+    "get-device",
+    "delete-device",
+    "update-device",
+    "patch-device-config",
+    "patch-device-ui-prefs",
+    "provision-device",
+    "get-device-identity",
+    "reboot-device",
+    "power-off-device",
+    "refresh-device-state",
+    "update-device-agent",
+    "get-latest-agent-build"
+  ]
+}

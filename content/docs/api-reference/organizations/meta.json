@@ -1,0 +1,12 @@
+{
+  "title": "Organizations",
+  "description": "The billing and ownership boundary. Everything else hangs off one.",
+  "pages": [
+    "index",
+    "list-organizations",
+    "create-organization",
+    "get-organization",
+    "delete-organization",
+    "update-organization"
+  ]
+}

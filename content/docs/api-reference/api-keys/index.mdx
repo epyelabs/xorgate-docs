@@ -1,0 +1,31 @@
+---
+title: "Overview"
+description: "Organization-scoped keys you can mint today, and what they cannot do yet."
+---
+
+<Callout type="warn" title="Keys are mint-only right now">
+  Nothing in this API accepts an API key as a credential. There is no
+  `X-Api-Key` path, no scope enforcement, and `lastUsedAt` never advances,
+  because no code path ever verifies a key. Server-to-server callers still have
+  to present a Cognito ID token. Key verification is the top item on the
+  platform-readiness backlog; until it ships, treat these endpoints as
+  provisioning ahead of that work.
+</Callout>
+
+A key is minted with a name and a scope (`edge`, `cloud` or `client`). The scope
+is validated on create and stored, but it is inert: it describes intent for the
+authorization model that is being designed, not a restriction in force today.
+
+`POST /api-keys` returns the plaintext key exactly once, as `plaintext_key`,
+alongside the key metadata. Only its SHA-256 is stored, so a lost key cannot be
+recovered, only replaced. Persist it at the moment you receive it.
+
+Deletion is a hard delete. The row carries a `revokedAt` column, but
+`DELETE /api-keys/{id}` removes the row rather than stamping it, so there is no
+audit trail of a retired key today.
+
+The envelope keys here are snake_case: `api_keys` for the list and
+`api_key` plus `plaintext_key` for the create response, while the objects inside
+them are camelCase. They mirror the Postgres table name, and the inconsistency
+stays on the wire rather than breaking existing clients. Both SDKs normalize it
+to `apiKeys` and `plaintextKey`.

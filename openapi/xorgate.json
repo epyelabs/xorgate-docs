@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.1.0",
-    "description": "Backend API for organizations, workspaces, devices, and platform-level device models. Most endpoints require a Bearer JWT (Cognito ID token). Org-scoped endpoints additionally resolve the active organization from the `X-Organization-Id` header (omit if the caller belongs to a single org)."
+    "version": "0.2.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <token>`, where the token is a Cognito **ID** token (not an access\ntoken). A user row is created on first successful verification. API keys can be minted but\nare not yet accepted as credentials.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. `X-Workspace-Id` narrows `GET /devices` and is required by\n`POST /device-registrations`.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
   },
   "servers": [
     {
@@ -15,12 +15,80 @@
       "BearerAuth": []
     }
   ],
+  "tags": [
+    {
+      "name": "Users",
+      "x-displayName": "Users",
+      "description": "Who the caller is, and which organizations they can act in."
+    },
+    {
+      "name": "Organizations",
+      "x-displayName": "Organizations",
+      "description": "The billing and ownership boundary. Everything else hangs off one."
+    },
+    {
+      "name": "Memberships",
+      "x-displayName": "Memberships",
+      "description": "Who belongs to an organization, and with what role."
+    },
+    {
+      "name": "API Keys",
+      "x-displayName": "API Keys",
+      "description": "Organization-scoped keys. Mint-only today: no endpoint accepts one as a credential yet."
+    },
+    {
+      "name": "Workspaces",
+      "x-displayName": "Workspaces",
+      "description": "The grouping devices belong to, one level below an organization."
+    },
+    {
+      "name": "Device Models",
+      "x-displayName": "Device Models",
+      "description": "The platform-wide hardware catalog. Reading is open to any authenticated caller; writing needs a platform admin."
+    },
+    {
+      "name": "Devices",
+      "x-displayName": "Devices",
+      "description": "Device records, their configuration document, their IoT identity, and the one-shot commands you can send them."
+    },
+    {
+      "name": "Device Registrations",
+      "x-displayName": "Device Registrations",
+      "description": "Onboarding a physical device with a short-lived code and the install script."
+    },
+    {
+      "name": "Telemetry",
+      "x-displayName": "Telemetry",
+      "description": "Stored sensor readings. The live 1 Hz feed does not come through this API."
+    },
+    {
+      "name": "Media Sessions",
+      "x-displayName": "Media Sessions",
+      "description": "Video recorded on the device and uploaded as segments: sessions, runs, segment index, playback URLs, and replay manifests."
+    },
+    {
+      "name": "Live",
+      "x-displayName": "Live",
+      "description": "Bootstrap for the live plane: KVS channel metadata and the IoT policy attachment a browser needs."
+    },
+    {
+      "name": "Search",
+      "x-displayName": "Search",
+      "description": "Cross-resource lookup within the active organization."
+    },
+    {
+      "name": "Meta",
+      "x-displayName": "Meta",
+      "description": "Health probe and this document."
+    }
+  ],
   "components": {
     "securitySchemes": {
       "BearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "JWT"
+        "bearerFormat": "JWT",
+        "description": "A Cognito **ID** token (not an access token). Users are created just-in-time on first successful verification. API keys exist but are not accepted as credentials yet. See the API Keys section."
       }
     },
     "parameters": {
@@ -32,7 +100,7 @@
           "type": "string",
           "format": "uuid"
         },
-        "description": "Active organization UUID. Required when the caller belongs to more than one organization."
+        "description": "Active organization UUID. Resolution order: this header if present (it must match one of your memberships, else `403 FORBIDDEN`), otherwise your sole membership. A caller who belongs to more than one organization and omits it gets `400 ORGANIZATION_REQUIRED`, and a caller who belongs to none gets `403 NO_ORGANIZATION`. Practically: always send it."
       },
       "WorkspaceIdHeader": {
         "name": "X-Workspace-Id",
@@ -42,7 +110,7 @@
           "type": "string",
           "format": "uuid"
         },
-        "description": "Optional workspace UUID. When present on GET /devices, the response is filtered to devices in this workspace. Must belong to the active organization."
+        "description": "Optional workspace UUID. On `GET /devices` it filters the result to that workspace (a workspace outside the active organization yields an EMPTY page, not an error). Required on `POST /device-registrations`."
       },
       "IdPath": {
         "name": "id",
@@ -71,6 +139,71 @@
           "minimum": 0
         },
         "description": "Segment sequence number within the session (0-based)."
+      },
+      "RegistrationCodePath": {
+        "name": "code",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "The registration code from `POST /device-registrations`."
+      },
+      "LimitQuery": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 100
+        },
+        "description": "Page size. Default 100, and values above the endpoint maximum (500 everywhere today) are silently CLAMPED rather than rejected. Read `page.limit` back to see what was applied. A non-integer or a value below 1 is a 400."
+      },
+      "OffsetQuery": {
+        "name": "offset",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "description": "Rows to skip. A non-integer is a 400; an offset past the end returns an empty page."
+      },
+      "OrderQuery": {
+        "name": "order",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
+        "description": "Sort direction of the sort column this endpoint uses."
+      },
+      "FromQuery": {
+        "name": "from",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "description": "Range start (inclusive), ISO-8601. Must be earlier than `to`."
+      },
+      "ToQuery": {
+        "name": "to",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "description": "Range end (exclusive), ISO-8601."
       }
     },
     "schemas": {
@@ -79,6 +212,7 @@
         "required": [
           "error"
         ],
+        "description": "The uniform error envelope. Every non-2xx response in this API has this shape; `code` is stable and machine-readable, `message` is human-facing and may change.",
         "properties": {
           "error": {
             "type": "object",
@@ -88,16 +222,63 @@
             ],
             "properties": {
               "code": {
-                "type": "string"
+                "type": "string",
+                "description": "Stable error code. The full set a client can see: `UNAUTHORIZED` (401), `ORGANIZATION_REQUIRED` (400, multi-org caller sent no `X-Organization-Id`), `BAD_REQUEST` (400), `FORBIDDEN` / `NO_ORGANIZATION` / `INSUFFICIENT_ROLE` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `CONFLICT` (409), `CONFIG_PUBLISH_FAILED` / `COMMAND_PUBLISH_FAILED` / `DIST_MANIFEST_UNAVAILABLE` / `DIST_MANIFEST_INVALID` (502).",
+                "example": "NOT_FOUND"
               },
               "message": {
                 "type": "string"
               },
               "details": {
                 "type": "object",
-                "additionalProperties": true
+                "additionalProperties": true,
+                "description": "Present only on the errors that carry structured context."
               }
             }
+          }
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "required": [
+          "limit",
+          "offset",
+          "order",
+          "total"
+        ],
+        "description": "Pagination block returned alongside the items by every endpoint that speaks the list dialect (see the `limit`/`offset`/`order`/`sort` parameters). `limit` and `offset` echo the REQUEST after clamping, and `total` is the exact match count under the same filters, except on `GET /devices/{id}/telemetry/readings`, the one endpoint whose table is large enough that an exact count times out, which caps it and says so via `totalIsCapped`.",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "example": 100
+          },
+          "offset": {
+            "type": "integer",
+            "example": 0
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          },
+          "total": {
+            "type": "integer"
+          },
+          "totalIsCapped": {
+            "type": "boolean",
+            "description": "Only `GET /devices/{id}/telemetry/readings` sets this. True means more rows match than `total` reports and only the first `total` are addressable."
+          },
+          "coveredFrom": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Only `GET /devices/{id}/telemetry/readings`. Oldest addressable sample under this filter; absent when nothing matches."
+          },
+          "coveredTo": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Only `GET /devices/{id}/telemetry/readings`. Newest addressable sample under this filter; absent when nothing matches."
           }
         }
       },
@@ -135,11 +316,13 @@
             "enum": [
               "user",
               "admin"
-            ]
+            ],
+            "description": "PLATFORM role, distinct from the per-organization membership role. Only `admin` may write the device-model catalog."
           },
           "created_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "snake_case on the wire: `GET /me` serializes the users row verbatim. The SDKs normalize it to `createdAt`."
           }
         }
       },
@@ -150,6 +333,7 @@
           "name",
           "slug"
         ],
+        "description": "Organization rows serialize verbatim from Postgres, so their timestamps are snake_case while most of this API is camelCase. The SDKs normalize; the wire format stays as-is.",
         "properties": {
           "id": {
             "type": "string",
@@ -270,8 +454,10 @@
           "id",
           "organizationId",
           "name",
-          "scope"
+          "scope",
+          "createdAt"
         ],
+        "description": "API key metadata. `hashedKey` is never returned; the plaintext key is shown exactly once, at creation. Keys are MINT-ONLY today: nothing in this API verifies one yet, so `scope` is recorded but not enforced, `lastUsedAt` never advances, and there is no expiry. Server-to-server callers still have to use a Cognito ID token.",
         "properties": {
           "id": {
             "type": "string",
@@ -290,12 +476,14 @@
               "edge",
               "cloud",
               "client"
-            ]
+            ],
+            "description": "Validated on create, but not enforced anywhere yet."
           },
           "lastUsedAt": {
             "type": "string",
             "format": "date-time",
-            "nullable": true
+            "nullable": true,
+            "description": "Always null today: no code path verifies a key, so nothing stamps this."
           },
           "revokedAt": {
             "type": "string",
@@ -345,6 +533,194 @@
           }
         }
       },
+      "IoCapabilities": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "media": {
+            "type": "object",
+            "properties": {
+              "video": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "codec": {
+                      "type": "string"
+                    },
+                    "maxWidth": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "maxHeight": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "maxFps": {
+                      "type": "number",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "codec"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              },
+              "audio": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "codec": {
+                      "type": "string"
+                    },
+                    "sampleRate": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "channels": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "codec"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              }
+            },
+            "additionalProperties": false
+          },
+          "sensors": {
+            "type": "object",
+            "properties": {
+              "imu": {
+                "type": "object",
+                "properties": {
+                  "axes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "accel": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "quaternion": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "euler": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "rateHz": {
+                    "type": "number",
+                    "exclusiveMinimum": true,
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "comm": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "gps": {
+                "type": "object",
+                "properties": {
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "fields"
+                ],
+                "additionalProperties": false
+              },
+              "signal": {
+                "type": "object",
+                "properties": {
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "fields"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "system": {
+            "type": "object",
+            "properties": {
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "fields"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schemaVersion"
+        ],
+        "additionalProperties": false,
+        "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a KVS signaling channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces.\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero KVS channels and live video silently never works. Validate against this schema yourself before writing."
+      },
       "DeviceModel": {
         "type": "object",
         "required": [
@@ -364,9 +740,11 @@
             "type": "string"
           },
           "ioCapabilities": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Structured capabilities (jsonb): { schemaVersion, media{video[],audio[]}, sensors{imu}, comm{gps,signal}, system }. Drives telemetry metrics and media stream keys (cam0/cam1/audio0).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IoCapabilities"
+              }
+            ],
             "nullable": true
           },
           "firmwareChannel": {
@@ -412,9 +790,16 @@
             "type": "string",
             "nullable": true
           },
+          "agentVersion": {
+            "type": "string",
+            "nullable": true,
+            "description": "Installed xorgate-device-agent build (CI short sha on dev, release tag on prod), mirrored from the device's own config report, and read-only. null until the device reports a build."
+          },
           "firmwareVersion": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "deprecated": true,
+            "description": "DEPRECATED alias for agentVersion; removed once clients migrate."
           },
           "status": {
             "type": "string",
@@ -423,7 +808,8 @@
               "online",
               "offline",
               "decommissioned"
-            ]
+            ],
+            "description": "Machine-managed: telemetry ingest, the MQTT last-will and the offline sweeper own this. Writing it through `PUT /devices/{id}` is rejected 400."
           },
           "lastSeenAt": {
             "type": "string",
@@ -436,7 +822,7 @@
                 "$ref": "#/components/schemas/DeviceConfig"
               }
             ],
-            "description": "Everything this device is told, in one namespaced document. Written by PATCH /devices/{id}/config and published as a retained MQTT message."
+            "description": "Everything this device is told, in one namespaced document. Written by PATCH /devices/{id}/config and published as a retained MQTT message. Namespaces the cloud has reverted are STRIPPED from this view, so a namespace is either configured or absent, never present-but-null."
           },
           "configRev": {
             "type": "integer",
@@ -459,7 +845,7 @@
             "type": "object",
             "additionalProperties": true,
             "nullable": true,
-            "description": "Last config report from the device, mirrored off `xorgate/devices/{id}/config/reported`; null until the device has reported at least once (a pre-Phase-3 agent never does). Shape: `{ v, deviceId, ts, rev, origin, effective, status }` — `rev` is the last desired revision the device applied (0 = never received one), `origin` is `cloud`/`local`/`boot`, `effective` holds the post-clamp values actually in force (an absent namespace means device defaults, and `gnssAntBias` is the value the modem daemon applied, not the one requested), and `status` carries a per-namespace `{ state: applied|adjusted|rejected, at, detail?, reason? }`. There is no `pending` state on the wire — the reader computes it as `configRev > reportedConfig.rev` on an online device. `effective.agent.mode` is reported-only (`sim`/`real`): it is never cloud-settable and never gets a `status` entry. `effective.sim` (SIM presence, state, ICCID, phone number, carrier, registration) and `effective.uplink` (which interface carries the default route) are reported-only in exactly the same way — a device cannot be TOLD its ICCID, so neither is a config namespace and neither ever carries a `status`. Both are ABSENT when the device has not reported them, which means unknown and never \"no SIM\". `effective.apn` is reported-only too: the modem daemon's APN apply machinery — `{ applied, requested?, state: in-force|applying|rolled-back|rejected, last_error?, changed_at? }`. `applied` is the APN actually in the modem's data context (the `cellular` namespace's `effective.cellular.apn` mirrors it while a change is in flight); an ABSENT `apn` block means the daemon predates the rollback machinery, and a UI must refuse to write the `cellular` namespace to such a device — there is no safety net there. An `origin: \"local\"` report additionally carries `changed`, the namespaces a local writer altered on the device (`null` = reverted to device defaults); those are validated and merged into `config`, which bumps `configRev` and republishes — unless a newer cloud revision already landed, in which case the cloud value wins and the local change is discarded."
+            "description": "Last config report from the device, mirrored off `xorgate/devices/{id}/config/reported`; null until the device has reported at least once (a pre-Phase-3 agent never does). Shape: `{ v, deviceId, ts, rev, origin, effective, status }`. `rev` is the last desired revision the device applied (0 = never received one), `origin` is `cloud`/`local`/`boot`, `effective` holds the post-clamp values actually in force (an absent namespace means device defaults, and `gnssAntBias` is the value the modem daemon applied, not the one requested), and `status` carries a per-namespace `{ state: applied|adjusted|rejected, at, detail?, reason? }`. There is no `pending` state on the wire: the reader computes it as `configRev > reportedConfig.rev` on an online device. `effective.agent.mode` is reported-only (`sim`/`real`): it is never cloud-settable and never gets a `status` entry. `effective.sim` (SIM presence, state, ICCID, phone number, carrier, registration) and `effective.uplink` (which interface carries the default route) are reported-only in exactly the same way, because a device cannot be TOLD its ICCID, so neither is a config namespace and neither ever carries a `status`. Both are ABSENT when the device has not reported them, which means unknown and never \"no SIM\". `effective.apn` is reported-only too: the modem daemon's APN apply machinery: `{ applied, requested?, state: in-force|applying|rolled-back|rejected, last_error?, changed_at? }`. `applied` is the APN actually in the modem's data context (the `cellular` namespace's `effective.cellular.apn` mirrors it while a change is in flight); an ABSENT `apn` block means the daemon predates the rollback machinery, and a UI must refuse to write the `cellular` namespace to such a device, since there is no safety net there. An `origin: \"local\"` report additionally carries `changed`, the namespaces a local writer altered on the device (`null` = reverted to device defaults); those are validated and merged into `config`, which bumps `configRev` and republishes, unless a newer cloud revision already landed, in which case the cloud value wins and the local change is discarded."
           },
           "reportedAt": {
             "type": "string",
@@ -469,7 +855,7 @@
           "gnssAntBias": {
             "type": "boolean",
             "deprecated": true,
-            "description": "DEPRECATED — read `config.gnssAntBias`. Dual-written during the transition window and dropped by a follow-up migration."
+            "description": "DEPRECATED. Read `config.gnssAntBias`. Dual-written during the transition window and dropped by a follow-up migration."
           },
           "activeStreamsViewType": {
             "type": "string",
@@ -478,7 +864,7 @@
               "map"
             ],
             "deprecated": true,
-            "description": "DEPRECATED — read `uiPrefs.activeStreamsViewType`."
+            "description": "DEPRECATED. Read `uiPrefs.activeStreamsViewType`."
           },
           "imuMount": {
             "allOf": [
@@ -488,13 +874,13 @@
             ],
             "nullable": true,
             "deprecated": true,
-            "description": "DEPRECATED — read `config.imuMount`."
+            "description": "DEPRECATED. Read `config.imuMount`."
           },
           "imuView": {
             "type": "object",
             "nullable": true,
             "deprecated": true,
-            "description": "DEPRECATED — read `uiPrefs.imuView`.",
+            "description": "DEPRECATED. Read `uiPrefs.imuView`.",
             "properties": {
               "azimuthDeg": {
                 "type": "number"
@@ -512,7 +898,7 @@
             ],
             "nullable": true,
             "deprecated": true,
-            "description": "DEPRECATED — read `config.recording`."
+            "description": "DEPRECATED. Read `config.recording`."
           },
           "lteRecoveryConfig": {
             "allOf": [
@@ -522,7 +908,7 @@
             ],
             "nullable": true,
             "deprecated": true,
-            "description": "DEPRECATED — read `config.lteRecovery`."
+            "description": "DEPRECATED. Read `config.lteRecovery`."
           },
           "timeSyncConfig": {
             "allOf": [
@@ -532,7 +918,7 @@
             ],
             "nullable": true,
             "deprecated": true,
-            "description": "DEPRECATED — read `config.timeSync`."
+            "description": "DEPRECATED. Read `config.timeSync`."
           },
           "createdAt": {
             "type": "string",
@@ -866,7 +1252,7 @@
       "DeviceConfig": {
         "type": "object",
         "additionalProperties": false,
-        "description": "The consolidated device config document (`devices.config`). One key per namespace, all optional — an ABSENT namespace means the device uses its own defaults. Namespace keys are the wire/settings.json keys and are never renamed. Published verbatim (plus `v`, `rev`, `uploadBucket`, `ts`) as a retained MQTT message on `xorgate/devices/{id}/config`.",
+        "description": "The consolidated device config document (`devices.config`). One key per namespace, all optional: an ABSENT namespace means the device uses its own defaults. Namespace keys are the wire/settings.json keys and are never renamed. Published verbatim (plus `v`, `rev`, `uploadBucket`, `ts`) as a retained MQTT message on `xorgate/devices/{id}/config`.",
         "properties": {
           "gnssAntBias": {
             "allOf": [
@@ -949,6 +1335,120 @@
         "additionalProperties": false,
         "description": "Cloud-only presentation preferences (`devices.ui_prefs`). NEVER delivered to the device and never bumps `configRev`. Absent keys fall back to {\"activeStreamsViewType\":\"card\",\"imuView\":{\"azimuthDeg\":45,\"elevationDeg\":24}}."
       },
+      "DeviceIdentity": {
+        "type": "object",
+        "required": [
+          "iotThingName",
+          "certificateId",
+          "policyName",
+          "roleAlias",
+          "status"
+        ],
+        "description": "The device's AWS IoT X.509 identity, non-secret fields only. `certificateArn` and `credentialEndpoint` are deliberately withheld, and the private key is never stored server-side at all (it is returned exactly once, at provisioning time).",
+        "properties": {
+          "iotThingName": {
+            "type": "string",
+            "description": "Equals the device id, and is also the MQTT client id."
+          },
+          "certificateId": {
+            "type": "string"
+          },
+          "policyName": {
+            "type": "string"
+          },
+          "roleAlias": {
+            "type": "string",
+            "description": "IoT role alias the device assumes for KVS + S3 access."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "revoked"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DeviceRegistration": {
+        "type": "object",
+        "required": [
+          "code",
+          "status",
+          "deviceId",
+          "expiresAt",
+          "installUrl"
+        ],
+        "description": "A short-lived onboarding code. The operator runs `installUrl` on the device; the install script claims the code, which creates the device row and provisions its IoT identity.",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The registration code, unique across the platform."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "claimed",
+              "expired"
+            ],
+            "description": "A stale `pending` row flips to `expired` lazily, when it is read, and there is no sweeper, so a code can be past `expiresAt` and still read `pending` until someone fetches it."
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The device created by the claim; null until then."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "15 minutes after the code was minted."
+          },
+          "installUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "The one-liner target: `<api base>/get/{code}`, which serves the install script. That route is internal to the installer and is not part of the public API."
+          }
+        }
+      },
+      "SearchResult": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "title",
+          "subtitle"
+        ],
+        "description": "One hit, normalized across resource types so a caller renders any of them from one code path. `id` addresses the resource of that `type`.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "device",
+              "workflow-template",
+              "workflow-instance"
+            ],
+            "description": "The workflow types are returned by the endpoint but their resources are not part of this documented API surface yet."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "description": "Device name (falling back to serial), or template name."
+          },
+          "subtitle": {
+            "type": "string",
+            "nullable": true,
+            "description": "Device serial, or template slug."
+          }
+        }
+      },
       "MediaSession": {
         "type": "object",
         "required": [
@@ -958,7 +1458,7 @@
           "startedAt",
           "status"
         ],
-        "description": "A continuous on-device recording run for one camera (offline recording plan). Sessions are per-camera: a dual-camera drive is two sessions with near-identical startedAt. `status` is advisory — a session closes ~10 min after segments stop arriving and reopens if a straggler segment lands later.",
+        "description": "A continuous on-device recording run for one camera (offline recording plan). Sessions are per-camera: a dual-camera drive is two sessions with near-identical startedAt. `status` is advisory: a session closes ~10 min after segments stop arriving and reopens if a straggler segment lands later.",
         "properties": {
           "id": {
             "type": "string",
@@ -1061,12 +1561,12 @@
           "sessionCount",
           "sessions"
         ],
-        "description": "One drive, as a human means it: the media sessions whose intervals are within 60 s of each other, clustered server-side. A session that is still open has no endedAt, so its interval end is estimated as startedAt + the duration uploaded so far — which means an open run's toTs grows as its backlog drains.",
+        "description": "One drive, as a human means it: the media sessions whose intervals are within 60 s of each other, clustered server-side. A session that is still open has no endedAt, so its interval end is estimated as startedAt + the duration uploaded so far, which means an open run's toTs grows as its backlog drains.",
         "properties": {
           "key": {
             "type": "string",
             "format": "uuid",
-            "description": "The earliest member session's id — a stable identity across polls. (There is no run row in the database and no device-side run id.)"
+            "description": "The earliest member session's id, a stable identity across polls. (There is no run row in the database and no device-side run id.)"
           },
           "fromTs": {
             "type": "string",
@@ -1125,7 +1625,7 @@
           "startTs",
           "durationMs"
         ],
-        "description": "One ~60 s MP4 segment of a media session. `finalized: false` = crash-cut partial (fragmented MP4, playable up to the cut). When stitching, prefer the next segment's startTs delta over durationMs (segment 0 includes ~2 s pipeline startup). Ingest drops segments whose startTs is more than MEDIA_SEGMENT_MAX_FUTURE_MS (default 24 h) ahead of server time — a device with a catastrophically wrong clock is rejected loudly rather than indexed where no query will find it.",
+        "description": "One ~60 s MP4 segment of a media session. `finalized: false` = crash-cut partial (fragmented MP4, playable up to the cut). When stitching, prefer the next segment's startTs delta over durationMs (segment 0 includes ~2 s pipeline startup). Ingest drops segments whose startTs is more than MEDIA_SEGMENT_MAX_FUTURE_MS (default 24 h) ahead of server time: a device with a catastrophically wrong clock is rejected loudly rather than indexed where no query will find it.",
         "properties": {
           "id": {
             "type": "string",
@@ -1188,7 +1688,7 @@
           "sessions",
           "urlExpiresAt"
         ],
-        "description": "Everything a replay player needs in one response: per-session gap-aware timelines plus a presigned GET URL per segment. All timestamps are epoch milliseconds (the replay-clock unit), unlike the ISO strings elsewhere in this API. Format-neutral by design: no codec strings or playlist syntax — clients parse media details from the segment bytes.",
+        "description": "Everything a replay player needs in one response: per-session gap-aware timelines plus a presigned GET URL per segment. All timestamps are epoch milliseconds (the replay-clock unit), unlike the ISO strings elsewhere in this API. Format-neutral by design: no codec strings or playlist syntax, so clients parse media details from the segment bytes.",
         "properties": {
           "deviceId": {
             "type": "string",
@@ -1204,7 +1704,7 @@
           },
           "urlExpiresAt": {
             "type": "integer",
-            "description": "Epoch ms after which segment URLs may stop working (real TTL minus a safety margin) — refetch the manifest before this."
+            "description": "Epoch ms after which segment URLs may stop working (real TTL minus a safety margin). Refetch the manifest before this."
           },
           "sessions": {
             "type": "array",
@@ -1285,7 +1785,7 @@
                       },
                       "effectiveDurationMs": {
                         "type": "integer",
-                        "description": "Next-segment startTs delta when contiguous, else the recorded durationMs — deltas beat durations (rotation timestamps are accurate; durations drift)."
+                        "description": "Next-segment startTs delta when contiguous, else the recorded durationMs. Deltas beat durations (rotation timestamps are accurate; durations drift)."
                       },
                       "finalized": {
                         "type": "boolean",
@@ -1549,7 +2049,7 @@
           "ts",
           "v"
         ],
-        "description": "One sample: a timestamp and its values. `v` is POSITIONAL against `columns` and its length always equals `columns.length` — trailing nulls are never trimmed.",
+        "description": "One sample: a timestamp and its values. `v` is POSITIONAL against `columns` and its length always equals `columns.length`, and trailing nulls are never trimmed.",
         "properties": {
           "ts": {
             "type": "string",
@@ -1567,51 +2067,6 @@
               null,
               47.3
             ]
-          }
-        }
-      },
-      "TelemetryReadingsPage": {
-        "type": "object",
-        "required": [
-          "limit",
-          "offset",
-          "order",
-          "total",
-          "totalIsCapped"
-        ],
-        "description": "Pagination block. `limit`/`offset` count timestamps (samples), not rows.",
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "description": "The REQUESTED page size, even if the page was trimmed to the addressable window."
-          },
-          "offset": {
-            "type": "integer"
-          },
-          "order": {
-            "type": "string",
-            "enum": [
-              "asc",
-              "desc"
-            ]
-          },
-          "total": {
-            "type": "integer",
-            "description": "Addressable distinct timestamps under this filter, capped at 10,000. Exact when totalIsCapped is false."
-          },
-          "totalIsCapped": {
-            "type": "boolean",
-            "description": "True when more samples match than `total` reports."
-          },
-          "coveredFrom": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Oldest addressable sample under this filter. Absent when nothing matches."
-          },
-          "coveredTo": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Newest addressable sample under this filter. Absent when nothing matches."
           }
         }
       },
@@ -1645,7 +2100,7 @@
     },
     "responses": {
       "Unauthorized": {
-        "description": "Unauthorized",
+        "description": "Missing, malformed, or expired bearer token (`UNAUTHORIZED`).",
         "content": {
           "application/json": {
             "schema": {
@@ -1655,7 +2110,7 @@
         }
       },
       "Forbidden": {
-        "description": "Forbidden",
+        "description": "Not a member of the requested organization (`FORBIDDEN`), a member of none (`NO_ORGANIZATION`), or a member without the required role (`INSUFFICIENT_ROLE`).",
         "content": {
           "application/json": {
             "schema": {
@@ -1665,7 +2120,7 @@
         }
       },
       "NotFound": {
-        "description": "Not found",
+        "description": "No such resource, or it belongs to another organization. Cross-tenant reads are deliberately indistinguishable from missing ones (`NOT_FOUND`).",
         "content": {
           "application/json": {
             "schema": {
@@ -1675,7 +2130,7 @@
         }
       },
       "BadRequest": {
-        "description": "Bad request",
+        "description": "Invalid body or query parameters (`BAD_REQUEST`), or a multi-organization caller who omitted `X-Organization-Id` (`ORGANIZATION_REQUIRED`).",
         "content": {
           "application/json": {
             "schema": {
@@ -1685,7 +2140,26 @@
         }
       },
       "Conflict": {
-        "description": "Conflict",
+        "description": "The resource is in a state that refuses this operation (`CONFLICT`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "The path exists but not with this method (`METHOD_NOT_ALLOWED`). The response carries an `Allow` header listing the methods this path does accept.",
+        "headers": {
+          "Allow": {
+            "schema": {
+              "type": "string",
+              "example": "GET, POST, DELETE"
+            },
+            "description": "Comma-separated methods this path accepts."
+          }
+        },
         "content": {
           "application/json": {
             "schema": {
@@ -1695,10 +2169,10 @@
         }
       },
       "NoContent": {
-        "description": "No content"
+        "description": "Deleted. Empty body."
       },
       "DeviceCommandAccepted": {
-        "description": "Command published to the device. Delivery to the broker only — the device may still reject it as expired or already-executed, and the real outcome is observed via device status.",
+        "description": "Command published to the device. Delivery to the broker only. The device may still reject it as expired or already-executed, and the real outcome is observed via device status.",
         "content": {
           "application/json": {
             "schema": {
@@ -1719,7 +2193,8 @@
                   "enum": [
                     "reboot",
                     "power_off",
-                    "refresh"
+                    "refresh",
+                    "update"
                   ]
                 },
                 "expiresAt": {
@@ -1733,7 +2208,7 @@
         }
       },
       "DeviceCommandPublishFailed": {
-        "description": "Delivering the command to the device failed (COMMAND_PUBLISH_FAILED). Retry.",
+        "description": "Delivering the command to the device failed (`COMMAND_PUBLISH_FAILED`). Retry.",
         "content": {
           "application/json": {
             "schema": {
@@ -1745,50 +2220,13 @@
     }
   },
   "paths": {
-    "/health": {
-      "get": {
-        "operationId": "health",
-        "summary": "Service health",
-        "tags": [
-          "Meta"
-        ],
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Service is up",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "stage"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "stage": {
-                      "type": "string",
-                      "enum": [
-                        "dev",
-                        "prod"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/me": {
       "get": {
         "operationId": "getMe",
         "summary": "Current user, memberships, and organizations",
+        "description": "The bootstrap call. It resolves the bearer token to a user (creating the row on first sight) and returns every organization the caller belongs to, which is how a client learns what to put in `X-Organization-Id`. `memberships` are the plain rows, not the enriched roster shape that `GET /memberships` returns. This is the only org-aware endpoint that never needs the tenancy header.",
         "tags": [
-          "User"
+          "Users"
         ],
         "responses": {
           "200": {
@@ -1816,7 +2254,8 @@
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/Organization"
-                      }
+                      },
+                      "description": "Empty for a brand-new user. Create one with `POST /organizations` before calling anything org-scoped."
                     }
                   }
                 }
@@ -1825,6 +2264,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -1833,6 +2275,7 @@
       "get": {
         "operationId": "listOrganizations",
         "summary": "List organizations the caller is a member of",
+        "description": "Unpaginated: the whole set comes back in one `organizations` array with no `page` block. A user belongs to a handful of organizations at most.",
         "tags": [
           "Organizations"
         ],
@@ -1860,13 +2303,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
       "post": {
         "operationId": "createOrganization",
         "summary": "Create a new organization and become its owner",
-        "description": "Bootstraps an organization for the caller and inserts a `memberships` row with `role: owner`. Does NOT require `X-Organization-Id` (the caller may have no orgs yet).",
+        "description": "Bootstraps an organization for the caller and inserts a `memberships` row with `role: owner`. Does NOT require `X-Organization-Id` (the caller may have no orgs yet), which makes it the one write a brand-new user can perform.",
         "tags": [
           "Organizations"
         ],
@@ -1917,6 +2363,9 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -1933,6 +2382,7 @@
       "get": {
         "operationId": "getOrganization",
         "summary": "Get the active organization",
+        "description": "The `{id}` must be the ACTIVE organization (the one resolved from `X-Organization-Id` or from a sole membership). Reading a different organization you belong to means switching the header, not changing the path.",
         "tags": [
           "Organizations"
         ],
@@ -1969,6 +2419,7 @@
       "put": {
         "operationId": "updateOrganization",
         "summary": "Update name or slug (owner/admin only)",
+        "description": "Partial update: send only the fields you want changed. An empty body is a 400, and targeting an organization other than the active one is a 403.",
         "tags": [
           "Organizations"
         ],
@@ -1978,6 +2429,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "name": {
                     "type": "string"
@@ -2026,6 +2478,7 @@
       "delete": {
         "operationId": "deleteOrganization",
         "summary": "Delete the organization (owner only)",
+        "description": "Cascades: workspaces, devices, API keys and memberships under this organization go with it. There is no undo and no soft-delete.",
         "tags": [
           "Organizations"
         ],
@@ -2054,12 +2507,13 @@
       "get": {
         "operationId": "listMemberships",
         "summary": "List members of the active organization",
+        "description": "The roster. Unpaginated (one `memberships` array, no `page` block), and each row is enriched with its member's `user` so a UI renders names and emails without a second round-trip.",
         "tags": [
           "Memberships"
         ],
         "responses": {
           "200": {
-            "description": "List of memberships, each enriched with its member’s identity",
+            "description": "List of memberships, each enriched with its member identity",
             "content": {
               "application/json": {
                 "schema": {
@@ -2084,13 +2538,16 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
       "post": {
         "operationId": "addMembership",
         "summary": "Add a user to the active organization (owner/admin only)",
-        "description": "Adds a member by `userId` or `email`. If an `email` has no account yet, a Cognito account is provisioned and the invitee is emailed a temporary password to set on first sign-in. `invited` is true when a new account was created and emailed.",
+        "description": "Adds a member by `userId` or `email`. If an `email` has no account yet, a Cognito account is provisioned and the invitee is emailed a temporary password to set on first sign-in. `invited` is true when a new account was created and emailed. Adding someone who is already a member is a 400, not a no-op.",
         "tags": [
           "Memberships"
         ],
@@ -2174,13 +2631,17 @@
       ],
       "delete": {
         "operationId": "removeMembership",
-        "summary": "Remove a member (owner/admin only; cannot remove the last owner)",
+        "summary": "Remove a member (owner/admin only)",
+        "description": "Removing the last remaining owner is refused with a 403, so an organization can never be left ownerless.",
         "tags": [
           "Memberships"
         ],
         "responses": {
           "204": {
             "$ref": "#/components/responses/NoContent"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2203,12 +2664,13 @@
       "get": {
         "operationId": "listApiKeys",
         "summary": "List API keys for the active organization",
+        "description": "Unpaginated, newest first. The envelope key is `api_keys` (snake_case, mirroring the Postgres table name) while its contents are camelCase. That inconsistency is deliberate and stays on the wire; the SDKs present it as `apiKeys`.",
         "tags": [
           "API Keys"
         ],
         "responses": {
           "200": {
-            "description": "List of API key metadata (hashed_key is never returned)",
+            "description": "API key metadata. The hashed key is never returned.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2233,13 +2695,16 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
       "post": {
         "operationId": "createApiKey",
         "summary": "Mint a new API key (owner/admin only)",
-        "description": "Returns the plaintext key exactly once. Persist it client-side immediately — it cannot be retrieved later.",
+        "description": "Returns the plaintext key exactly once, as `plaintext_key`. Only its SHA-256 is stored, so a lost key cannot be recovered, only replaced. Note that minting is currently all a key does: no endpoint accepts one as a credential yet, so a key is useful for provisioning ahead of that work rather than for calling this API today.",
         "tags": [
           "API Keys"
         ],
@@ -2263,7 +2728,8 @@
                       "edge",
                       "cloud",
                       "client"
-                    ]
+                    ],
+                    "description": "Recorded on the key. Nothing enforces it yet."
                   }
                 }
               }
@@ -2287,7 +2753,8 @@
                     },
                     "plaintext_key": {
                       "type": "string",
-                      "description": "Save this — not retrievable later."
+                      "example": "xg_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0",
+                      "description": "Save this. It is not retrievable later."
                     }
                   }
                 }
@@ -2318,6 +2785,7 @@
       "delete": {
         "operationId": "deleteApiKey",
         "summary": "Permanently delete an API key (owner/admin only)",
+        "description": "A hard delete, not a revocation: the row is removed and `revokedAt` is never used by this endpoint.",
         "tags": [
           "API Keys"
         ],
@@ -2349,6 +2817,7 @@
       "get": {
         "operationId": "listWorkspaces",
         "summary": "List workspaces in the active organization",
+        "description": "Unpaginated. Workspaces are the unit devices belong to, so this is usually the second call a client makes after `GET /me`.",
         "tags": [
           "Workspaces"
         ],
@@ -2379,6 +2848,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
@@ -2493,6 +2965,7 @@
       "put": {
         "operationId": "updateWorkspace",
         "summary": "Update a workspace",
+        "description": "Partial update. An empty body is a 400.",
         "tags": [
           "Workspaces"
         ],
@@ -2502,6 +2975,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "name": {
                     "type": "string"
@@ -2554,12 +3028,16 @@
       "delete": {
         "operationId": "deleteWorkspace",
         "summary": "Delete a workspace",
+        "description": "Cascades to the devices in it, and to their sessions and telemetry.",
         "tags": [
           "Workspaces"
         ],
         "responses": {
           "204": {
             "$ref": "#/components/responses/NoContent"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2577,7 +3055,7 @@
       "get": {
         "operationId": "listDeviceModels",
         "summary": "List the platform-wide device model catalog",
-        "description": "Read access is open to any authenticated user. Mutations require a platform-admin role (users.role = \"admin\").",
+        "description": "The catalog is PLATFORM-wide, not per organization, so this endpoint takes no tenancy header and every authenticated caller sees the same rows. Unpaginated. Writes need the platform-admin role (`users.role = \"admin\"`), which is separate from any membership role. The envelope keys are `device_models` / `device_model` (snake_case, mirroring the table name) with camelCase contents; the SDKs present them as `deviceModels` / `deviceModel`.",
         "tags": [
           "Device Models"
         ],
@@ -2605,12 +3083,16 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
       "post": {
         "operationId": "createDeviceModel",
         "summary": "Add a device model (platform admin only)",
+        "description": "`ioCapabilities` is what makes a model useful: it declares the video/audio stream keys that become KVS channels at provisioning time, and the telemetry metrics that become the default history columns. It is NOT validated here, but it IS parsed at provisioning time, and a document that fails that parse provisions zero KVS channels. Check it against the schema before you send it.",
         "tags": [
           "Device Models"
         ],
@@ -2632,8 +3114,11 @@
                     "type": "string"
                   },
                   "ioCapabilities": {
-                    "type": "object",
-                    "additionalProperties": true,
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/IoCapabilities"
+                      }
+                    ],
                     "nullable": true
                   },
                   "firmwareChannel": {
@@ -2718,6 +3203,7 @@
       "put": {
         "operationId": "updateDeviceModel",
         "summary": "Update a device model (platform admin only)",
+        "description": "Partial update; an empty body is a 400. Changing `ioCapabilities` does not retro-provision KVS channels on devices already created from this model.",
         "tags": [
           "Device Models"
         ],
@@ -2727,6 +3213,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "minProperties": 1,
                 "properties": {
                   "name": {
                     "type": "string"
@@ -2735,8 +3222,11 @@
                     "type": "string"
                   },
                   "ioCapabilities": {
-                    "type": "object",
-                    "additionalProperties": true,
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/IoCapabilities"
+                      }
+                    ],
                     "nullable": true
                   },
                   "firmwareChannel": {
@@ -2791,6 +3281,9 @@
           "204": {
             "$ref": "#/components/responses/NoContent"
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -2812,10 +3305,51 @@
       "get": {
         "operationId": "listDevices",
         "summary": "List devices in the active organization",
-        "description": "Returns every device whose workspace belongs to the active organization. Pass X-Workspace-Id to filter the results to a single workspace.",
+        "description": "Every device whose workspace belongs to the active organization, paginated with the shared list dialect. Pass `X-Workspace-Id` to narrow it to one workspace; a workspace outside the active organization returns an EMPTY page rather than an error, so an empty result never distinguishes \"no devices\" from \"wrong workspace\".",
         "parameters": [
           {
             "$ref": "#/components/parameters/WorkspaceIdHeader"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "updatedAt",
+                "createdAt",
+                "lastSeenAt",
+                "serial",
+                "name"
+              ],
+              "default": "updatedAt"
+            },
+            "description": "Sort column. Anything else is a 400."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "provisioned",
+                "online",
+                "offline",
+                "decommissioned"
+              ]
+            },
+            "description": "Filter by device status. An empty value or the literal `any` means \"no filter\"; any other unknown value is a 400."
           }
         ],
         "tags": [
@@ -2823,13 +3357,14 @@
         ],
         "responses": {
           "200": {
-            "description": "List of devices",
+            "description": "One page of devices",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": [
-                    "devices"
+                    "devices",
+                    "page"
                   ],
                   "properties": {
                     "devices": {
@@ -2837,23 +3372,33 @@
                       "items": {
                         "$ref": "#/components/schemas/Device"
                       }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
                     }
                   }
                 }
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       },
       "post": {
         "operationId": "createDevice",
         "summary": "Register a device under a workspace in the active organization",
+        "description": "Creates the row only. It has no IoT identity until `POST /devices/{id}/provision`, and no agent until someone installs one. For onboarding a physical device, prefer the registration-code flow, which does all three in one pass.",
         "tags": [
           "Devices"
         ],
@@ -2871,20 +3416,18 @@
                 "properties": {
                   "workspaceId": {
                     "type": "string",
-                    "format": "uuid"
+                    "format": "uuid",
+                    "description": "Must belong to the active organization, else 400."
                   },
                   "deviceModelId": {
                     "type": "string",
                     "format": "uuid"
                   },
                   "serial": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Unique within the workspace."
                   },
                   "name": {
-                    "type": "string",
-                    "nullable": true
-                  },
-                  "firmwareVersion": {
                     "type": "string",
                     "nullable": true
                   },
@@ -2981,8 +3524,8 @@
       },
       "put": {
         "operationId": "updateDevice",
-        "summary": "Update device metadata (name / firmware)",
-        "description": "Metadata only. `status` and `lastSeenAt` are machine-managed (telemetry ingest, the MQTT last-will, and the offline sweeper own them) and are rejected 400. Device config moved to PATCH /devices/{id}/config and PATCH /devices/{id}/ui-prefs; the old per-namespace body fields are still accepted for the transition window, forwarded through the same validation into `config`/`uiPrefs`, and logged as deprecated.",
+        "summary": "Update device metadata",
+        "description": "Metadata only. `status` and `lastSeenAt` are machine-managed (telemetry ingest, the MQTT last-will, and the offline sweeper own them) and are rejected 400. Device config moved to PATCH /devices/{id}/config and PATCH /devices/{id}/ui-prefs; the old per-namespace body fields below are still accepted for the transition window, forwarded through the same validation into `config`/`uiPrefs`, and logged as deprecated.",
         "tags": [
           "Devices"
         ],
@@ -2999,14 +3542,10 @@
                     "type": "string",
                     "nullable": true
                   },
-                  "firmwareVersion": {
-                    "type": "string",
-                    "nullable": true
-                  },
                   "gnssAntBias": {
                     "type": "boolean",
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/config."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/config."
                   },
                   "activeStreamsViewType": {
                     "type": "string",
@@ -3015,7 +3554,7 @@
                       "map"
                     ],
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/ui-prefs."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/ui-prefs."
                   },
                   "imuMount": {
                     "allOf": [
@@ -3025,13 +3564,13 @@
                     ],
                     "nullable": true,
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/config."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/config."
                   },
                   "imuView": {
                     "type": "object",
                     "nullable": true,
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/ui-prefs.",
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/ui-prefs.",
                     "properties": {
                       "azimuthDeg": {
                         "type": "number"
@@ -3049,7 +3588,7 @@
                     ],
                     "nullable": true,
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/config (`recording`)."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/config (`recording`)."
                   },
                   "lteRecoveryConfig": {
                     "allOf": [
@@ -3059,7 +3598,7 @@
                     ],
                     "nullable": true,
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/config (`lteRecovery`)."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/config (`lteRecovery`)."
                   },
                   "timeSyncConfig": {
                     "allOf": [
@@ -3069,7 +3608,7 @@
                     ],
                     "nullable": true,
                     "deprecated": true,
-                    "description": "DEPRECATED — use PATCH /devices/{id}/config (`timeSync`)."
+                    "description": "DEPRECATED. Use PATCH /devices/{id}/config (`timeSync`)."
                   }
                 }
               }
@@ -3106,18 +3645,32 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "description": "A legacy config field was accepted and saved, but publishing the retained document to the device failed (`CONFIG_PUBLISH_FAILED`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       },
       "delete": {
         "operationId": "deleteDevice",
         "summary": "Delete a device",
+        "description": "Removes the row and everything cascading off it (identity, KVS channels, sessions, telemetry). The AWS IoT thing and certificate are NOT torn down by this endpoint.",
         "tags": [
           "Devices"
         ],
         "responses": {
           "204": {
             "$ref": "#/components/responses/NoContent"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3143,7 +3696,7 @@
       "patch": {
         "operationId": "patchDeviceConfig",
         "summary": "Update device config namespaces",
-        "description": "Writes one or more namespaces of the device config document, bumps `configRev`, and publishes the whole document as a retained MQTT message on `xorgate/devices/{id}/config`. Each present namespace is validated and replaced WHOLE — the device replaces namespaces the same way, so a partial namespace would silently drop the keys it omits. `null` reverts a namespace to device defaults. Returns 502 when the row was written but the retained publish failed (the device has NOT been told — re-save to retry).",
+        "description": "Writes one or more namespaces of the device config document, bumps `configRev`, and publishes the whole document as a retained MQTT message on `xorgate/devices/{id}/config`. Each present namespace is validated and replaced WHOLE, because the device replaces namespaces the same way and a partial namespace would silently drop the keys it omits. `null` reverts a namespace to device defaults. Returns 502 when the row was written but the retained publish failed: the device has NOT been told yet, though it self-heals on its next config report.",
         "tags": [
           "Devices"
         ],
@@ -3155,7 +3708,7 @@
                 "type": "object",
                 "additionalProperties": false,
                 "minProperties": 1,
-                "description": "Partial config document. Present namespaces are validated and replaced WHOLE (matching how the device merges); `null` reverts a namespace to device defaults on BOTH sides — the cloud stops managing it and the device is told to drop its local value; absent namespaces are untouched; `{}` is rejected. All-or-nothing: any invalid namespace fails the whole request, so a multi-namespace save can never half-commit.",
+                "description": "Partial config document. Present namespaces are validated and replaced WHOLE (matching how the device merges); `null` reverts a namespace to device defaults on BOTH sides, so the cloud stops managing it and the device is told to drop its local value; absent namespaces are untouched; `{}` is rejected. All-or-nothing: any invalid namespace fails the whole request, so a multi-namespace save can never half-commit.",
                 "properties": {
                   "gnssAntBias": {
                     "allOf": [
@@ -3247,8 +3800,11 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "502": {
-            "description": "Saved, but delivering it to the device failed",
+            "description": "Saved, but delivering it to the device failed (`CONFIG_PUBLISH_FAILED`). It will be delivered automatically the next time the device reports in.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3353,6 +3909,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -3369,7 +3928,7 @@
       "post": {
         "operationId": "provisionDevice",
         "summary": "Provision device identity (owner/admin only)",
-        "description": "Mints an AWS IoT thing + X.509 certificate, attaches the device policy, and creates a KVS signaling channel per declared video stream. Returns the certificate, private key, and connection endpoints exactly once — persist them on the device immediately, they cannot be retrieved later. Idempotent: a second call for an already-provisioned device returns 409.",
+        "description": "Mints an AWS IoT thing + X.509 certificate, attaches the device policy, and creates a KVS signaling channel per declared video stream. Returns the certificate, private key, and connection endpoints exactly once, so persist them on the device immediately. A second call for an already-provisioned device returns 409; certificate rotation is not supported yet.",
         "tags": [
           "Devices"
         ],
@@ -3396,8 +3955,66 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/devices/{id}/identity": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceIdentity",
+        "summary": "The device's IoT identity metadata",
+        "description": "Non-secret fields of the X.509 identity minted at provisioning time: thing name, certificate id, policy, role alias, status. `identity` is NULL (with a 200, not a 404) when the device exists but has not been provisioned, so a client can render a clean \"not provisioned\" state. Reads the database only; it does not call AWS IoT, so a certificate revoked out of band still reads `active` here.",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "Identity metadata, or null when the device is not provisioned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "identity"
+                  ],
+                  "properties": {
+                    "identity": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/DeviceIdentity"
+                        }
+                      ],
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -3414,7 +4031,7 @@
       "post": {
         "operationId": "rebootDevice",
         "summary": "Reboot a device (owner/admin only)",
-        "description": "Publishes a one-shot reboot command to the device over MQTT and returns immediately — 202 means the command was delivered to the broker, not that the device has rebooted. Observe the outcome via the device status: it goes offline, then back online. The device must be online (409 otherwise): commands are not retained, so there is nothing for an offline device to pick up later. The command expires 60 seconds after issue and carries a request id the device refuses to execute twice, so a stale or redelivered command cannot cause a surprise reboot.",
+        "description": "Publishes a one-shot reboot command over MQTT and returns immediately. 202 means the command was delivered to the broker, not that the device has rebooted; observe the outcome via the device status, which goes offline and then back online. The device must be online (409 otherwise), because commands are not retained and there is nothing for an offline device to pick up later. The command expires 60 seconds after issue and carries a request id the device refuses to execute twice, so a stale or redelivered command cannot cause a surprise reboot.",
         "tags": [
           "Devices"
         ],
@@ -3430,6 +4047,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -3452,7 +4072,7 @@
       "post": {
         "operationId": "powerOffDevice",
         "summary": "Power off a device (owner/admin only)",
-        "description": "Publishes a one-shot power-off command to the device over MQTT. Same delivery semantics and guards as the reboot command, but NOT remotely recoverable: the device stays off until someone physically powers it back on. The device must be online (409 otherwise).",
+        "description": "Same delivery semantics and guards as reboot, but NOT remotely recoverable: the device stays off until someone physically powers it back on. The device must be online (409 otherwise).",
         "tags": [
           "Devices"
         ],
@@ -3468,6 +4088,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -3490,7 +4113,7 @@
       "post": {
         "operationId": "refreshDeviceState",
         "summary": "Ask the device to re-probe and re-report its state now",
-        "description": "Publishes a one-shot READ-ONLY refresh command over MQTT: the device re-probes what it can (SIM identity, applied APN, antenna bias) and publishes a fresh config report immediately, instead of on its hourly heartbeat. 202 means the command was delivered to the broker; observe the outcome by re-reading the device until `reportedAt` advances. The device rate-limits refreshes (~1 per 30 s) and a re-probe takes up to ~45 s to land. Ordinary member access — nothing on the device changes. The device must be online (409 otherwise).",
+        "description": "A one-shot READ-ONLY command: the device re-probes what it can (SIM identity, applied APN, antenna bias) and publishes a fresh config report immediately instead of on its hourly heartbeat. Observe the outcome by re-reading the device until `reportedAt` advances. The device rate-limits refreshes to roughly one per 30 s and a re-probe takes up to about 45 s to land. Ordinary member access, since nothing on the device changes. The device must be online (409 otherwise).",
         "tags": [
           "Devices"
         ],
@@ -3507,6 +4130,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
@@ -3516,7 +4142,7 @@
         }
       }
     },
-    "/devices/{id}/kvs-channels": {
+    "/devices/{id}/update": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -3525,34 +4151,16 @@
           "$ref": "#/components/parameters/OrganizationIdHeader"
         }
       ],
-      "get": {
-        "operationId": "getDeviceKvsChannels",
-        "summary": "List the device's KVS signaling channels (for the browser viewer)",
-        "description": "Returns the device's KVS WebRTC signaling channels (one per provisioned video stream). The browser obtains its own scoped AWS credentials via the Cognito identity pool, so this endpoint returns channel metadata only (no credentials). An empty array means the device is not yet provisioned.",
+      "post": {
+        "operationId": "updateDeviceAgent",
+        "summary": "Install the latest agent build on a device (owner/admin only)",
+        "description": "Publishes a one-shot update command over MQTT. The device starts a systemd one-shot that downloads the latest published build (see GET /device-dist/latest), installs it, and restarts the agent, so the device drops offline for roughly a minute or two. Latest-only: there is no version parameter. A failed install rolls back, leaving the device on its current build. IMPORTANT: 202 means the command reached the broker, NOT that the update succeeded, and the ack could not tell you either (the agent is restarted mid-update). Observe the outcome by polling GET /devices/{id} until `agentVersion` changes; an unchanged build after the device returns online means the update failed and rolled back (diagnose on the device with `journalctl -u xorgate-updater`). The device must be online (409 otherwise). Pressing this twice is harmless: `systemctl start` on an already-running one-shot coalesces into the run in flight.",
         "tags": [
           "Devices"
         ],
         "responses": {
-          "200": {
-            "description": "KVS channels (possibly empty if the device is not provisioned).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "channels"
-                  ],
-                  "properties": {
-                    "channels": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/KvsChannel"
-                      }
-                    }
-                  }
-                }
-              }
-            }
+          "202": {
+            "$ref": "#/components/responses/DeviceCommandAccepted"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3562,159 +4170,71 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/DeviceCommandPublishFailed"
           }
         }
       }
     },
-    "/devices/{id}/sessions": {
+    "/device-dist/latest": {
       "parameters": [
-        {
-          "$ref": "#/components/parameters/IdPath"
-        },
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
         }
       ],
       "get": {
-        "operationId": "listMediaSessions",
-        "summary": "List device-recorded media sessions",
-        "description": "Sessions recorded on the device itself (offline recording plan) and uploaded segment-by-segment to S3. Filterable by streamKey, status (open|closed) and from/to; the time filter matches sessions OVERLAPPING [from, to), not just those started inside it. Each row carries computed rollups (segmentCount, totalBytes, totalDurationMs). Pass group=runs to paginate RECORDING RUNS instead of sessions: one drive with N cameras is N sessions, and a run is the set of sessions whose intervals are within 60 s of each other. Under group=runs the response returns `runs` instead of `sessions` (members nested), `page.total` counts runs, and every filter selects which RUNS to return rather than which sessions to cluster — so streamKey=cam0 returns the runs cam0 recorded in, with all of their cameras present, and a from/to range returns overlapping runs whole rather than clipped.",
+        "operationId": "getLatestAgentBuild",
+        "summary": "The newest published device-agent build",
+        "description": "Returns the manifest the device-agent CI publishes alongside the `latest` tarball alias, which is exactly what a device update would install for this stage. Fleet-wide, not per-device. Compare `version` against a device's reported build (`agentVersion`) by STRING EQUALITY only: shas do not order, and a dev sha and a prod release tag are not comparable. 404 means CI has not published a manifest for this stage yet, which is \"latest unknown\" rather than an error.",
         "tags": [
-          "Media Sessions"
-        ],
-        "parameters": [
-          {
-            "name": "group",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "runs"
-              ]
-            },
-            "description": "Group and paginate by recording run. Requires sort=startedAt (a run has no createdAt)."
-          },
-          {
-            "name": "streamKey",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter to one camera, e.g. cam0."
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "open",
-                "closed"
-              ]
-            }
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "order",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "asc",
-                "desc"
-              ]
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "startedAt",
-                "createdAt"
-              ]
-            }
-          }
+          "Devices"
         ],
         "responses": {
           "200": {
-            "description": "Sessions with per-session rollups, newest first by default — or, with group=runs, recording runs with their member sessions nested. `page.total` counts whichever noun was returned.",
+            "description": "The latest published build.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "required": [
+                    "latest"
+                  ],
                   "properties": {
-                    "sessions": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/MediaSession"
-                      },
-                      "description": "Present unless group=runs."
-                    },
-                    "runs": {
-                      "type": "array",
-                      "description": "Present only with group=runs.",
-                      "items": {
-                        "$ref": "#/components/schemas/RecordingRun"
-                      }
-                    },
-                    "page": {
+                    "latest": {
                       "type": "object",
+                      "required": [
+                        "version"
+                      ],
                       "properties": {
-                        "limit": {
-                          "type": "integer"
-                        },
-                        "offset": {
-                          "type": "integer"
-                        },
-                        "order": {
+                        "version": {
                           "type": "string",
-                          "enum": [
-                            "asc",
-                            "desc"
-                          ]
+                          "example": "a1b2c3d"
                         },
-                        "total": {
-                          "type": "integer"
+                        "channel": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "dev"
+                        },
+                        "builtAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "packageVersion": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "0.2.0"
+                        },
+                        "tarball": {
+                          "type": "string",
+                          "nullable": true
                         }
                       }
                     }
@@ -3723,9 +4243,6 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -3734,148 +4251,56 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
-          }
-        }
-      }
-    },
-    "/devices/{id}/sessions/{sessionId}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/IdPath"
-        },
-        {
-          "$ref": "#/components/parameters/SessionIdPath"
-        },
-        {
-          "$ref": "#/components/parameters/OrganizationIdHeader"
-        }
-      ],
-      "delete": {
-        "operationId": "deleteMediaSession",
-        "summary": "Delete a device-recorded media session",
-        "description": "Deletes every segment object (video + sidecar) from storage and removes the session and its segment index rows. Owner/admin only — device-recorded sessions are not re-creatable. A segment still uploading from the device after the delete recreates the session index (at-least-once ingest); delete again once the device has drained.",
-        "tags": [
-          "Media Sessions"
-        ],
-        "responses": {
-          "204": {
-            "description": "Session deleted."
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          }
-        }
-      }
-    },
-    "/devices/{id}/sessions/{sessionId}/segments": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/IdPath"
-        },
-        {
-          "$ref": "#/components/parameters/SessionIdPath"
-        },
-        {
-          "$ref": "#/components/parameters/OrganizationIdHeader"
-        }
-      ],
-      "get": {
-        "operationId": "listMediaSessionSegments",
-        "summary": "List a session's full segment index",
-        "description": "The whole ordered index in one response (seq asc = chronological) — this is the replay/stitching input, so it is deliberately unpaginated.",
-        "tags": [
-          "Media Sessions"
-        ],
-        "responses": {
-          "200": {
-            "description": "Session + ordered segments.",
+          "500": {
+            "description": "This stage has no distribution bucket configured (`DIST_BUCKET_UNCONFIGURED`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "session",
-                    "segments"
-                  ],
-                  "properties": {
-                    "session": {
-                      "$ref": "#/components/schemas/MediaSession"
-                    },
-                    "segments": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/MediaSegment"
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "502": {
+            "description": "The manifest object is unreadable, empty, oversized, or carries no version (`DIST_MANIFEST_UNAVAILABLE`, `DIST_MANIFEST_INVALID`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/devices/{id}/sessions/{sessionId}/segments/{seq}/playback": {
+    "/device-registrations": {
       "parameters": [
         {
-          "$ref": "#/components/parameters/IdPath"
-        },
-        {
-          "$ref": "#/components/parameters/SessionIdPath"
-        },
-        {
-          "$ref": "#/components/parameters/SegmentSeqPath"
-        },
-        {
           "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceIdHeader"
         }
       ],
-      "get": {
-        "operationId": "getMediaSegmentPlayback",
-        "summary": "Get a presigned playback URL for one segment",
+      "post": {
+        "operationId": "createDeviceRegistration",
+        "summary": "Mint a device registration code",
+        "description": "Starts onboarding: returns a short-lived code and the `installUrl` to run on the device. `X-Workspace-Id` is REQUIRED here (unlike on `GET /devices`, where it is a filter), because the code carries the workspace the future device will land in. Idempotent per workspace: while a pending, un-expired code exists it is returned again instead of minting a new one, so reloading a dialog does not burn codes. The device model is picked automatically (the most recently created one), and a deployment with no device models is a 400. Note the success status is 200, not 201, even when a code is created.",
         "tags": [
-          "Media Sessions"
+          "Device Registrations"
         ],
         "responses": {
           "200": {
-            "description": "Presigned S3 GET URL for the segment MP4 (1 h TTL).",
+            "description": "A pending registration, freshly minted or the existing un-expired one.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "url",
-                    "expiresIn",
-                    "segment"
-                  ],
-                  "properties": {
-                    "url": {
-                      "type": "string",
-                      "format": "uri"
-                    },
-                    "expiresIn": {
-                      "type": "integer",
-                      "description": "URL TTL in seconds."
-                    },
-                    "segment": {
-                      "$ref": "#/components/schemas/MediaSegment"
-                    }
-                  }
+                  "$ref": "#/components/schemas/DeviceRegistration"
                 }
               }
             }
@@ -3889,8 +4314,81 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/device-registrations/{code}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RegistrationCodePath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceRegistration",
+        "summary": "Poll a registration code",
+        "description": "How a client watches onboarding finish: poll until `status` is `claimed` and `deviceId` is set. Reading also lazily expires a stale pending row, so the `expired` status appears on read rather than on a schedule. Scoped to the active organization, so another organization's code is a 404.",
+        "tags": [
+          "Device Registrations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The registration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistration"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/device-registrations/{code}/claim": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RegistrationCodePath"
+        }
+      ],
+      "post": {
+        "operationId": "claimDeviceRegistration",
+        "summary": "Claim a registration code (internal, installer only)",
+        "description": "INTERNAL. Called unauthenticated by the install script running on the device. It flips the code to `claimed`, creates the device row, provisions its AWS IoT identity, and returns the certificate and PRIVATE KEY once. Not part of the public API surface: treat the installer as the only client.",
+        "tags": [
+          "Device Registrations"
+        ],
+        "security": [],
+        "x-internal": true,
+        "responses": {
+          "200": {
+            "description": "Device created and provisioned. Response withheld from public docs."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -3898,95 +4396,43 @@
         }
       }
     },
-    "/devices/{id}/replay-manifest": {
+    "/get/{code}": {
       "parameters": [
         {
-          "$ref": "#/components/parameters/IdPath"
-        },
-        {
-          "$ref": "#/components/parameters/OrganizationIdHeader"
+          "$ref": "#/components/parameters/RegistrationCodePath"
         }
       ],
       "get": {
-        "operationId": "getReplayManifest",
-        "summary": "Get a gap-aware replay manifest with presigned segment URLs",
-        "description": "One response feeds a whole replay: per-session timelines (effective durations + gaps, computed server-side) and a presigned GET URL per segment. Address it by sessionId (single session) OR by from/to (every session overlapping the range, segments clipped to it; optional streamKey filter) — never both. Caps: 600 segments total, and in range mode 10 sessions / 24 h. Refetch before `urlExpiresAt` (epoch ms) — URLs die after ~1 h.",
+        "operationId": "getInstallScript",
+        "summary": "Device install script (internal, installer only)",
+        "description": "INTERNAL. Serves the bash installer for a registration code as `text/x-shellscript`, unauthenticated. Invalid, used, or expired codes still return a runnable script that prints the reason and exits non-zero, so the operator sees the problem instead of bash silently doing nothing.",
         "tags": [
-          "Media Sessions"
+          "Device Registrations"
         ],
-        "parameters": [
-          {
-            "name": "sessionId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "Single-session mode. Mutually exclusive with from/to."
-          },
-          {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Range mode start (with `to`). ISO-8601, like the telemetry endpoints."
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          {
-            "name": "streamKey",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Range mode only: limit to one camera, e.g. cam0."
-          }
-        ],
+        "security": [],
+        "x-internal": true,
         "responses": {
           "200": {
-            "description": "The replay manifest. Timestamps are epoch ms.",
+            "description": "The install script.",
             "content": {
-              "application/json": {
+              "text/x-shellscript": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "replay"
-                  ],
-                  "properties": {
-                    "replay": {
-                      "$ref": "#/components/schemas/ReplayManifest"
-                    }
-                  }
+                  "type": "string"
                 }
               }
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "description": "Missing code. Body is a failing shell script."
           },
           "404": {
-            "$ref": "#/components/responses/NotFound"
+            "description": "Unknown code. Body is a failing shell script."
           },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
+          "410": {
+            "description": "Code already used or expired. Body is a failing shell script."
+          },
+          "500": {
+            "description": "Server misconfiguration. Body is a failing shell script."
           }
         }
       }
@@ -4003,9 +4449,9 @@
       "get": {
         "operationId": "getDeviceTelemetry",
         "summary": "Query historical telemetry over a time range",
-        "description": "Returns telemetry_readings rows for the device over `[from, to)` (max 31 days), ordered by `ts`. With `interval` (seconds) the result is downsampled server-side: readings are grouped into `interval`-wide buckets per metric and averaged. Without it, raw rows are returned up to a hard cap; `truncated: true` signals the cap was hit (narrow the range or pass `interval`).",
+        "description": "Stored readings for the device over `[from, to)`, ordered by `ts` then `metric`. Both bounds are REQUIRED and the range may not exceed 31 days.\n\nWith `interval` (seconds) the result is downsampled server-side: readings are grouped into `interval`-wide buckets per metric and averaged, up to 10,000 buckets. Without it, raw rows are returned up to 5,000. Either way `truncated: true` means the cap was hit and the result is incomplete, so narrow the range or pass a coarser `interval`. This endpoint does not paginate; `truncated` is the only signal that data was left behind.",
         "tags": [
-          "Devices"
+          "Telemetry"
         ],
         "parameters": [
           {
@@ -4033,9 +4479,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "imu.accel_x,imu.euler_yaw,gps.lat"
             },
-            "description": "Comma-separated metric filter (max 20), e.g. `imu.accel_x,imu.euler_yaw,gps.lat`."
+            "description": "Comma-separated metric filter, at most 20 names. Each must look like `group.field`; anything else is a 400."
           },
           {
             "name": "interval",
@@ -4046,7 +4493,7 @@
               "minimum": 1,
               "maximum": 86400
             },
-            "description": "Downsample bucket width in seconds."
+            "description": "Downsample bucket width in seconds. An interval that would produce more than 5,000 buckets for the requested range is a 400."
           }
         ],
         "responses": {
@@ -4093,6 +4540,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -4109,9 +4559,9 @@
       "get": {
         "operationId": "getDeviceTelemetryLatest",
         "summary": "The device's most recent reading per metric",
-        "description": "Returns the device_latest rows (one per metric, last-writer-wins), ordered by metric. Empty when the device has never reported telemetry.",
+        "description": "One row per metric, last-writer-wins, ordered by metric. This is the cheap \"what is the device doing right now\" read and the authoritative source of a metric's unit. Empty when the device has never reported telemetry. It reflects the last reading INGESTED, so on an offline device it keeps returning stale values rather than nothing; check the timestamps.",
         "tags": [
-          "Devices"
+          "Telemetry"
         ],
         "responses": {
           "200": {
@@ -4143,6 +4593,100 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/devices/{id}/telemetry/recent": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceTelemetryRecent",
+        "summary": "The newest N readings, with no time window",
+        "description": "The newest `limit` rows for the device, returned in chronological order. Unlike `/telemetry` it takes no time window, so it never comes back empty just because the device last reported weeks ago. That makes it the right call for seeding a chart on page load, with the live MQTT feed appending after it. The response shape is the same as `/telemetry`: `bucketSeconds` is always null (nothing is averaged), and `truncated` means the row limit was reached.",
+        "tags": [
+          "Telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "imu.accel_x,imu.euler_yaw,gps.lat"
+            },
+            "description": "Comma-separated metric filter, at most 20 names. Each must look like `group.field`; anything else is a 400."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 500
+            },
+            "description": "Rows (not samples) to return. Out-of-range values are a 400 here, not clamped."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The newest readings, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "readings",
+                    "bucketSeconds",
+                    "truncated"
+                  ],
+                  "properties": {
+                    "readings": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TelemetryReading"
+                      }
+                    },
+                    "bucketSeconds": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Always null."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "True when `limit` rows were returned."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
       }
@@ -4159,9 +4703,9 @@
       "get": {
         "operationId": "getDeviceTelemetryReadings",
         "summary": "One page of the telemetry history table",
-        "description": "Returns raw (un-averaged) stored samples for one page, paginated over DISTINCT timestamps so a page boundary never splits a sample. Defaults to the latest samples (`order=desc`) with no time window. `limit`/`offset` count timestamps (samples), not rows.\n\n**Two response shapes, selected by `shape`.** `shape=table` (the DEFAULT) returns the table being displayed: an ordered `columns` list with stable units, and one `rows` entry per timestamp whose `v` array is positional against `columns`. `shape=flat` returns the original `readings: [{ts, metric, value, unit}]` rows — the same raw-rows contract as `/telemetry` and `/telemetry/recent`. The table shape is roughly 10x smaller on the wire (this API does not compress) and its column set does not vary with the page contents.\n\n`page.total` is the distinct-timestamp count, **bounded at 10,000**: when more samples match, `page.totalIsCapped` is `true` and only the first 10,000 in the requested `order` are addressable (newest first by default). `page.coveredFrom`/`coveredTo` give the ISO span of that addressable slice. Narrow `from`/`to` to reach beyond it; an `offset` past the cap returns an empty page, not an error.",
+        "description": "Raw (un-averaged) stored samples for one page, paginated over DISTINCT timestamps so a page boundary never splits a sample. Defaults to the latest samples (`order=desc`) with no time window. `limit`/`offset` count timestamps (samples), not rows, and unlike the other list endpoints an out-of-range `limit` is a 400 rather than being clamped.\n\n**Two response shapes, selected by `shape`.** `shape=table` (the DEFAULT) returns the table being displayed: an ordered `columns` list with stable units, and one `rows` entry per timestamp whose `v` array is positional against `columns`. `shape=flat` returns the original `readings: [{ts, metric, value, unit}]` rows, the same raw-rows contract as `/telemetry` and `/telemetry/recent`. The table shape is roughly 10x smaller on the wire (this API does not compress) and its column set does not vary with the page contents.\n\n`page.total` is the distinct-timestamp count, **bounded at 10,000**: when more samples match, `page.totalIsCapped` is `true` and only the first 10,000 in the requested `order` are addressable (newest first by default). `page.coveredFrom`/`coveredTo` give the ISO span of that addressable slice. Narrow `from`/`to` to reach beyond it; an `offset` past the cap returns an empty page, not an error.",
         "tags": [
-          "Devices"
+          "Telemetry"
         ],
         "parameters": [
           {
@@ -4202,33 +4746,20 @@
             "description": "Sort direction by ts."
           },
           {
-            "name": "from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Optional range start (inclusive), ISO-8601."
+            "$ref": "#/components/parameters/FromQuery"
           },
           {
-            "name": "to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "description": "Optional range end (exclusive), ISO-8601."
+            "$ref": "#/components/parameters/ToQuery"
           },
           {
             "name": "metric",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "imu.accel_x,imu.euler_yaw,gps.lat"
             },
-            "description": "Comma-separated metric filter (max 20), e.g. `imu.accel_x,gps.lat`. Under `shape=table` this also fixes the column set (the columns and the filter are one value). Omit it and the columns are derived from the device model's capabilities."
+            "description": "Comma-separated metric filter, at most 20 names, each `group.field`. Under `shape=table` this also fixes the column set (the columns and the filter are one value). Omit it and the columns are derived from the device model's capabilities."
           },
           {
             "name": "shape",
@@ -4281,10 +4812,10 @@
                             "model",
                             "data"
                           ],
-                          "description": "Where the column set came from. `request` — your `metric` filter. `model` — the device model's io_capabilities. `data` — the model declares nothing usable, so columns were discovered from this page's rows and may vary between pages. `data` with an empty `columns` means the model declares nothing AND this page has no data."
+                          "description": "Where the column set came from. `request` is your `metric` filter. `model` is the device model's io_capabilities. `data` means the model declares nothing usable, so columns were discovered from this page's rows and may vary between pages. `data` with an empty `columns` means the model declares nothing AND this page has no data."
                         },
                         "page": {
-                          "$ref": "#/components/schemas/TelemetryReadingsPage"
+                          "$ref": "#/components/schemas/PageMeta"
                         }
                       }
                     },
@@ -4303,7 +4834,7 @@
                           }
                         },
                         "page": {
-                          "$ref": "#/components/schemas/TelemetryReadingsPage"
+                          "$ref": "#/components/schemas/PageMeta"
                         }
                       }
                     }
@@ -4323,6 +4854,674 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/devices/{id}/sessions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listMediaSessions",
+        "summary": "List device-recorded media sessions",
+        "description": "Sessions recorded on the device itself and uploaded segment by segment to S3. Paginated with the shared list dialect, plus `streamKey` and `group`. The time filter matches sessions OVERLAPPING `[from, to)`, not just those started inside it, because a session spans a window. Each row carries computed rollups (`segmentCount`, `totalBytes`, `totalDurationMs`).\n\nPass `group=runs` to paginate RECORDING RUNS instead of sessions: one drive with N cameras is N sessions, and a run is the set of sessions whose intervals are within 60 s of each other. Under `group=runs` the response returns `runs` instead of `sessions` (with members nested), `page.total` counts runs, and every filter selects which RUNS to return rather than which sessions to cluster. So `streamKey=cam0` returns the runs cam0 recorded in with all of their cameras present, and a from/to range returns overlapping runs whole rather than clipped.\n\nListing also closes stale sessions as a side effect, which is why a session can flip from `open` to `closed` between two reads with nothing else having happened.",
+        "tags": [
+          "Media Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "runs"
+              ]
+            },
+            "description": "Group and paginate by recording run. Requires `sort=startedAt` (a run has no createdAt), and any other value is a 400."
+          },
+          {
+            "name": "streamKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "cam0"
+            },
+            "description": "Filter to one camera."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "description": "An empty value or the literal `any` means \"no filter\"."
+          },
+          {
+            "$ref": "#/components/parameters/FromQuery"
+          },
+          {
+            "$ref": "#/components/parameters/ToQuery"
+          },
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "startedAt",
+                "createdAt"
+              ],
+              "default": "startedAt"
+            },
+            "description": "`startedAt` is when the device recorded; `createdAt` is when the row landed."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions with per-session rollups, newest first by default, or with `group=runs` the recording runs with their member sessions nested. `page.total` counts whichever noun was returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "page"
+                  ],
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MediaSession"
+                      },
+                      "description": "Present unless `group=runs`."
+                    },
+                    "runs": {
+                      "type": "array",
+                      "description": "Present only with `group=runs`.",
+                      "items": {
+                        "$ref": "#/components/schemas/RecordingRun"
+                      }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/devices/{id}/sessions/{sessionId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/SessionIdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "delete": {
+        "operationId": "deleteMediaSession",
+        "summary": "Delete a device-recorded media session",
+        "description": "Deletes every segment object (video plus sidecar) from storage and removes the session and its segment index rows. Owner/admin only, because device-recorded sessions are not re-creatable. A segment still uploading from the device after the delete recreates the session index (ingest is at-least-once); delete again once the device has drained.",
+        "tags": [
+          "Media Sessions"
+        ],
+        "responses": {
+          "204": {
+            "description": "Session deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "Storage is not configured for this stage (`CONFLICT`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{id}/sessions/{sessionId}/segments": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/SessionIdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listMediaSessionSegments",
+        "summary": "List a session's full segment index",
+        "description": "The whole ordered index in one response (`seq` ascending is chronological by construction). This is the replay and stitching input, so it is deliberately unpaginated: a session is bounded at a few hours of 60 s segments. It returns the index only; use the playback route or the replay manifest to get URLs you can fetch.",
+        "tags": [
+          "Media Sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Session + ordered segments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "session",
+                    "segments"
+                  ],
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/MediaSession"
+                    },
+                    "segments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MediaSegment"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/devices/{id}/sessions/{sessionId}/segments/{seq}/playback": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/SessionIdPath"
+        },
+        {
+          "$ref": "#/components/parameters/SegmentSeqPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getMediaSegmentPlayback",
+        "summary": "Get a presigned playback URL for one segment",
+        "description": "One segment at a time. For playing a span of media, the replay manifest batch-presigns everything in one call instead.",
+        "tags": [
+          "Media Sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Presigned S3 GET URL for the segment MP4.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "url",
+                    "expiresIn",
+                    "segment"
+                  ],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expiresIn": {
+                      "type": "integer",
+                      "description": "URL TTL in seconds.",
+                      "example": 3600
+                    },
+                    "segment": {
+                      "$ref": "#/components/schemas/MediaSegment"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "Storage is not configured for this stage (`CONFLICT`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{id}/replay-manifest": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getReplayManifest",
+        "summary": "Get a gap-aware replay manifest with presigned segment URLs",
+        "description": "One response feeds a whole replay: per-session timelines (effective durations and gaps, computed server-side so every client renders the same timeline) plus a presigned GET URL per segment. Address it by `sessionId` (single session) OR by `from`/`to` (every session overlapping the range, segments clipped to it, optional `streamKey` filter), never both. Caps: 600 segments in total, and in range mode 10 sessions and 24 hours. Exceeding a cap is a 400 telling you to narrow the request. Refetch before `urlExpiresAt` (epoch ms), which is the real URL TTL minus a 5-minute safety margin.",
+        "tags": [
+          "Media Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Single-session mode. Mutually exclusive with from/to."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Range mode start (with `to`). ISO-8601, like the telemetry endpoints."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "streamKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "cam0"
+            },
+            "description": "Range mode only: limit to one camera."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The replay manifest. Timestamps are epoch ms.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "replay"
+                  ],
+                  "properties": {
+                    "replay": {
+                      "$ref": "#/components/schemas/ReplayManifest"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/devices/{id}/kvs-channels": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceKvsChannels",
+        "summary": "List the device's KVS signaling channels",
+        "description": "Channel METADATA only, one entry per provisioned video stream, and no credentials: a viewer obtains its own scoped AWS credentials from the Cognito identity pool and then runs the KVS WebRTC VIEWER role against these channels. An empty array means the device is not provisioned yet, which is a 200 rather than a 404. Video frames never traverse this API.",
+        "tags": [
+          "Live"
+        ],
+        "responses": {
+          "200": {
+            "description": "KVS channels, possibly empty if the device is not provisioned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "channels"
+                  ],
+                  "properties": {
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/KvsChannel"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/iot/attach-policy": {
+      "post": {
+        "operationId": "attachIotPolicy",
+        "summary": "Authorize the caller to subscribe to live telemetry over MQTT",
+        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\nNote the current policy is org-blind: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing it is tracked as platform-readiness work.",
+        "tags": [
+          "Live"
+        ],
+        "responses": {
+          "200": {
+            "description": "Policy attached to the caller identity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "attached",
+                    "identityId",
+                    "policyName"
+                  ],
+                  "properties": {
+                    "attached": {
+                      "type": "boolean"
+                    },
+                    "identityId": {
+                      "type": "string",
+                      "description": "The Cognito identity id the policy was attached to.",
+                      "example": "us-east-1:00000000-0000-0000-0000-000000000000"
+                    },
+                    "policyName": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/search": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "search",
+        "summary": "Cross-resource search within the active organization",
+        "description": "A jump-to-detail navigator, not a result browser. It matches devices by name or serial (and workflow resources, which are not part of this documented surface yet), returns at most 6 hits per resource type, and normalizes every hit to `{type, id, title, subtitle}` so one code path can render them all. A `q` shorter than 2 characters returns an empty list rather than an error, and `%` or `_` are matched literally.",
+        "tags": [
+          "Search"
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 2
+            },
+            "description": "Search term. Substring match, case-insensitive."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching resources, devices first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "results"
+                  ],
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SearchResult"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Service health",
+        "description": "Unauthenticated liveness probe. It does not touch the database, so a 200 means the Lambda is warm and reachable, not that the platform is fully healthy.",
+        "tags": [
+          "Meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "stage"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "dev",
+                        "prod"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "This OpenAPI document",
+        "description": "The document you are reading, served straight from the API and cached for 5 minutes. The docs site generates its reference pages from a checked-in snapshot of this, so the two can differ until the snapshot is refreshed.",
+        "tags": [
+          "Meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0.3 document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "operationId": "getSwaggerUi",
+        "summary": "Swagger UI for this document",
+        "description": "A minimal Swagger UI page rendering `/openapi.json`. Useful when poking at a deployment directly; the documentation site is the richer reference.",
+        "tags": [
+          "Meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "HTML page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }

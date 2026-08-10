@@ -1,0 +1,12 @@
+{
+  "title": "Device Models",
+  "description": "The platform-wide hardware catalog. Reading is open to any authenticated caller; writing needs a platform admin.",
+  "pages": [
+    "index",
+    "list-device-models",
+    "create-device-model",
+    "get-device-model",
+    "delete-device-model",
+    "update-device-model"
+  ]
+}

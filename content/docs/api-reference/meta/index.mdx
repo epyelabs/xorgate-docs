@@ -1,0 +1,24 @@
+---
+title: "Overview"
+description: "The health probe and the two routes that serve the OpenAPI document."
+---
+
+Three endpoints that belong to the service rather than to any resource. All
+three are unauthenticated.
+
+`GET /health` is a liveness probe. It does not touch the database, so a `200`
+means the function is warm and reachable, not that the platform is healthy. Do
+not use it as a dependency check.
+
+`GET /openapi.json` serves the document this whole reference is generated from,
+cached for five minutes. `GET /docs` serves a minimal Swagger UI over it, which
+is handy when poking at a specific deployment. Both are useful when you want the
+machine-readable contract, for a code generator or a client of your own.
+
+<Callout title="This site can lag the deployment">
+  These pages are generated from a snapshot of `/openapi.json` that is committed
+  to the docs repository, so that a docs build is reproducible and works
+  offline. That means a spec change reaches the live `/openapi.json` on the next
+  service deploy, but reaches this site only when someone refreshes the snapshot
+  and rebuilds. If the two ever disagree, the deployment is right.
+</Callout>

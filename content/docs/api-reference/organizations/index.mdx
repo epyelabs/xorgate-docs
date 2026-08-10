@@ -1,0 +1,31 @@
+---
+title: "Overview"
+description: "The tenancy root. Everything else in the platform hangs off exactly one organization."
+---
+
+An organization is the ownership boundary. Workspaces belong to it, devices
+belong to workspaces, and API keys, memberships and recorded media all inherit
+that scoping. Nothing in this API crosses an organization boundary, and a
+resource in another organization returns `404` rather than `403` so you cannot
+probe for its existence.
+
+The unusual thing about these endpoints is what `{id}` means.
+`GET /organizations/{id}` does not let you read any organization you belong to:
+the id must be the ACTIVE organization, the one resolved from
+`X-Organization-Id` or from your sole membership. Reading a different
+organization means changing the header, not the path. The same applies to `PUT`
+and `DELETE`, which answer `403` when the path and the active organization
+disagree. `POST /organizations` is the exception to the whole tenancy model. It
+requires no header at all, because a brand-new user has no organization to name
+yet, and it makes the caller the owner.
+
+`GET /organizations` returns every organization you belong to, unpaginated and
+with no `page` block. It overlaps with the `organizations` array from
+[`GET /me`](/docs/api-reference/users/get-me), which returns the same rows
+alongside your memberships. Prefer `/me` when you are bootstrapping.
+
+Two smaller things worth knowing. Organization rows serialize straight out of
+Postgres, so their timestamps are `created_at` and `updated_at` in snake_case
+while the rest of this API is camelCase; that is deliberate and stays on the
+wire. And deleting an organization cascades: its workspaces, devices, API keys
+and memberships go with it, with no soft-delete and no undo.

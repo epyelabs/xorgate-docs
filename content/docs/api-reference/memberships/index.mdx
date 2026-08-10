@@ -1,0 +1,33 @@
+---
+title: "Overview"
+description: "Who belongs to an organization, with what role, and what each role can do."
+---
+
+A membership joins a user to an organization with one of four roles: `owner`,
+`admin`, `member` or `viewer`. This is the role that gates almost every write in
+the platform, and it is separate from the platform-wide `user.role` that only
+controls the [device model](/docs/api-reference/device-models) catalog.
+
+Roughly, `owner` and `admin` can do the destructive and irreversible things:
+manage members, mint and delete [API keys](/docs/api-reference/api-keys),
+provision a device identity, reboot or power off a device, install an agent
+update, and delete recorded sessions. `member` covers ordinary work: reading,
+creating devices and workspaces, writing device config, and asking a device to
+re-report its state. Endpoint pages call out the requirement where it is
+stricter than "any member".
+
+Adding someone is by `userId` or by `email`. The email path is the interesting
+one: if no account exists for that address, a Cognito account is provisioned and
+the invitee is emailed a temporary password to set on first sign-in. The
+response reports which happened through the `invited` boolean, so a UI can say
+"added" or "invited" honestly. Adding a user who is already a member is a `400`,
+not a silent no-op.
+
+Removing the last remaining `owner` is refused with a `403`. An organization can
+never be left ownerless, so promote someone else first.
+
+`GET /memberships` returns the whole roster unpaginated, and each row is
+enriched with its member's `user` object (id, email, name) so a members table
+renders in one round-trip. That enriched shape is specific to this endpoint;
+the `memberships` array in [`GET /me`](/docs/api-reference/users/get-me) is the
+plain row without the `user`.

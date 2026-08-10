@@ -27,3 +27,5 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
+# derived from openapi/xorgate.json by scripts/generate-openapi.mjs
+/openapi/xorgate.public.json

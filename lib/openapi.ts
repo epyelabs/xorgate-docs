@@ -1,29 +1,35 @@
+import { createOpenAPI } from "fumadocs-openapi/server"
+
 /**
- * OpenAPI reference wiring. STUB: `fumadocs-openapi` is installed but not yet
- * hooked up, because the spec it would generate from is not truthful yet
- * (hand-written in `xorgate-core-service/src/handlers/docs.ts`, covering
- * roughly half the routes).
+ * The OpenAPI reference.
  *
- * Wiring it up means, roughly:
+ * Two documents, on purpose:
  *
- *   import { createOpenAPI } from 'fumadocs-openapi/server'
- *   export const openapi = createOpenAPI({
- *     // Browser-side playground: requests go straight to the API, so the docs
- *     // origin must be in the core-service CORS allowlist
- *     // (lib/stacks/api-stack.ts). Deliberately NOT using `createProxy`: it
- *     // needs a Node server, which a static export does not have.
- *     proxyUrl: undefined,
- *     servers: [{ url: apiBaseUrl }],
- *   })
+ * - `openapi/xorgate.json` is the truthful snapshot of `GET /openapi.json`,
+ *   internal operations and all. Refresh it with `npm run refresh-openapi`.
+ * - `openapi/xorgate.public.json` is derived from it by
+ *   `scripts/generate-openapi.mjs`: internal operations stripped, `servers`
+ *   pointed at the environment's API. It is a build artifact (gitignored) and
+ *   is what both the generated pages and the rendered playground read.
  *
- * plus a generator step over `openapi/xorgate.json` that emits MDX into
- * `content/docs/api-reference/`, and an `openapi` page type in `lib/source.ts`.
- *
- * Keep `openapi/xorgate.json` refreshed with `npm run refresh-openapi`.
+ * `createProxy` is deliberately unused. It needs a Node server and this site is
+ * a static export, so the playground calls the API straight from the browser.
+ * That is why the docs origins have to be in the core-service CORS allowlist
+ * (`backend/xorgate-core-service/lib/stacks/api-stack.ts`).
  */
 
-/** Where the checked-in spec snapshot lives, relative to the repo root. */
-export const OPENAPI_SPEC_PATH = "openapi/xorgate.json"
+/** Truthful snapshot, committed. Refreshed by `npm run refresh-openapi`. */
+export const OPENAPI_SNAPSHOT_PATH = "openapi/xorgate.json"
 
-/** Where generated reference pages will be written. */
+/** Derived, public-facing document. Written by `npm run generate-openapi`. */
+export const OPENAPI_PUBLIC_PATH = "openapi/xorgate.public.json"
+
+/** Where generated reference pages land. */
 export const OPENAPI_OUTPUT_DIR = "content/docs/api-reference"
+
+/** The schema id the generated MDX refers to (`<OpenAPIPage document="..." />`). */
+export const OPENAPI_SCHEMA_ID = "xorgate"
+
+export const openapi = createOpenAPI({
+  input: { [OPENAPI_SCHEMA_ID]: OPENAPI_PUBLIC_PATH },
+})

@@ -1,0 +1,22 @@
+---
+title: "Overview"
+description: "Cross-resource lookup within the active organization."
+---
+
+`GET /search` is a jump-to-detail navigator, not a result browser. It exists so a
+command palette can find a device by name or serial without the caller knowing
+which resource type it belongs to, and it is shaped accordingly.
+
+Every hit is normalized to `{type, id, title, subtitle}`, so one rendering path
+handles them all and `id` addresses the resource of that `type`. Matching is a
+case-insensitive substring search, capped at six hits per resource type, so the
+result is deliberately incomplete when a term is broad. A `q` shorter than two
+characters returns an empty list rather than an error, which keeps
+type-as-you-go clients simple. Wildcards are not supported: `%` and `_` match
+literally.
+
+Results are scoped to the active organization, and are ordered by resource type
+with devices first. Note that the endpoint also returns `workflow-template` and
+`workflow-instance` hits; those resources are not part of this documented API
+surface yet, so a client built only against this reference should ignore types it
+does not recognize rather than treating them as an error.

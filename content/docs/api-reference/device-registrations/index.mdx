@@ -1,0 +1,51 @@
+---
+title: "Overview"
+description: "Onboarding physical hardware with a short-lived code and a one-line installer."
+---
+
+Registration codes are how a physical device joins the platform. Rather than
+creating a device row and provisioning credentials by hand, you mint a code, run
+one command on the device, and the platform creates the row, mints the IoT
+identity and links the two.
+
+<Steps>
+<Step>
+`POST /device-registrations` with `X-Workspace-Id` set. The header is REQUIRED
+here, because the code carries the workspace the device will land in. You get
+back a `code`, an `expiresAt` 15 minutes out, and an `installUrl`.
+</Step>
+<Step>
+Run the installer on the device: `curl -sSL <installUrl> -o install.sh && sudo
+bash install.sh`. The script claims the code, which creates the device row,
+provisions the AWS IoT thing and certificate, and writes the credentials to
+disk.
+</Step>
+<Step>
+Poll `GET /device-registrations/{code}` until `status` is `claimed` and
+`deviceId` is set. That id is your device.
+</Step>
+</Steps>
+
+Minting is idempotent per workspace: while a pending, un-expired code exists,
+asking again returns that same code rather than a new one, so reloading a dialog
+does not burn codes. The success status is `200` rather than `201`, even when a
+code was created. The device model is chosen automatically (the most recently
+created one), so a deployment with no device models answers `400`.
+
+Expiry is lazy. There is no sweeper, so a code past `expiresAt` still reads
+`pending` until someone fetches it; the read is what flips it to `expired`.
+Codes are scoped to the active organization, so another organization's code is a
+`404`.
+
+<Callout title="Two routes are not documented here">
+  `POST /device-registrations/{code}/claim` and `GET /get/{code}` are the
+  installer's private contract and are excluded from this reference. The claim
+  route is unauthenticated and returns one-shot X.509 private key material; the
+  other serves a shell script. They are implementation detail of the step above,
+  not an API surface to build against.
+</Callout>
+
+To provision without the installer, skip codes entirely: create the row with
+[`POST /devices`](/docs/api-reference/devices/create-device) and mint its
+identity with
+[`POST /devices/{id}/provision`](/docs/api-reference/devices/provision-device).

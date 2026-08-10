@@ -1,0 +1,29 @@
+---
+title: "Overview"
+description: "The bootstrap call: who the caller is and which organizations they can act in."
+---
+
+There is exactly one endpoint here, and almost every client starts with it.
+`GET /me` turns a bearer token into a user, the memberships that user holds, and
+the organizations those memberships point at.
+
+It matters more than its size suggests, because it is where the value of
+`X-Organization-Id` comes from. Nearly every other endpoint is org-scoped and
+resolves the active organization from that header, falling back to your sole
+membership when you have exactly one. A caller in two organizations who omits
+the header gets `400 ORGANIZATION_REQUIRED` from all of them. So the usual
+sequence is: call `GET /me`, pick an organization, then send its id as
+`X-Organization-Id` on everything afterwards. `GET /me` itself never needs the
+header.
+
+Users are created just-in-time. The first time a valid token is presented, the
+row is written from the token claims, which is why a brand-new user returns
+empty `memberships` and `organizations` arrays rather than a 404. That state is
+not an error, it is the pre-onboarding state, and the only write available from
+it is `POST /organizations`.
+
+Note that `user.role` is the PLATFORM role (`user` or `admin`) and has nothing
+to do with the per-organization membership role. It gates exactly one thing:
+writing the [device model](/docs/api-reference/device-models) catalog. The
+membership role (`owner`, `admin`, `member`, `viewer`) is what gates everything
+org-scoped.

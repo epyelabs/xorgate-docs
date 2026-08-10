@@ -1,0 +1,10 @@
+{
+  "title": "API Keys",
+  "description": "Organization-scoped keys. Mint-only today: no endpoint accepts one as a credential yet.",
+  "pages": [
+    "index",
+    "list-api-keys",
+    "create-api-key",
+    "delete-api-key"
+  ]
+}

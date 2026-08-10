@@ -1,0 +1,9 @@
+{
+  "title": "Device Registrations",
+  "description": "Onboarding a physical device with a short-lived code and the install script.",
+  "pages": [
+    "index",
+    "create-device-registration",
+    "get-device-registration"
+  ]
+}

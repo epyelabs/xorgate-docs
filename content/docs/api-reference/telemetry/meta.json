@@ -1,0 +1,11 @@
+{
+  "title": "Telemetry",
+  "description": "Stored sensor readings. The live 1 Hz feed does not come through this API.",
+  "pages": [
+    "index",
+    "get-device-telemetry",
+    "get-device-telemetry-latest",
+    "get-device-telemetry-recent",
+    "get-device-telemetry-readings"
+  ]
+}

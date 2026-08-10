@@ -1,0 +1,27 @@
+---
+title: "Overview"
+description: "The grouping devices belong to, one level below an organization."
+---
+
+A workspace sits between an organization and its devices. Every device belongs
+to exactly one workspace, and every workspace to exactly one organization, which
+makes the workspace the unit you use to separate sites, fleets, customers or
+environments inside a single organization.
+
+Workspaces appear in two other places in this API, and they behave differently
+in each. On [`GET /devices`](/docs/api-reference/devices/list-devices) the
+`X-Workspace-Id` header is an optional FILTER: send it to narrow the page to one
+workspace. On
+[`POST /device-registrations`](/docs/api-reference/device-registrations/create-device-registration)
+it is REQUIRED, because the onboarding code carries the workspace the future
+device will land in.
+
+One sharp edge in the filter case: if `X-Workspace-Id` names a workspace outside
+your active organization, `GET /devices` returns an EMPTY page rather than an
+error. An empty result therefore does not distinguish "this workspace has no
+devices" from "this workspace is not yours". If that distinction matters, read
+the workspace first.
+
+`GET /workspaces` is unpaginated and returns the whole list with no `page`
+block. Deleting a workspace cascades to the devices in it, and through them to
+their media sessions and telemetry.

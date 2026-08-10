@@ -1,0 +1,10 @@
+{
+  "title": "Meta",
+  "description": "Health probe and this document.",
+  "pages": [
+    "index",
+    "health",
+    "get-open-api-document",
+    "get-swagger-ui"
+  ]
+}

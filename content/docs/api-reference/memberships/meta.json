@@ -1,0 +1,10 @@
+{
+  "title": "Memberships",
+  "description": "Who belongs to an organization, and with what role.",
+  "pages": [
+    "index",
+    "list-memberships",
+    "add-membership",
+    "remove-membership"
+  ]
+}

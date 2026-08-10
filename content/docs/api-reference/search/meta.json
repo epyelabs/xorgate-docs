@@ -1,0 +1,8 @@
+{
+  "title": "Search",
+  "description": "Cross-resource lookup within the active organization.",
+  "pages": [
+    "index",
+    "search"
+  ]
+}

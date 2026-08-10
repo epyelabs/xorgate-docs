@@ -3,22 +3,67 @@ title: "API reference"
 description: "Every REST endpoint of xorgate-core-service, generated from its OpenAPI document."
 ---
 
-This section is the reference for `xorgate-core-service`: users and `/me`,
-organizations, memberships, API keys, workspaces, device models, devices
-(including configuration, commands and provisioning), media sessions and
-playback, video channels, and telemetry. Pages are generated from the service's
-OpenAPI document, so each one carries the real parameters, schemas, response
-codes, code samples, and a playground that calls the API from your browser.
+This section is the reference for `xorgate-core-service`. One page per endpoint,
+generated from the service's own OpenAPI document, so each page carries the real
+parameters, schemas, response codes, code samples, and a playground that calls
+the API from your browser. Each resource also has an overview page covering the
+things a schema cannot say.
 
-<Callout title="Not generated yet">
-  Placeholder. The OpenAPI document is currently hand-written and covers roughly
-  half the routes. Truthing that document and wiring the generator into this
-  section is the next piece of work.
+The base URL for the development deployment is <ApiBaseUrl />. There is no
+version prefix yet; `/v1` arrives with the custom domain.
+
+## Things that are true everywhere
+
+<Callout title="Always send X-Organization-Id">
+  Org-scoped endpoints resolve the active organization from the
+  `X-Organization-Id` header, falling back to your sole membership when you have
+  exactly one. If you belong to more than one organization and omit the header,
+  every one of those endpoints answers `400 ORGANIZATION_REQUIRED`. Read the
+  organization ids from [`GET /me`](/docs/api-reference/users/get-me) and send
+  the header on every request.
 </Callout>
 
-Two routes are excluded on purpose and will not appear here: `GET /get/{code}`,
+**Authentication** is a Cognito ID token (not an access token) in
+`Authorization: Bearer <token>`. See
+[Authentication](/docs/getting-started/authentication) for how to obtain one.
+API keys can be minted, but no endpoint accepts one as a credential yet.
+
+**Responses are always a named object**, never a bare array: `{devices, page}`,
+`{device}`, `{organizations}`. Fields are camelCase throughout. Three envelope
+keys are snake_case (`api_keys`, `api_key`/`plaintext_key`, and
+`device_model`/`device_models`) because they mirror their Postgres table names.
+That is a wart we chose to keep rather than break clients over, and the SDKs
+will normalize it.
+
+**Errors are uniform**: `{"error": {"code", "message", "details?"}}`. Match on
+`code`, never on `message`. A resource in another organization returns `404`
+rather than `403`, so an unauthorized read is indistinguishable from a missing
+one by design.
+
+**Deletes return `204`** with an empty body. Device commands return `202`,
+meaning the instruction reached the message broker, not that the device carried
+it out.
+
+**Only three endpoints paginate**: `GET /devices`,
+`GET /devices/{id}/sessions`, and `GET /devices/{id}/telemetry/readings`. They
+share one dialect (`limit`, `offset`, `order`, `sort`, and where relevant
+`status`, `from`, `to`) and return a `page` block. An over-large `limit` is
+clamped silently rather than rejected, so read `page.limit` back. Every other
+list endpoint returns its whole collection with no `page` block at all.
+
+## What is not in here
+
+Live telemetry and live video do not flow through this API. The client
+subscribes to AWS IoT Core over MQTT-over-WSS for the 1 Hz telemetry feed, and
+connects to Kinesis Video Streams WebRTC for live video, using credentials it
+mints itself. This API only hands out the metadata and the authorization needed
+to do that; see [Live](/docs/api-reference/live).
+
+Two routes are excluded on purpose and do not appear here: `GET /get/{code}`,
 which renders the device install script, and
 `POST /device-registrations/{code}/claim`, which returns private key material.
 Both are internal to the installer. See
-[Quickstart](/docs/getting-started/quickstart) for how they fit into device
-onboarding.
+[Device Registrations](/docs/api-reference/device-registrations) for how they
+fit into onboarding.
+
+The Workflows and AI surface is undocumented while it is still moving.

@@ -1,0 +1,49 @@
+---
+title: "Overview"
+description: "The two endpoints that bootstrap live video and live telemetry, which do not flow through this API."
+---
+
+<Callout title="Live data does not flow through this API">
+  Neither live video frames nor live telemetry samples ever traverse
+  `xorgate-core-service`. A client connects to AWS directly: Kinesis Video
+  Streams WebRTC for video, AWS IoT Core over MQTT-over-WSS for telemetry, using
+  credentials it mints itself from the Cognito identity pool. The two endpoints
+  in this section only hand out the metadata and the authorization needed to do
+  that.
+</Callout>
+
+## Live video
+
+`GET /devices/{id}/kvs-channels` returns channel METADATA and no credentials:
+one entry per provisioned video stream, each with a `streamKey` (`cam0`,
+`cam1`), a `channelName` of the form `${deviceId}-${streamKey}`, a `channelArn`
+and a region. An empty array means the device is not provisioned yet, which is a
+`200` rather than a `404`.
+
+From there the browser obtains scoped AWS credentials from the identity pool and
+runs the KVS WebRTC VIEWER role against those channels while the device runs
+MASTER. Getting that lifecycle right (signaling, ICE, credential refresh,
+reconnection) is real work, and it is what the Frontend SDK will package.
+
+## Live telemetry
+
+`POST /iot/attach-policy` exists because of an AWS quirk: IoT does not authorize
+MQTT for Cognito-federated principals through their IAM role. It requires an IoT
+policy attached to the Cognito IDENTITY itself. This endpoint resolves the
+caller's identity from the bearer token and attaches that policy, after which
+the client can connect over MQTT-over-WSS and subscribe to
+`xorgate/devices/{deviceId}/telemetry`. It is idempotent, so calling it on every
+page load is fine and is the normal pattern.
+
+The payload on that topic uses the same `group.field` metric names as the
+[stored telemetry](/docs/api-reference/telemetry) endpoints, which is what lets
+a chart seeded from `/telemetry/recent` append live samples without translating
+anything.
+
+<Callout type="warn" title="The browser IoT policy is org-blind today">
+  The policy attached here authorizes the telemetry topic space broadly rather
+  than per organization, so any authenticated caller can subscribe to any
+  device's topic. That is acceptable for first-party use and is NOT safe to hand
+  to a third party. Narrowing it, and vending credentials from an API key rather
+  than a xorgate Cognito session, are both tracked as platform-readiness work.
+</Callout>

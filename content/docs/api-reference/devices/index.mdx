@@ -1,0 +1,74 @@
+---
+title: "Overview"
+description: "Device records, the config document, IoT identity, and the one-shot commands."
+---
+
+A device is a row that points at a workspace and a device model, plus everything
+the platform knows about one physical unit: its status, its configuration
+document, and its IoT identity. The endpoints here fall into four groups, and
+they behave quite differently from each other.
+
+## Reading and writing metadata
+
+`GET /devices` is one of only three paginated endpoints in this API. It takes
+`limit`, `offset`, `order`, `sort` and `status`, returns a `page` block, and
+accepts `X-Workspace-Id` as a filter. An over-large `limit` is clamped rather
+than rejected, so read `page.limit` back.
+
+`PUT /devices/{id}` is metadata only, in practice just `name`. `status` and
+`lastSeenAt` are machine-managed by telemetry ingest, the MQTT last-will and the
+offline sweeper, and writing them is a `400`. The body also still accepts a set
+of deprecated per-namespace config fields for the transition window; use
+`PATCH /devices/{id}/config` instead.
+
+## Configuration
+
+`PATCH /devices/{id}/config` is the interesting one. The device config is a
+single namespaced document, and each namespace you send is validated and
+replaced WHOLE, because that is how the device merges it. Sending half a
+namespace silently drops the keys you omitted. `null` reverts a namespace to
+device defaults on both sides. Writing bumps `configRev` and publishes the whole
+document as a retained MQTT message.
+
+<Callout title="A 502 here does not mean the write was lost">
+  `PATCH /devices/{id}/config` returns `502 CONFIG_PUBLISH_FAILED` when the row
+  was written but the retained publish failed. The setting is saved and the
+  device has simply not been told yet; it converges on the device's next config
+  report. Compare `configRev` against `reportedConfig.rev` on an online device
+  to see whether a change is still pending.
+</Callout>
+
+`PATCH /devices/{id}/ui-prefs` is the opposite: cloud-only presentation state
+that is never delivered to the device and never bumps `configRev`.
+
+## Identity
+
+`POST /devices/{id}/provision` mints the AWS IoT thing, X.509 certificate and
+KVS signaling channels, and returns the certificate and private key exactly
+once. Nothing is stored server-side, there is no rotation yet, and a second call
+is a `409`. For onboarding real hardware you usually do not call this directly;
+the [registration code flow](/docs/api-reference/device-registrations) does it
+for you.
+
+`GET /devices/{id}/identity` reads back the non-secret half of that: thing name,
+certificate id, policy, role alias, status. It returns `identity: null` with a
+`200` when the device exists but is not provisioned, and it reads the database
+rather than AWS, so a certificate revoked out of band still reads `active` here.
+
+## Commands
+
+`reboot`, `power-off`, `refresh-state` and `update` all publish a one-shot MQTT
+command and answer `202`. That `202` means the message reached the broker, not
+that anything happened. Commands are not retained, so the device must be online
+or you get a `409`, and each carries a request id the device refuses to execute
+twice plus a short expiry.
+
+Watch the outcome, do not assume it. Reboot and power-off show up as a status
+transition. `refresh-state` is read-only and lands when `reportedAt` advances,
+typically within about 45 seconds and rate-limited to roughly one per 30
+seconds. `update` is the one to be careful with: the agent restarts mid-update,
+so no acknowledgement can be trusted. Poll `GET /devices/{id}` until
+`agentVersion` changes, and compare it against
+[`GET /device-dist/latest`](/docs/api-reference/devices/get-latest-agent-build)
+by string equality only. An unchanged build after the device comes back online
+means the install failed and rolled back.

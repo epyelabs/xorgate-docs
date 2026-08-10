@@ -1,0 +1,8 @@
+{
+  "title": "Users",
+  "description": "Who the caller is, and which organizations they can act in.",
+  "pages": [
+    "index",
+    "get-me"
+  ]
+}

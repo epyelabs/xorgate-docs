@@ -7,3 +7,12 @@ coverage/
 openapi/
 package-lock.json
 next-env.d.ts
+
+# Generated API reference. `scripts/generate-openapi.mjs` rewrites these before
+# every dev run and build, so formatting them would only be undone. The
+# hand-written per-tag overviews live in the same folders and stay formatted.
+content/docs/api-reference/**/*.mdx
+content/docs/api-reference/meta.json
+content/docs/api-reference/**/meta.json
+!content/docs/api-reference/index.mdx
+!content/docs/api-reference/**/index.mdx
