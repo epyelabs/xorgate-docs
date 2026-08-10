@@ -1,0 +1,150 @@
+---
+title: "What this SDK does not cover"
+description: "The live planes, workflows, the device claim, and an honest list of the platform gaps you will hit."
+---
+
+Two lists. The first is scope: things that exist and belong elsewhere. The
+second is gaps: things that do not exist yet and that you will have to work
+around.
+
+## Out of scope by design
+
+### Live telemetry
+
+The 1 Hz feed does not go through this API. A client subscribes to AWS IoT Core
+over MQTT-over-WebSocket, signed with SigV4, using temporary AWS credentials from
+a Cognito identity pool, after calling `POST /iot/attach-policy` once to attach
+its IoT policy.
+
+That call attaches the policy to **the caller's own Cognito identity**, which
+makes it meaningless from a server, so the SDK has no method for it. Live
+telemetry belongs to `@xorgate/react`.
+
+What this SDK gives you instead: `telemetry.latest()` for the current value per
+metric, and `telemetry.recent()` for the newest N samples. Polling `latest()`
+every few seconds is a reasonable substitute for a dashboard that does not need
+per-second updates, and it costs one request rather than a WebSocket.
+
+### Live video
+
+KVS WebRTC, peer to peer from the device. `devices.kvsChannels()` returns the
+channel metadata a viewer needs, and that is the extent of this SDK's
+involvement: video frames never traverse the API. The viewer lifecycle,
+reconnection and credential refresh belong to `@xorgate/react`.
+
+Recorded video is fully covered here. See
+[Media](/docs/backend-sdk/resources/media).
+
+### The device claim and install script
+
+`POST /device-registrations/{code}/claim` and `GET /get/{code}` are the install
+script's private contract, called unauthenticated on the device itself, and the
+claim returns X.509 private key material. They are excluded from the public API
+reference and will never be SDK methods. Your side of that flow is
+[Device registrations](/docs/backend-sdk/resources/device-registrations).
+
+### Workflows and AI
+
+The workflow templates, instances, runs, catalog, model registry and simulation
+surface are not documented anywhere on this site and are not in this SDK. That
+surface is still moving. `xg.search()` can return `workflow-template` and
+`workflow-instance` hits, and there is nothing in this SDK to follow them with.
+
+`xg.request()` will reach those endpoints if you need them. There is no
+stability promise attached.
+
+### Device-side code
+
+The agent that runs on the hardware is a separate program with its own CLI and
+configuration, not something this SDK talks to. See
+[Device SDK](/docs/device-sdk).
+
+## Platform gaps
+
+These are real limitations of the platform today, not omissions in the SDK.
+Every one of them is on the platform-readiness backlog.
+
+### API-key authentication does not work
+
+Keys are mint-only. Nothing verifies one, so `auth: { apiKey }` gets a `401` on
+every call and a server-side integration still needs a Cognito ID token. This is
+the biggest gap and the first backlog item. See
+[Authentication](/docs/backend-sdk/authentication).
+
+### There are no webhooks
+
+Nothing is pushed. Every "tell me when" is a poll, and the events you would want
+to subscribe to exist internally but have no delivery mechanism.
+
+The workable patterns:
+
+| You want to know             | Poll                                       | Signal                     |
+| ---------------------------- | ------------------------------------------ | -------------------------- |
+| A device finished onboarding | `deviceRegistrations.waitForClaim(code)`   | `status` becomes `claimed` |
+| A config change landed       | `devices.getConfig(id)`                    | `pending` becomes false    |
+| A device came back online    | `devices.get(id)`                          | `status`, `lastSeenAt`     |
+| An agent update succeeded    | `devices.get(id)`                          | `agentVersion` changes     |
+| New recorded media exists    | `media.sessions.list(id, { from: since })` | new or grown sessions      |
+| A device stopped reporting   | `telemetry.latest(id)`                     | `ts` stops advancing       |
+
+A fleet-wide sweep is one `devices.iterate()` per interval. Keep the interval
+sane: there is no rate limiting to protect the platform from a tight loop, and
+`GET /devices/{id}/sessions` in particular is around 1090 ms per device.
+
+### Cross-tenant reads look like missing rows
+
+A resource in another organization answers `404`. You cannot distinguish "does
+not exist" from "not yours". That is deliberate, and it means reconciliation code
+must treat `NOT_FOUND` as "not visible to me" rather than "deleted".
+
+### Live-plane policies are not organization-scoped
+
+The IoT and KVS browser policies are broad but authenticated: any authenticated
+user can subscribe to any device's telemetry topic. This is a known cross-tenant
+gap that has to close before third parties touch the live plane. It does not
+affect this SDK, which reads only org-scoped REST endpoints, but it does affect
+anything you build on `@xorgate/react` today.
+
+### No credential path for your own users
+
+The live plane needs identity-pool credentials federated from xorgate's Cognito.
+An application that authenticates its own users, rather than federating them into
+xorgate, has no way to obtain them today. Its backend can read everything through
+this SDK; its browser cannot do live video or live telemetry. A
+credential-vending design for API-key consumers is on the backlog.
+
+### No versioning, no stable domain
+
+There is no `/v1` prefix and no custom API domain. The base URL is a raw
+`execute-api` hostname, which is why `baseUrl` is required and has no default.
+The `/v1` prefix arrives with the custom domain, and old paths stay aliased until
+the first-party web app migrates.
+
+### No idempotency keys
+
+A timed-out write is genuinely ambiguous. The SDK does not retry writes for that
+reason. See [Errors](/docs/backend-sdk/errors).
+
+### No request id in error bodies
+
+`XorgateError.requestId` is the id the SDK generated and sent as `X-Request-ID`.
+The API does not return one, so it correlates your own logs but cannot yet be
+handed to someone reading the platform's.
+
+### Not everything paginates
+
+Six list endpoints return their whole collection. That is fine at today's scale
+and will not stay fine. Use `iterate()` rather than `list()` where you can, so
+the change is free. See [Pagination](/docs/backend-sdk/pagination).
+
+### Roles cannot be changed
+
+There is no membership update endpoint. Changing a role means remove then add.
+See
+[Users and organizations](/docs/backend-sdk/resources/users-and-organizations).
+
+### Devices are not decommissioned, only deleted
+
+`devices.delete()` removes the rows and cascades, but leaves the AWS IoT thing
+and certificate in place. There is no soft delete and no restore anywhere in the
+API.

@@ -1,0 +1,181 @@
+---
+title: "Device models"
+description: "The platform-wide hardware catalog, and the client-side ioCapabilities validation that stops a device provisioning with zero cameras."
+---
+
+A device model describes a hardware variant: what cameras it has, what sensors,
+what it reports. Every device points at one. The catalog is **platform-wide**,
+not per organization, so it takes no tenancy header and every authenticated
+caller sees the same rows.
+
+```ts
+list(): Promise<DeviceModel[]>
+listAll(): Promise<DeviceModel[]>
+iterate(options?): AsyncIterableIterator<DeviceModel>
+get(id: string): Promise<DeviceModel>
+create(input, options?): Promise<DeviceModel>
+update(id, input, options?): Promise<DeviceModel>
+delete(id: string): Promise<void>
+```
+
+Reads need only a valid credential. **Writes need the platform admin role**
+(`user.role === "admin"`), which is separate from every membership role: being an
+organization owner does not grant it.
+
+## `list()` and `get(id)`
+
+Unpaginated.
+
+```ts
+const models = await xg.deviceModels.list()
+const model = models.find((m) => m.sku === "XG-CM5-DUAL")
+```
+
+## `ioCapabilities`
+
+This field is what makes a model useful. It declares the video stream keys that
+become KVS signaling channels at provisioning time, and the telemetry metrics
+that become the default history columns.
+
+```ts
+const ioCapabilities: IoCapabilities = {
+  schemaVersion: 1,
+  media: {
+    video: [
+      { key: "cam0", codec: "h264", maxWidth: 1920, maxHeight: 1080, maxFps: 30 },
+      { key: "cam1", codec: "h264", maxWidth: 1920, maxHeight: 1080, maxFps: 30 },
+    ],
+  },
+  sensors: {
+    imu: {
+      accel: ["x", "y", "z"],
+      euler: ["roll", "pitch", "yaw"],
+      unit: "m/s^2",
+      rateHz: 10,
+    },
+  },
+  comm: {
+    module: "4g-lte",
+    gps: { fields: ["lat", "lon", "alt", "speed", "course"] },
+    signal: { fields: ["rssi", "rsrp", "rsrq"] },
+  },
+  system: { fields: ["cpu_temp", "cpu_pct", "mem_pct", "disk_pct"] },
+}
+```
+
+Every section is optional, so partial-capability hardware is describable. What
+each one produces:
+
+| Declaration                        | Becomes                                             |
+| ---------------------------------- | --------------------------------------------------- |
+| `media.video[].key`                | a KVS signaling channel named `${deviceId}-${key}`  |
+| `sensors.imu.accel: ["x","y","z"]` | metrics `imu.accel_x`, `imu.accel_y`, `imu.accel_z` |
+| `comm.gps.fields: ["lat"]`         | metric `gps.lat`                                    |
+| `comm.signal.fields: ["rssi"]`     | metric `signal.rssi`                                |
+| `system.fields: ["cpu_temp"]`      | metric `system.cpu_temp`                            |
+
+Two helpers derive those without you re-implementing the mapping:
+
+```ts
+import { videoStreamKeys, declaredMetrics } from "@xorgate/sdk"
+
+videoStreamKeys(model) // ["cam0", "cam1"]
+declaredMetrics(model) // ["imu.accel_x", ..., "gps.lat", ..., "system.cpu_temp"]
+```
+
+## Client-side validation
+
+<Callout type="warn" title="This is the one place the SDK does real work the API does not">
+
+`POST /device-models` and `PUT /device-models/{id}` accept **any JSON object**
+as `ioCapabilities`. Nothing is validated on write.
+
+But the document **is** parsed, strictly, at provisioning time. If that parse
+fails, provisioning yields no video stream keys, so the device is provisioned
+with **zero KVS channels** and live video silently never works. No error is
+raised anywhere: not on the write, not on the provision, not on the device. The
+first symptom is a camera that never appears, days later.
+
+</Callout>
+
+So `create()` and `update()` validate `ioCapabilities` before sending, against
+the same schema provisioning uses. A failure throws before any request is made:
+
+```ts
+try {
+  await xg.deviceModels.create({
+    name: "Tracker v2",
+    sku: "XG-T2",
+    ioCapabilities: {
+      schemaVersion: 1,
+      media: { video: [{ key: "cam0" }] }, // codec is required
+    } as IoCapabilities,
+  })
+} catch (e) {
+  if (isXorgateError(e) && e.code === "INVALID_INPUT") {
+    console.error(e.details?.issues)
+    // [{ path: "media.video[0].codec", message: "Required" }]
+  }
+}
+```
+
+The check is also exported standalone, for validating a document you did not
+build yourself, for example one read back from an existing model or pasted into
+a form:
+
+```ts
+import { validateIoCapabilities, parseIoCapabilities } from "@xorgate/sdk"
+
+const result = validateIoCapabilities(JSON.parse(pastedJson))
+if (!result.valid) {
+  for (const issue of result.issues) {
+    console.warn(`${issue.path}: ${issue.message}`)
+  }
+}
+
+// Or the throwing form.
+const caps = parseIoCapabilities(JSON.parse(pastedJson))
+```
+
+Auditing what is already in the catalog is worth doing once:
+
+```ts
+for (const model of await xg.deviceModels.list()) {
+  const result = validateIoCapabilities(model.ioCapabilities)
+  if (!result.valid) {
+    console.warn(`${model.sku} will provision zero KVS channels`, result.issues)
+  }
+}
+```
+
+### Turning the check off
+
+```ts
+await xg.deviceModels.create(input, { validate: false })
+```
+
+The only honest reason to use this is writing a document the SDK's schema
+rejects but the platform accepts, which today means a document that will
+provision zero KVS channels. If you find a document the SDK rejects and the
+platform handles correctly, the SDK's schema has drifted and that is worth
+reporting.
+
+## `update(id, input)`
+
+Partial: send only what changes. An empty object is a `400`.
+
+<Callout type="warn" title="Capability changes are not retroactive">
+  Changing `ioCapabilities` does **not** retro-provision KVS channels on devices
+  already created from this model. Adding `cam1` to a model gives new devices
+  two channels and leaves existing ones with one. There is no re-provision
+  endpoint: a provisioned device answers `409` to `devices.provision()`.
+</Callout>
+
+## `delete(id)`
+
+Platform admin only. Note that `deviceRegistrations.create()` picks the **most
+recently created** model automatically, so deleting or adding a model changes
+which hardware new registrations assume. A deployment with no device models at
+all makes registration a `400`.
+
+Maps to the [Device Models endpoints](/docs/api-reference/device-models).

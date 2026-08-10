@@ -1,0 +1,14 @@
+{
+  "title": "Resources",
+  "pages": [
+    "index",
+    "users-and-organizations",
+    "workspaces",
+    "api-keys",
+    "device-models",
+    "devices",
+    "device-registrations",
+    "media",
+    "telemetry"
+  ]
+}

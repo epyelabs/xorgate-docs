@@ -1,0 +1,253 @@
+---
+title: "Telemetry"
+description: "Four read shapes over stored telemetry: a time range, the latest per metric, the newest N, and the paginated readings table."
+---
+
+Devices publish telemetry at 1 Hz. This module reads what was stored. The live
+MQTT feed is a different plane and is not part of this SDK; see
+[What this SDK does not cover](/docs/backend-sdk/not-covered).
+
+Every metric is named `group.field`. That naming is the interop contract across
+the whole platform: live MQTT, these endpoints, and replayed telemetry all use
+it.
+
+```ts
+history(deviceId, params): Promise<TelemetryHistory>
+latest(deviceId): Promise<LatestReading[]>
+latestByMetric(deviceId): Promise<LatestByMetric>
+recent(deviceId, params?): Promise<TelemetryHistory>
+readings(deviceId, params?): Promise<TelemetryTablePage>
+readingsFlat(deviceId, params?): Promise<Page<TelemetryReading>>
+iterateReadings(deviceId, params?): AsyncIterableIterator<TelemetryReading>
+```
+
+## Which one to use
+
+| You want                                     | Method                             |
+| -------------------------------------------- | ---------------------------------- |
+| A chart over a known window                  | `history()`                        |
+| "What is this device doing right now"        | `latest()` or `latestByMetric()`   |
+| To seed a chart on page load, window unknown | `recent()`                         |
+| A scrollable table, or to walk everything    | `readings()` / `iterateReadings()` |
+
+## `history(deviceId, params)`
+
+Stored readings over `[from, to)`, ordered by `ts` then `metric`.
+
+```ts
+const { readings, bucketSeconds, truncated } = await xg.telemetry.history(
+  deviceId,
+  {
+    from: "2026-08-09T00:00:00Z",
+    to: "2026-08-10T00:00:00Z",
+    metric: ["gps.lat", "gps.lon", "gps.speed"],
+    interval: 60, // one-minute averages
+  },
+)
+```
+
+<TypeTable
+  type={{
+    from: {
+      type: "string | Date",
+      required: true,
+      description: "Inclusive. The range may not exceed 31 days.",
+    },
+    to: { type: "string | Date", required: true, description: "Exclusive." },
+    metric: {
+      type: "MetricName[]",
+      description:
+        "At most 20. Each must look like group.field; anything else is a 400.",
+    },
+    interval: {
+      type: "number",
+      description:
+        "Bucket width in seconds, 1 to 86400. Bucket-averages server-side. An interval producing more than 5,000 buckets for the range is a 400.",
+    },
+  }}
+/>
+
+Both bounds are **required**, unlike everywhere else in the API.
+
+With `interval`, readings are grouped into buckets per metric and averaged, up to
+10,000 buckets; `value` is then the bucket average and `ts` the bucket start.
+Without it, raw rows up to 5,000.
+
+<Callout type="warn" title="truncated is the only signal, and it is easy to miss">
+
+This endpoint does **not** paginate. When the cap is hit you get a complete-looking
+array with `truncated: true`, and nothing else says so. A chart built from a
+truncated result looks fine and is wrong.
+
+```ts
+const h = await xg.telemetry.history(deviceId, { from, to })
+if (h.truncated) {
+  // Narrow the range, or pass a coarser interval, or use iterateReadings().
+}
+```
+
+Check it on every call. At 1 Hz across a handful of metrics, 5,000 raw rows is a
+few minutes of data, so the cap is much closer than it sounds.
+
+</Callout>
+
+`bucketSeconds` echoes `interval` and is `null` when raw rows were returned.
+
+## `latest(deviceId)` and `latestByMetric(deviceId)`
+
+One row per metric, last-writer-wins, ordered by metric. The cheap "right now"
+read, and the authoritative source of a metric's unit.
+
+```ts
+const latest = await xg.telemetry.latest(deviceId)
+// [{ metric: "gps.lat", value: 45.4215, unit: "deg", ts: "..." }, ...]
+
+const byMetric = await xg.telemetry.latestByMetric(deviceId)
+console.log(byMetric["gps.speed"]?.value)
+```
+
+`latestByMetric()` is the same request, keyed by metric name. That
+`Record<MetricName, LatestReading>` shape is the platform's interop contract:
+`@xorgate/react` emits it for live MQTT telemetry and for replayed telemetry
+too, so one renderer handles all three sources without a shape adapter.
+
+<Callout type="warn" title="Stale, not empty, on an offline device">
+  This reflects the last reading **ingested**, so a device that went offline
+  yesterday keeps returning yesterday's values indefinitely rather than nothing.
+  Always check `ts` against `Date.now()` before showing a value as current, and
+  cross-check `device.status` and `device.lastSeenAt`.
+</Callout>
+
+An empty array means the device has never reported telemetry at all.
+
+## `recent(deviceId, params)`
+
+The newest `limit` rows, in chronological order, with **no time window**.
+
+```ts
+const seed = await xg.telemetry.recent(deviceId, {
+  metric: ["imu.accel_x", "imu.accel_y", "imu.accel_z"],
+  limit: 1000,
+})
+```
+
+Because it takes no window, it never comes back empty just because the device
+last reported weeks ago. That makes it the right call for seeding a chart on page
+load, with the live feed appending after it.
+
+The response shape is the same as `history()`: `bucketSeconds` is always `null`
+because nothing is averaged, and `truncated` means the row limit was reached.
+
+`limit` is 1 to 5000, default 500, and an out-of-range value is a **400 rather
+than a clamp**. It counts rows, not samples: three metrics at 1 Hz consume the
+budget three times as fast as one.
+
+## `readings(deviceId, params)`
+
+The paginated raw history, and the only telemetry read that can walk an entire
+window without a cap on completeness. Pagination is over **distinct timestamps**,
+so a page boundary never splits a sample.
+
+```ts
+const page = await xg.telemetry.readings(deviceId, {
+  from: yesterday,
+  to: now,
+  metric: ["imu.accel_x", "imu.accel_y", "imu.accel_z"],
+  limit: 200,
+})
+
+for (const row of page.rows) {
+  // row.v is POSITIONAL against page.columns
+  page.columns.forEach((col, i) => console.log(col.key, row.v[i], col.unit))
+}
+```
+
+The table shape is the default and is roughly 10x smaller on the wire than the
+flat shape, because the metric name is not repeated per value. This API does not
+compress, so that matters.
+
+- `columns` is an ordered list of `{ key, unit }`. The array order **is** the
+  column order, and every row's `v` array is positional against it, with the same
+  length, and trailing nulls are never trimmed. `null` means no reading for that
+  column at that timestamp.
+- `unit` comes from the device's latest readings, so it is stable across pages
+  rather than scraped from whatever the page happened to contain.
+- `columnSource` says where the column set came from: `request` is your `metric`
+  filter, `model` is the device model's declared capabilities, and `data` means
+  the model declares nothing usable so the columns were discovered from this
+  page's rows and **may vary between pages**. `data` with empty `columns` means
+  the model declares nothing and this page has no data.
+
+`limit` here is 1 to 500, default 100, and an out-of-range value is a **400
+rather than a clamp**, unlike the other paginated endpoints.
+
+### `readingsFlat(deviceId, params)`
+
+The same endpoint under `shape=flat`: `Page<TelemetryReading>`, the same
+`{ ts, metric, value, unit }` rows `history()` returns. Use it when you already
+have code that consumes that shape.
+
+### `iterateReadings(deviceId, params)`
+
+Drains `readingsFlat()` page by page.
+
+```ts
+const track: TelemetryReading[] = []
+let capped = false
+
+for await (const r of xg.telemetry.iterateReadings(deviceId, {
+  from: dayStart,
+  to: dayEnd,
+  metric: ["gps.lat", "gps.lon"],
+  order: "asc",
+  onPage: (p) => {
+    capped ||= p.totalIsCapped === true
+  },
+})) {
+  track.push(r)
+}
+```
+
+<Callout type="warn" title="page.total is capped at 10,000 timestamps">
+
+An exact count over the telemetry table would time out, so `page.total` is
+bounded. When more samples match, `page.totalIsCapped` is `true` and only the
+first 10,000 in the requested `order` are addressable, newest first by default.
+`page.coveredFrom` and `page.coveredTo` give the ISO span of that addressable
+slice.
+
+The iterator stops at the cap. It does not throw, and it does not warn, because
+it yields items and never sees the page block. `onPage` is the only way to
+notice. To read beyond the cap, narrow `from` and `to` and iterate the windows.
+
+</Callout>
+
+## Metric names in TypeScript
+
+```ts
+type MetricName = `${string}.${string}`
+```
+
+A template literal type, so `"gps"` is a compile error and `"gps.lat"` is not.
+It catches the shape, not the vocabulary: `"nonsense.field"` type-checks and
+returns nothing.
+
+To find out what a device actually reports, ask the model rather than guessing:
+
+```ts
+import { declaredMetrics } from "@xorgate/sdk"
+
+const device = await xg.devices.get(deviceId)
+const model = await xg.deviceModels.get(device.deviceModelId)
+
+declaredMetrics(model) // ["gps.lat", "gps.lon", "imu.accel_x", ...]
+```
+
+Or read what it has actually reported, which is the ground truth including
+metrics the model forgot to declare:
+
+```ts
+const seen = (await xg.telemetry.latest(deviceId)).map((r) => r.metric)
+```
+
+Maps to the [Telemetry endpoints](/docs/api-reference/telemetry).

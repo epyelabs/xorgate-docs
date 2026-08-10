@@ -1,0 +1,108 @@
+---
+title: "API keys"
+description: "Minting, listing and deleting organization keys, the one-shot plaintext, and the snake_case envelope the SDK normalizes."
+---
+
+```ts
+list(): Promise<ApiKey[]>
+listAll(): Promise<ApiKey[]>
+iterate(options?): AsyncIterableIterator<ApiKey>
+create(input: CreateApiKeyInput): Promise<CreatedApiKey>
+delete(id: string): Promise<void>
+```
+
+<Callout type="warn" title="Keys cannot authenticate anything yet">
+  Minting is currently all a key does. No endpoint accepts one as a credential,
+  `scope` is validated on write and never enforced, `lastUsedAt` never advances,
+  and there is no expiry. See [Authentication](/docs/backend-sdk/authentication)
+  for what that means for `auth: {apiKey}`.
+</Callout>
+
+## `create(input)`
+
+```ts
+const { apiKey, plaintextKey } = await xg.apiKeys.create({
+  name: "alocate-backend",
+  scope: "cloud",
+})
+
+await secrets.put("XORGATE_API_KEY", plaintextKey)
+console.log(apiKey.id, apiKey.createdAt)
+```
+
+<TypeTable
+  type={{
+    name: {
+      type: "string",
+      required: true,
+      description: "Free text. Not unique; name keys after the consumer.",
+    },
+    scope: {
+      type: '"edge" | "cloud" | "client"',
+      required: true,
+      description:
+        "Recorded on the key and validated, but nothing enforces it. Use 'cloud' for a server-side consumer.",
+    },
+  }}
+/>
+
+<Callout type="warn" title="plaintextKey is shown exactly once">
+  Only the SHA-256 is stored. There is no endpoint that returns a key again, so
+  a lost key is replaced, never recovered. Write it to your secret store in the
+  same function that creates it, and never log the return value of `create()`
+  whole.
+</Callout>
+
+Owner or admin.
+
+## `list()`
+
+Unpaginated, newest first, metadata only. The hashed key is never returned.
+
+```ts
+for (const key of await xg.apiKeys.list()) {
+  console.log(key.name, key.scope, key.createdAt, key.lastUsedAt)
+}
+```
+
+`lastUsedAt` is typed `string | null` and is **always null**: no code path
+verifies a key, so nothing stamps it. Do not build "unused key" cleanup on it,
+because every key looks unused.
+
+## `delete(id)`
+
+```ts
+await xg.apiKeys.delete(apiKey.id)
+```
+
+A hard delete, not a revocation: the row is removed and `revokedAt` is never set
+by this call. `ApiKey.revokedAt` exists in the schema and stays null.
+
+Rotation is therefore manual and ordered: mint the new key, deploy it
+everywhere, confirm, then delete the old one. There is no grace period and no
+overlap window the platform manages for you.
+
+Owner or admin.
+
+## The snake_case envelope
+
+This is the one resource where the SDK's normalization is worth stating
+explicitly, because you will see the difference the moment you compare against a
+raw `curl`.
+
+| Wire                                              | SDK                        |
+| ------------------------------------------------- | -------------------------- |
+| `{ "api_keys": [...] }`                           | `ApiKey[]`                 |
+| `{ "api_key": {...}, "plaintext_key": "xg_..." }` | `{ apiKey, plaintextKey }` |
+
+The envelope keys mirror their Postgres table name. They stay that way on the
+wire deliberately, and the
+[API reference](/docs/api-reference/api-keys) documents them truthfully. The SDK
+is the layer that translates, so a database naming detail does not reach your
+code. `device_model` / `device_models` is the same story, on
+[Device models](/docs/backend-sdk/resources/device-models).
+
+Everything **inside** those envelopes is already camelCase on the wire. Only the
+envelope keys differ.
+
+Maps to the [API Keys endpoints](/docs/api-reference/api-keys).

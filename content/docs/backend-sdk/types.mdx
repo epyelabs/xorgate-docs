@@ -1,0 +1,347 @@
+---
+title: "Types"
+description: "The shared domain vocabulary both SDKs speak, including the group.field metric contract and the config document."
+---
+
+Every type here is exported from the package root and is shared with
+`@xorgate/react`, so a value read on the server and a value read in the browser
+have the same type. Where the SDK's type differs from the wire, the reason is
+noted.
+
+```ts
+import type { Device, MetricName, ReplayManifest } from "@xorgate/sdk"
+```
+
+## Naming and normalization
+
+Three rules cover every difference between these types and the raw API.
+
+1. **Envelopes are unwrapped.** `{ devices, page }` becomes `Page<Device>`,
+   `{ device }` becomes `Device`, `{ api_keys }` becomes `ApiKey[]`.
+2. **Everything is camelCase.** The snake_case envelope keys (`api_keys`,
+   `api_key` / `plaintext_key`, `device_model` / `device_models`) and the
+   snake_case timestamps on `User` and `Organization` (`created_at`,
+   `updated_at`) are normalized. Nothing else on the wire is snake_case.
+3. **Timestamps stay strings.** ISO-8601, exactly as returned, not `Date`
+   objects. Parsing is lossy in one direction and opinionated in the other, and
+   a string round-trips into JSON without a serializer. The one exception is the
+   replay manifest, whose timestamps are epoch **milliseconds** upstream and stay
+   numbers.
+
+Parameters that take a time accept `string | Date`, so you are not forced to
+format on the way in.
+
+## Metrics
+
+```ts
+type MetricName = `${string}.${string}`
+
+interface TelemetryReading {
+  ts: string
+  metric: MetricName
+  value: number | null
+  unit: string | null
+}
+
+interface LatestReading {
+  metric: MetricName
+  value: number | null
+  unit: string | null
+  ts: string
+}
+
+type LatestByMetric = Record<MetricName, LatestReading>
+```
+
+`group.field` is the platform's metric addressing scheme, and `LatestByMetric` is
+its interop shape. Live MQTT telemetry, the REST latest endpoint and replayed
+telemetry all produce it, which is what lets one renderer handle all three. If
+you build any abstraction over telemetry, build it on these two.
+
+## Tenancy
+
+```ts
+interface User {
+  id: string // Cognito sub
+  email: string
+  name: string | null
+  tier: "free" | "pro" | "team"
+  role: "user" | "admin" // PLATFORM role
+  createdAt: string
+}
+
+interface Organization {
+  id: string
+  name: string
+  slug: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface Membership {
+  id: string
+  userId: string
+  organizationId: string
+  role: "owner" | "admin" | "member" | "viewer"
+  createdAt: string
+}
+
+interface MembershipWithUser extends Membership {
+  user: Pick<User, "id" | "email" | "name"> | null
+}
+
+interface Workspace {
+  id: string
+  organizationId: string
+  name: string
+  slug: string
+  description: string | null
+  createdAt: string
+  updatedAt: string
+}
+```
+
+`User.role` is the **platform** role and gates device-model catalog writes only.
+`Membership.role` is per organization and gates everything else. They are
+unrelated, and confusing them is the most common cause of a surprising `403`.
+
+## Device
+
+```ts
+interface Device {
+  id: string // also the IoT thing name and MQTT client id
+  workspaceId: string
+  deviceModelId: string
+  serial: string
+  name: string | null
+  agentVersion: string | null
+  status: "provisioned" | "online" | "offline" | "decommissioned"
+  lastSeenAt: string | null
+  config: DeviceConfig
+  configRev: number
+  configUpdatedAt: string | null
+  uiPrefs: DeviceUiPrefs
+  reportedConfig: DeviceReportedConfig | null
+  reportedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+```
+
+`id` is load-bearing well beyond this type: it is the AWS IoT thing name, the
+MQTT client id, and a path segment in every one of the device's MQTT topics and
+S3 keys.
+
+`status` and `lastSeenAt` are machine-managed, which is why they do not appear in
+`UpdateDeviceInput`.
+
+<Callout title="The deprecated fields are not in this type">
+  The API still returns `firmwareVersion`, `gnssAntBias`,
+  `activeStreamsViewType`, `imuMount`, `imuView`, `recordingConfig`,
+  `lteRecoveryConfig` and `timeSyncConfig` at the top level of a device, all
+  marked deprecated and all duplicating something in `config` or `uiPrefs`. The
+  SDK omits them, so there is exactly one place to read each value. Use
+  `xg.request()` if you need a deprecated field during a migration.
+</Callout>
+
+## Device configuration
+
+```ts
+interface DeviceConfig {
+  gnssAntBias?: boolean
+  imuMount?: ImuMountConfig
+  recording?: RecordingConfig
+  lteRecovery?: LteRecoveryConfig
+  timeSync?: TimeSyncConfig
+  cellular?: CellularConfig
+}
+
+type DeviceConfigPatch = {
+  [K in keyof DeviceConfig]?: DeviceConfig[K] | null
+}
+```
+
+A namespace is either configured or absent on read. It is never
+present-but-null, because the API strips cleared namespaces before returning
+them. Writing `null` is what clears one, which is why `DeviceConfigPatch` widens
+each value and `DeviceConfig` does not.
+
+<Callout title="These types are generated, not hand-written">
+  The namespace shapes come from `config-contract.json`, the cross-package
+  artifact the web frontend already imports and the device agent contract-tests
+  against. Generating them keeps the SDK from becoming a fourth hand-maintained
+  copy of a contract that drifts. The [config
+  endpoint](/docs/api-reference/devices/patch-device-config) documents their
+  bounds and enums, generated from that same artifact.
+</Callout>
+
+```ts
+interface DeviceUiPrefs {
+  activeStreamsViewType?: "card" | "map"
+  imuView?: { azimuthDeg: number; elevationDeg: number }
+}
+```
+
+Cloud-only. Nothing here reaches the device.
+
+```ts
+interface DeviceReportedConfig {
+  v: number
+  deviceId: string
+  ts: string
+  rev: number // last desired revision applied; 0 = never received one
+  origin: "cloud" | "local" | "boot"
+  effective: Record<string, unknown>
+  status: Record<
+    string,
+    { state: "applied" | "adjusted" | "rejected"; at: string; detail?: string; reason?: string }
+  >
+  changed?: string[] | null // only on an origin: "local" report
+}
+```
+
+`effective` is typed loosely on purpose: it mixes config namespaces with
+**reported-only** blocks that are not config at all (`agent.mode`, `sim`,
+`uplink`, `apn`), and an absent block means unknown rather than absent hardware.
+Typing it strictly would assert a shape the device does not promise.
+
+There is no `pending` state on the wire. `devices.getConfig()` computes it as
+`configRev > reportedConfig.rev` on an online device.
+
+## Device model and capabilities
+
+```ts
+interface DeviceModel {
+  id: string
+  name: string
+  sku: string
+  ioCapabilities: IoCapabilities | null
+  firmwareChannel: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface IoCapabilities {
+  schemaVersion: 1
+  media?: { video?: VideoCapability[]; audio?: AudioCapability[] }
+  sensors?: { imu?: ImuCapability }
+  comm?: { module?: string; gps?: FieldList; signal?: FieldList }
+  system?: FieldList
+}
+```
+
+`ioCapabilities` is typed strictly here even though the API accepts any JSON
+object, because provisioning parses it strictly and a document that fails that
+parse costs you every camera. See
+[Device models](/docs/backend-sdk/resources/device-models).
+
+## Identity and provisioning
+
+```ts
+interface DeviceIdentity {
+  iotThingName: string // equals the device id
+  certificateId: string
+  policyName: string
+  roleAlias: string
+  status: "active" | "revoked"
+  createdAt: string
+}
+
+interface CommandAccepted {
+  requestId: string // replay key; the device refuses the same one twice
+  command: "reboot" | "power_off" | "refresh" | "update"
+  expiresAt: number // epoch ms
+}
+
+interface AgentBuild {
+  version: string // compare by string equality only
+  channel: string | null
+  builtAt: string | null
+  packageVersion: string | null
+  tarball: string | null
+}
+```
+
+`DeviceProvisioning` carries one-shot credentials and is documented on
+[Devices](/docs/backend-sdk/resources/devices). Never log it whole.
+
+## Media
+
+```ts
+interface MediaSession {
+  id: string // device-minted UUIDv7, sorts by start time
+  deviceId: string
+  streamKey: string
+  startedAt: string
+  endedAt: string | null
+  status: "open" | "closed" // advisory
+  timeSource: "ntp" | "gps" | "nitz" | "rtc" | "unsynced" | null
+  lastSegmentAt: string | null
+  codec: string | null
+  width: number | null
+  height: number | null
+  fps: number | null
+  bitrateKbps: number | null
+  source: string | null
+  createdAt: string
+  segmentCount?: number // list endpoint only
+  totalBytes?: number // list endpoint only
+  totalDurationMs?: number // list endpoint only
+}
+```
+
+The three rollups are optional because they are computed by the list endpoint. A
+session obtained through `xg.media.segments()` does not carry them, and typing
+them as required would make that a lie.
+
+```ts
+interface ReplayManifest {
+  deviceId: string
+  from: number // epoch MS, unlike everything else
+  to: number
+  urlExpiresAt: number
+  sessions: ReplaySession[]
+}
+```
+
+The full `ReplaySession`, `ReplaySegment` and `ReplayGap` shapes are on
+[Media](/docs/backend-sdk/resources/media).
+
+## Pagination and errors
+
+```ts
+interface Page<T> {
+  items: T[]
+  page: PageMeta
+}
+
+interface PageMeta {
+  limit: number // the request value AFTER clamping
+  offset: number
+  order: "asc" | "desc"
+  total: number
+  totalIsCapped?: boolean // telemetry readings only
+  coveredFrom?: string // telemetry readings only
+  coveredTo?: string // telemetry readings only
+}
+```
+
+`XorgateError` and the code unions are on
+[Errors](/docs/backend-sdk/errors).
+
+## Sharing types with the frontend SDK
+
+`@xorgate/react` re-exports every type on this page rather than declaring its
+own, so a `Device` fetched server-side and a `Device` held in a hook are the same
+type and can cross the boundary without an adapter.
+
+```ts
+// server
+import type { Device } from "@xorgate/sdk"
+// browser
+import type { Device } from "@xorgate/react"
+```
+
+The frontend SDK adds types the backend one does not have, for the live planes:
+connection state, viewer state, replay clock. Those have no server-side meaning
+and are not here.

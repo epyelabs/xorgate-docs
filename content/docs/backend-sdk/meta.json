@@ -1,4 +1,14 @@
 {
   "title": "Backend SDK (JS)",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "installation",
+    "authentication",
+    "pagination",
+    "errors",
+    "resources",
+    "types",
+    "not-covered",
+    "asset-tracking-walkthrough"
+  ]
 }

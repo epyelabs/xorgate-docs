@@ -1,0 +1,221 @@
+---
+title: "Errors"
+description: "One error type, the full code table, and an honest account of what is safe to retry when nothing is idempotent."
+---
+
+Everything the SDK throws is a `XorgateError`. There is no second class to
+catch, no bare `TypeError` leaking out of the fetch layer, and no `Response`
+object you have to inspect yourself. Client-side validation failures use the
+same type as HTTP failures, so one `catch` covers the surface.
+
+```ts
+import { isXorgateError } from "@xorgate/sdk"
+
+try {
+  await xg.devices.reboot(deviceId)
+} catch (e) {
+  if (!isXorgateError(e)) throw e
+
+  if (e.code === "CONFLICT") {
+    // The device is offline. Commands are not retained, so there is nothing
+    // for it to pick up later.
+  } else if (e.code === "INSUFFICIENT_ROLE") {
+    // Reboot needs owner or admin.
+  } else {
+    throw e
+  }
+}
+```
+
+## The shape
+
+```ts
+class XorgateError extends Error {
+  readonly code: XorgateErrorCode
+  readonly status?: number
+  readonly details?: Record<string, unknown>
+  readonly method?: HttpMethod
+  readonly url?: string
+  readonly requestId?: string
+  readonly hint?: string
+  readonly retryable: boolean
+}
+```
+
+<TypeTable
+  type={{
+    code: {
+      type: "XorgateErrorCode",
+      required: true,
+      description:
+        "Stable and machine-readable. Match on this, never on message.",
+    },
+    status: {
+      type: "number",
+      description:
+        "HTTP status. ABSENT when the failure never reached the network (validation, timeout, DNS).",
+    },
+    details: {
+      type: "Record<string, unknown>",
+      description:
+        "The API's error.details, when present. Client-side validation puts its issue list here.",
+    },
+    method: { type: "HttpMethod", description: "The request method." },
+    url: {
+      type: "string",
+      description: "Request URL with query string. Never carries credentials.",
+    },
+    requestId: {
+      type: "string",
+      description:
+        "The X-Request-ID the SDK generated and sent. The API does not echo one back yet, so this is the client's copy.",
+    },
+    hint: {
+      type: "string",
+      description:
+        "SDK-authored context the API cannot know, such as the API-key note on a 401.",
+    },
+    retryable: {
+      type: "boolean",
+      required: true,
+      description:
+        "True for timeouts, network failures, 429 and 5xx. False for every 4xx.",
+    },
+  }}
+/>
+
+`message` is the API's human-facing message, prefixed with the code, method and
+path so a log line is useful on its own. It is not stable. Never branch on it.
+
+## Codes from the API
+
+| Code                        | Status | Means                                                                                                                       |
+| --------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `UNAUTHORIZED`              | 401    | Missing, malformed or expired credential. Also what an API key gets today, since nothing verifies one.                      |
+| `ORGANIZATION_REQUIRED`     | 400    | A caller in several organizations sent no `X-Organization-Id`. Should be impossible through the SDK, which always sends it. |
+| `NO_ORGANIZATION`           | 403    | The caller belongs to no organization at all.                                                                               |
+| `FORBIDDEN`                 | 403    | Not a member of the requested organization.                                                                                 |
+| `INSUFFICIENT_ROLE`         | 403    | A member, without the role this operation needs.                                                                            |
+| `BAD_REQUEST`               | 400    | Invalid body or query parameters.                                                                                           |
+| `NOT_FOUND`                 | 404    | No such resource, **or** it belongs to another organization.                                                                |
+| `METHOD_NOT_ALLOWED`        | 405    | The path exists, not with this method. Carries an `Allow` header.                                                           |
+| `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                   |
+| `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                       |
+| `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                       |
+| `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                |
+| `DIST_MANIFEST_UNAVAILABLE` | 502    | The build manifest is unreadable or empty.                                                                                  |
+| `DIST_MANIFEST_INVALID`     | 502    | The build manifest carries no version.                                                                                      |
+
+<Callout type="warn" title="404 hides cross-tenant reads on purpose">
+  A resource in another organization answers `404`, not `403`. An unauthorized
+  read is deliberately indistinguishable from a missing one, so `NOT_FOUND` does
+  not prove the resource does not exist. It proves you cannot see it.
+</Callout>
+
+## Codes from the SDK
+
+These never touch the network, or never got an answer from it. `status` is
+absent on all of them.
+
+| Code               | Means                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `INVALID_CONFIG`   | `createClient` was called with unusable options. Thrown at construction, not on first request.                                         |
+| `INVALID_INPUT`    | Client-side validation rejected an argument. Today that is `ioCapabilities` on a device-model write. `details.issues` lists the paths. |
+| `TIMEOUT`          | The request exceeded `timeoutMs`.                                                                                                      |
+| `ABORTED`          | Your `AbortSignal` fired.                                                                                                              |
+| `NETWORK`          | DNS, TLS or connection failure. `cause` carries the underlying error.                                                                  |
+| `INVALID_RESPONSE` | A 2xx whose body was not the JSON the endpoint promised. Usually a proxy or captive portal, not the API.                               |
+
+## The two 502s are not the same
+
+Both are `retryable: true`, and treating them alike will corrupt your view of a
+device.
+
+**`COMMAND_PUBLISH_FAILED`** means the command never reached the broker. Nothing
+happened on the device. Retrying is safe and correct.
+
+**`CONFIG_PUBLISH_FAILED`** means the config write **succeeded**: `configRev` was
+bumped and the row was saved. Only the retained MQTT publish failed. The device
+has not been told, but it self-heals on its next config report, so retrying the
+patch is unnecessary. Worse, retrying blindly re-sends the whole namespace and
+bumps `configRev` again, which widens the window where the revision the device
+reports trails the one the cloud holds, making it look permanently out of date.
+
+```ts
+try {
+  await xg.devices.patchConfig(deviceId, { recording: { video: { enabled: true } } })
+} catch (e) {
+  if (isXorgateError(e) && e.code === "CONFIG_PUBLISH_FAILED") {
+    // Saved. Not delivered. Do NOT retry; poll the device until
+    // reportedConfig.rev catches up with configRev.
+  } else {
+    throw e
+  }
+}
+```
+
+## Retries
+
+The SDK does **not** retry by default. Turning it on applies to `GET` requests
+only, and nothing widens that.
+
+```ts
+const xg = createClient({
+  // ...
+  retry: { attempts: 2, baseDelayMs: 250, maxDelayMs: 4000 },
+})
+```
+
+Retryable conditions are `TIMEOUT`, `NETWORK`, 429 and 5xx, with exponential
+backoff and full jitter. Every 4xx fails immediately.
+
+The reason writes are excluded is that **the API has no idempotency keys**.
+Re-sending a `POST /workspaces` after a timeout creates a second workspace;
+re-sending a device-model write re-applies it. Some writes happen to be safe,
+and the ones that are say so in their own documentation:
+
+- `deviceRegistrations.create()` is idempotent per workspace: an existing
+  pending, un-expired code comes back instead of a new one.
+- `devices.updateAgent()` coalesces on the device, so pressing it twice starts
+  one update.
+- The device refuses to execute the same command `requestId` twice, but a retry
+  through the SDK mints a **new** `requestId`, so that guard does not make
+  retrying a reboot safe.
+
+Idempotency keys are on the platform-readiness backlog. Until they exist, a
+timed-out write is genuinely ambiguous, and the honest response is to read the
+resource back rather than to retry.
+
+## Rate limits
+
+There are none. No usage plans, no per-key quotas, no 429 in practice, and no
+`Retry-After`. The SDK handles 429 anyway because that is cheap and the platform
+will grow throttling before it grows a warning.
+
+This is not permission to hammer the API. `iterate()` is sequential for exactly
+this reason, and a parallel fan-out across a fleet is how you find the account's
+default gateway limits.
+
+## Logging
+
+`XorgateError` is safe to log whole. It never includes the `Authorization`
+header, the API key or the token in `message`, `url` or `details`.
+
+```ts
+logger.error(
+  {
+    code: e.code,
+    status: e.status,
+    method: e.method,
+    url: e.url,
+    requestId: e.requestId,
+    details: e.details,
+  },
+  e.message,
+)
+```
+
+`requestId` is the id the SDK generated and sent as `X-Request-ID`. The API does
+not currently return a request id in error bodies, so it correlates your logs
+with each other but not yet with the platform's. Adding one server-side is on
+the backlog.

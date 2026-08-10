@@ -1,0 +1,347 @@
+---
+title: "Devices"
+description: "Listing and CRUD, the config document and its revision semantics, the four one-shot commands, provisioning and identity."
+---
+
+The largest resource module. It covers the device row, its configuration, the
+commands you can send it, and its AWS IoT identity.
+
+## Listing
+
+```ts
+list(params?: ListDevicesParams): Promise<Page<Device>>
+iterate(params?): AsyncIterableIterator<Device>
+listAll(params?): Promise<Device[]>
+```
+
+This is one of the three paginated endpoints, so `list()` returns
+`{ items, page }` rather than an array. See
+[Pagination](/docs/backend-sdk/pagination).
+
+```ts
+const page = await xg.devices.list({ status: "online", sort: "lastSeenAt" })
+console.log(`${page.items.length} of ${page.page.total}`)
+
+for await (const device of xg.devices.iterate({ workspaceId: yardId })) {
+  console.log(device.serial, device.status, device.lastSeenAt)
+}
+```
+
+<TypeTable
+  type={{
+    workspaceId: {
+      type: "string",
+      description:
+        "Sent as X-Workspace-Id. Filters to one workspace; overrides the client default.",
+    },
+    status: {
+      type: '"provisioned" | "online" | "offline" | "decommissioned" | "any"',
+      description: '"any" means no filter. An unknown value is a 400.',
+    },
+    sort: {
+      type: '"updatedAt" | "createdAt" | "lastSeenAt" | "serial" | "name"',
+      default: '"updatedAt"',
+    },
+    order: { type: '"asc" | "desc"', default: '"desc"' },
+    limit: { type: "number", description: "Clamped at 500.", default: "100" },
+    offset: { type: "number", default: "0" },
+  }}
+/>
+
+An out-of-organization `workspaceId` yields an **empty page**, not an error.
+
+## `get`, `create`, `update`, `delete`
+
+```ts
+get(id: string): Promise<Device>
+create(input: CreateDeviceInput): Promise<Device>
+update(id: string, input: UpdateDeviceInput): Promise<Device>
+delete(id: string): Promise<void>
+```
+
+### `create(input)`
+
+```ts
+const device = await xg.devices.create({
+  workspaceId: yardId, // in the BODY, not the header
+  deviceModelId: model.id,
+  serial: "XG-0042", // unique within the workspace
+})
+```
+
+This creates the **row only**. The device has no IoT identity until
+`provision()`, and no agent until someone installs one. For onboarding real
+hardware, use the
+[registration code flow](/docs/backend-sdk/resources/device-registrations)
+instead, which does all three in one pass.
+
+### `update(id, input)`
+
+`UpdateDeviceInput` has one field: `name`. That is deliberate.
+
+```ts
+await xg.devices.update(device.id, { name: "Excavator 12" })
+```
+
+`status` and `lastSeenAt` are machine-managed by telemetry ingest, the MQTT
+last-will and the offline sweeper. The API rejects writing them with a `400`, so
+the SDK does not offer them. Configuration moved to `patchConfig()` and
+`patchUiPrefs()`; the API still accepts a handful of deprecated per-namespace
+fields on this route for a transition window, and the SDK does not expose those
+either.
+
+### `delete(id)`
+
+Cascades to the device's identity, KVS channel rows, media sessions and
+telemetry.
+
+<Callout type="warn" title="The AWS IoT thing is not torn down">
+  Deleting a device removes its rows. The AWS IoT thing and its X.509
+  certificate are **not** deleted by this endpoint, so the certificate remains
+  valid until someone revokes it out of band. Treat device deletion as a
+  database operation, not a decommissioning procedure.
+</Callout>
+
+## Configuration
+
+Device configuration is one namespaced document. Writing it bumps a revision and
+publishes the whole document as a retained MQTT message; the device applies
+anything newer than its last-applied revision.
+
+```ts
+getConfig(id: string): Promise<DeviceConfigView>
+patchConfig(id: string, patch: DeviceConfigPatch): Promise<Device>
+patchUiPrefs(id: string, patch: DeviceUiPrefsPatch): Promise<Device>
+```
+
+### `getConfig(id)`
+
+There is no `GET /devices/{id}/config` route. This is a convenience view over a
+full device read, so it costs exactly one `get()` and you can use `get()`
+instead if you want the rest of the device anyway.
+
+```ts
+const cfg = await xg.devices.getConfig(deviceId)
+
+cfg.config // the desired document
+cfg.configRev // monotonic revision
+cfg.reportedConfig // what the device says is in force, or null
+cfg.pending // configRev > reportedConfig.rev, on an online device
+```
+
+`pending` is computed by the SDK, because there is no `pending` state on the
+wire and every consumer was deriving it the same way.
+
+`reportedConfig` is `null` until the device has reported at least once. Its
+`effective` block holds post-clamp values actually in force, and its `status`
+block carries a per-namespace `applied` / `adjusted` / `rejected` verdict.
+Several keys inside `effective` are **reported-only** and can never be written:
+`agent.mode`, `sim`, `uplink`, `apn`. A device cannot be told its own ICCID.
+
+### `patchConfig(id, patch)`
+
+```ts
+const device = await xg.devices.patchConfig(deviceId, {
+  recording: {
+    video: { enabled: true, preset: "1080p15-2mbps", segmentSeconds: 60 },
+  },
+  timeSync: { offlineSources: ["gps", "nitz"] },
+})
+
+console.log(device.configRev) // bumped
+```
+
+The namespaces are `gnssAntBias`, `imuMount`, `recording`, `lteRecovery`,
+`timeSync` and `cellular`.
+
+<Callout type="warn" title="Each namespace is replaced WHOLE">
+
+A present namespace is validated and replaced entirely, because the device
+replaces namespaces the same way. Writing only the `recording.video` block when
+`recording.telemetry` was already configured **drops** the telemetry block. Read
+the current value, merge, then write:
+
+```ts
+const { config } = await xg.devices.getConfig(deviceId)
+await xg.devices.patchConfig(deviceId, {
+  recording: { ...config.recording, video: { ...config.recording?.video, enabled: true } },
+})
+```
+
+</Callout>
+
+Pass `null` to revert a namespace to the device's own defaults:
+
+```ts
+await xg.devices.patchConfig(deviceId, { cellular: null })
+```
+
+An empty object is **not** an erase; it is a `400`. `null` is the erase.
+
+Two failure modes worth handling separately:
+
+- `CONFIG_PUBLISH_FAILED` (502) means the write **succeeded** and delivery
+  failed. Do not retry. See [Errors](/docs/backend-sdk/errors).
+- A device whose `reportedConfig.effective` has no `apn` block predates the APN
+  rollback machinery. Writing the `cellular` namespace to it has no safety net,
+  so a bad APN takes the device off the network. Check for the block first.
+
+### Watching a config change land
+
+There is no push notification, so this is a poll. The pattern:
+
+```ts
+await xg.devices.patchConfig(deviceId, { gnssAntBias: true })
+
+for (let i = 0; i < 20; i++) {
+  const cfg = await xg.devices.getConfig(deviceId)
+  if (!cfg.pending) break
+  await new Promise((r) => setTimeout(r, 3_000))
+}
+```
+
+An offline device never converges, because it is not listening. The retained
+message waits for it and is applied on reconnect.
+
+### `patchUiPrefs(id, patch)`
+
+Cloud-only presentation preferences: `activeStreamsViewType` and `imuView`.
+Nothing here reaches the device, nothing is published, and `configRev` is not
+bumped. `null` resets a preference to its default.
+
+```ts
+await xg.devices.patchUiPrefs(deviceId, { activeStreamsViewType: "map" })
+```
+
+## Commands
+
+```ts
+reboot(id): Promise<CommandAccepted>
+powerOff(id): Promise<CommandAccepted>
+refreshState(id): Promise<CommandAccepted>
+updateAgent(id): Promise<CommandAccepted>
+```
+
+<Callout type="warn" title="202 means delivered to the broker, not done">
+
+All four resolve when the command reaches the MQTT broker. None of them tells
+you the device carried it out. Commands are **not retained**, so the device must
+be online: an offline device is a `409 CONFLICT` and there is nothing to pick up
+later.
+
+Each carries a `requestId` the device refuses to execute twice, and an
+`expiresAt` (epoch ms) after which it refuses the command outright.
+
+</Callout>
+
+```ts
+const ack = await xg.devices.reboot(deviceId)
+console.log(ack.command, ack.requestId, new Date(ack.expiresAt))
+```
+
+How to observe each outcome, since the ack cannot tell you:
+
+| Method         | Role        | Observe by                                                                                                    |
+| -------------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `reboot`       | owner/admin | `status` goes `offline` then `online`. Expires 60 s after issue.                                              |
+| `powerOff`     | owner/admin | `status` goes `offline` and stays. **Not remotely recoverable**: someone has to physically power it on.       |
+| `refreshState` | member      | `reportedAt` advances. Rate-limited on the device to roughly one per 30 s; a re-probe takes up to about 45 s. |
+| `updateAgent`  | owner/admin | `agentVersion` changes. Unchanged after the device returns online means the install failed and rolled back.   |
+
+`updateAgent()` installs the latest published build. There is no version
+parameter. The device drops offline for a minute or two. Pressing it twice is
+harmless: an already-running one-shot coalesces.
+
+### `latestAgentBuild()`
+
+```ts
+latestAgentBuild(): Promise<AgentBuild | null>
+```
+
+Fleet-wide, not per device: the build a device update would install for this
+stage. `null` means CI has published no manifest yet, which is "latest unknown"
+rather than an error, and the SDK returns null rather than throwing on the
+underlying 404.
+
+```ts
+const latest = await xg.devices.latestAgentBuild()
+const device = await xg.devices.get(deviceId)
+
+const upToDate = latest !== null && device.agentVersion === latest.version
+```
+
+<Callout type="warn" title="Compare by string equality only">
+  Build versions are CI short shas on dev and release tags on prod. Shas do not
+  order, and a sha and a tag are not comparable. Never use `<` or a semver
+  compare here.
+</Callout>
+
+## Identity and provisioning
+
+```ts
+identity(id: string): Promise<DeviceIdentity | null>
+provision(id: string): Promise<DeviceProvisioning>
+kvsChannels(id: string): Promise<KvsChannel[]>
+```
+
+### `identity(id)`
+
+Non-secret fields of the X.509 identity: thing name, certificate id, policy,
+role alias, status. Returns `null` when the device exists but is not
+provisioned, so a clean "not provisioned" state does not need error handling.
+
+```ts
+const identity = await xg.devices.identity(deviceId)
+if (identity === null) {
+  // Never provisioned.
+}
+```
+
+It reads the database and does not call AWS IoT, so a certificate revoked out of
+band still reads `active` here.
+
+### `provision(id)`
+
+Mints an AWS IoT thing and X.509 certificate, attaches the device policy, and
+creates one KVS signaling channel per declared video stream.
+
+<Callout type="warn" title="The credential bundle is returned exactly once">
+
+`certificatePem` and `privateKey` are shown only in this response and the
+private key is never stored server-side. Persist them on the device
+immediately. A second call for an already-provisioned device is a `409`, and
+certificate rotation does not exist yet, so a lost key means deleting and
+re-creating the device.
+
+Never log a `DeviceProvisioning` whole.
+
+</Callout>
+
+```ts
+const bundle = await xg.devices.provision(deviceId)
+
+bundle.iot.dataEndpoint // MQTT over mTLS, port 8883
+bundle.iot.credentialEndpoint // role-alias credential provider
+bundle.kvs.channels // one per declared video stream
+bundle.mqtt.telemetryTopic // xorgate/devices/{id}/telemetry
+```
+
+If `kvs.channels` comes back empty for a model that declares cameras, its
+`ioCapabilities` failed the provisioning parse. That is the failure the
+[device-model validation](/docs/backend-sdk/resources/device-models) exists to
+prevent, and this response is the first place it becomes visible.
+
+Owner or admin.
+
+### `kvsChannels(id)`
+
+Channel metadata only, one entry per provisioned video stream, no credentials.
+An empty array means the device is not provisioned, which is a `200` rather than
+a `404`.
+
+This is what a **browser** needs to join a live stream as a viewer, and the
+viewer itself is not part of this SDK. See
+[What this SDK does not cover](/docs/backend-sdk/not-covered).
+
+Maps to the [Devices endpoints](/docs/api-reference/devices) and
+[Live](/docs/api-reference/live).

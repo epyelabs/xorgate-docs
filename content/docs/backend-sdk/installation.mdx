@@ -1,0 +1,239 @@
+---
+title: "Installation and setup"
+description: "Installing the package, every createClient option, derived clients, and the raw request escape hatch."
+---
+
+## Install
+
+<Tabs items={["npm", "pnpm", "yarn", "bun"]}>
+
+<Tab value="npm">
+
+```bash
+npm install @xorgate/sdk
+```
+
+</Tab>
+
+<Tab value="pnpm">
+
+```bash
+pnpm add @xorgate/sdk
+```
+
+</Tab>
+
+<Tab value="yarn">
+
+```bash
+yarn add @xorgate/sdk
+```
+
+</Tab>
+
+<Tab value="bun">
+
+```bash
+bun add @xorgate/sdk
+```
+
+</Tab>
+
+</Tabs>
+
+The package targets Node 20 or newer and any runtime with a global `fetch`,
+which covers Cloudflare Workers, Vercel Edge, Deno and Bun. It ships ESM and
+CJS, has zero runtime dependencies, and bundles its own TypeScript types.
+
+<Callout title="Not published yet">
+  The package name is reserved but nothing is on npm. Publishing is public (npm
+  plus a public GitHub repo), decided alongside the rest of the SDK plan.
+</Callout>
+
+## Create a client
+
+```ts
+import { createClient } from "@xorgate/sdk"
+
+const xg = createClient({
+  baseUrl: "https://api.xorgate.io",
+  auth: { apiKey: process.env.XORGATE_API_KEY! },
+  organizationId: process.env.XORGATE_ORG_ID!,
+  workspaceId: process.env.XORGATE_WORKSPACE_ID, // optional
+})
+```
+
+The development API base URL is <ApiBaseUrl /> in region <AwsRegion />. There is
+no default `baseUrl` and there will not be one until the platform has a stable
+custom domain, at which point the `/v1` prefix arrives with it. Read the base URL
+from your environment rather than hardcoding it.
+
+### Options
+
+<TypeTable
+  type={{
+    baseUrl: {
+      type: "string",
+      required: true,
+      description:
+        "API origin, no trailing slash and no path. Required: there is no stable public domain yet.",
+    },
+    auth: {
+      type: "{ apiKey } | { getToken }",
+      required: true,
+      description:
+        "Credential source. See Authentication for which one works today.",
+    },
+    organizationId: {
+      type: "string",
+      required: true,
+      description:
+        "Sent as X-Organization-Id on every request. Required, not optional sugar.",
+    },
+    workspaceId: {
+      type: "string",
+      description:
+        "Default X-Workspace-Id. A filter on devices.list(), required by deviceRegistrations.create(), sent on nothing else.",
+    },
+    fetch: {
+      type: "FetchLike",
+      description: "Fetch implementation. Defaults to the global one.",
+      default: "globalThis.fetch",
+    },
+    timeoutMs: {
+      type: "number",
+      description: "Per-request deadline. See the cold-start note below.",
+      default: "30000",
+    },
+    retry: {
+      type: "RetryOptions | false",
+      description: "Opt-in retry, GET requests only. See Errors.",
+      default: "false",
+    },
+    headers: {
+      type: "Record<string, string>",
+      description:
+        "Merged into every request. Cannot override the auth or tenancy headers.",
+    },
+    userAgent: {
+      type: "string",
+      description:
+        "Appended to the SDK's own User-Agent. Ignored in browsers, which forbid setting it.",
+    },
+  }}
+/>
+
+### Why `organizationId` is required
+
+Almost every endpoint resolves an active organization, from `X-Organization-Id`
+if present and otherwise from your sole membership. A caller who belongs to more
+than one organization and omits the header gets a hard
+`400 ORGANIZATION_REQUIRED`, not a sensible default. Making the field optional
+would produce a client that works in development, where the test account has one
+organization, and fails in production the moment a second one exists.
+
+See [Tenancy model](/docs/getting-started/tenancy) for the full resolution order.
+
+### The bootstrap problem
+
+Three operations do not need an active organization, and a brand-new user has
+none, so they cannot be reached through a client that requires one:
+[`GET /me`](/docs/api-reference/users/get-me),
+[`GET /organizations`](/docs/api-reference/organizations/list-organizations) and
+[`POST /organizations`](/docs/api-reference/organizations/create-organization).
+
+`createBootstrapClient` is the narrow client for exactly those three:
+
+```ts
+import { createBootstrapClient } from "@xorgate/sdk"
+
+const boot = createBootstrapClient({
+  baseUrl: process.env.XORGATE_API_URL!,
+  auth: { getToken: () => session.idToken },
+})
+
+const me = await boot.me()
+
+const org =
+  me.organizations[0] ??
+  (await boot.createOrganization({ name: "Acme Fleet", slug: "acme-fleet" }))
+
+const xg = boot.forOrganization(org.id)
+```
+
+It has four methods and nothing else. If you already know the organization id,
+which is the normal case for a server-side integration, skip it entirely.
+
+## Derived clients
+
+Both derivations are cheap: they share the HTTP core, the auth source and the
+connection pool, and only rewrite one header.
+
+```ts
+// Same credentials, a different tenant.
+const other = xg.forOrganization("6b3c...")
+
+// Scope a batch of calls to one workspace without repeating the parameter.
+const yard = xg.forWorkspace("9f21...")
+const devices = await yard.devices.listAll()
+```
+
+`forWorkspace(undefined)` clears the default, which is how you widen a scoped
+client back to the whole organization.
+
+Per-call overrides exist too, and beat the client default:
+
+```ts
+await xg.devices.list({ workspaceId: "9f21..." })
+```
+
+## Timeouts and cold starts
+
+The default `timeoutMs` is 30000, which is generous on purpose. Warm requests
+against the development deployment answer in 200 to 420 ms, but the **first call
+after an idle period takes 1 to 2.5 seconds**. That is a cold Lambda plus an
+Aurora Serverless cluster sitting at its 0.5 ACU floor, not slow code, and it
+applies to the first call of every process.
+
+One endpoint is a genuine outlier even when warm:
+`GET /devices/{id}/sessions` has been measured around 1090 ms.
+
+Do not set an aggressive timeout to "fail fast". A 1-second deadline turns a
+normal cold start into an error.
+
+## Cancellation
+
+Every method that can take a while accepts a standard `AbortSignal`:
+
+```ts
+const ac = new AbortController()
+setTimeout(() => ac.abort(), 5_000)
+
+const history = await xg.telemetry.history(deviceId, {
+  from: "2026-08-09T00:00:00Z",
+  to: "2026-08-10T00:00:00Z",
+  signal: ac.signal,
+})
+```
+
+An aborted request throws a `XorgateError` with code `ABORTED`. A request that
+hits `timeoutMs` throws code `TIMEOUT`. They are distinguishable because one is
+your decision and the other is not.
+
+## The escape hatch
+
+`xg.request()` reaches anything the resource modules do not model yet: a new
+endpoint, an undocumented query parameter, the Workflows surface. It applies
+auth, tenancy headers, the timeout and error mapping, but it does **not** unwrap
+the response envelope or normalize casing, so the type parameter is the raw wire
+shape.
+
+```ts
+const raw = await xg.request<{ device_models: unknown[] }>(
+  "GET",
+  "/device-models",
+)
+```
+
+If you find yourself using it for something the platform supports properly, that
+is a gap in this SDK worth reporting.

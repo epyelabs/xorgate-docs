@@ -1,0 +1,101 @@
+---
+title: "Workspaces"
+description: "The grouping devices belong to: full CRUD, and how the workspace default flows through the client."
+---
+
+A workspace groups devices inside an organization: a site, a fleet, a customer,
+whatever fits. Every device belongs to exactly one. Workspaces are usually the
+second thing a client reads, right after `me()`.
+
+```ts
+list(): Promise<Workspace[]>
+listAll(): Promise<Workspace[]>
+iterate(options?): AsyncIterableIterator<Workspace>
+get(id: string): Promise<Workspace>
+create(input: CreateWorkspaceInput): Promise<Workspace>
+update(id: string, input: UpdateWorkspaceInput): Promise<Workspace>
+delete(id: string): Promise<void>
+```
+
+## `list()`
+
+Unpaginated: every workspace in the active organization, in one array.
+
+```ts
+const workspaces = await xg.workspaces.list()
+console.log(workspaces.map((w) => `${w.slug} (${w.id})`))
+```
+
+## `create(input)`
+
+```ts
+const ws = await xg.workspaces.create({
+  name: "North Yard",
+  slug: "north-yard",
+  description: "Temporary staging yard, phase 2",
+})
+```
+
+<TypeTable
+  type={{
+    name: { type: "string", required: true },
+    slug: { type: "string", required: true },
+    description: { type: "string | null" },
+  }}
+/>
+
+## `update(id, input)`
+
+Partial: send only what changes. An empty object is a `400`.
+
+```ts
+await xg.workspaces.update(ws.id, { description: null })
+```
+
+## `delete(id)`
+
+<Callout type="warn" title="Deleting a workspace deletes its devices">
+  The delete cascades to every device in the workspace, and from there to their
+  media sessions and telemetry. Device-recorded media is not re-creatable. There
+  is no soft delete and no restore.
+</Callout>
+
+## Using a workspace as a default
+
+The client carries an optional `workspaceId` that becomes the `X-Workspace-Id`
+header. It is used by exactly two operations, and ignored everywhere else:
+
+- `xg.devices.list()`, where it is a **filter**,
+- `xg.deviceRegistrations.create()`, where it is **required**.
+
+```ts
+const yard = xg.forWorkspace(ws.id)
+
+// Filtered to the yard.
+const devices = await yard.devices.listAll()
+
+// The registration code carries the yard as the future device's workspace.
+const reg = await yard.deviceRegistrations.create()
+```
+
+Per-call arguments beat the client default:
+
+```ts
+await xg.devices.list({ workspaceId: otherWorkspaceId })
+await xg.deviceRegistrations.create({ workspaceId: otherWorkspaceId })
+```
+
+<Callout type="warn" title="A wrong workspace filter looks like an empty fleet">
+  Filtering `devices.list()` by a workspace outside the active organization
+  returns an **empty page**, not an error. An empty result therefore never
+  distinguishes "no devices here" from "wrong workspace" or "wrong
+  organization". If a fleet you expect looks empty, check the workspace id
+  against `xg.workspaces.list()` before assuming the devices are gone.
+</Callout>
+
+Note that `devices.create()` takes `workspaceId` in the **body**, not the header,
+so it is unaffected by the client default. That asymmetry is the API's, and the
+SDK keeps it visible rather than papering over it: the body field is required and
+typed.
+
+Maps to the [Workspaces endpoints](/docs/api-reference/workspaces).

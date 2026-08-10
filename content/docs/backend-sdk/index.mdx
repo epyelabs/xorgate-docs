@@ -1,16 +1,132 @@
 ---
 title: "Backend SDK (JS)"
-description: "The server-to-server JavaScript client for xorgate."
+description: "A design document for @xorgate/sdk, the server-side JavaScript client, written before the package exists."
 ---
 
-This section documents the backend JavaScript and TypeScript SDK: a client for
-Node and edge runtimes built around `createClient({ baseUrl, auth,
-organizationId, workspaceId })`, with resource modules mirroring the API, one
-uniform pagination iterator, and a single error type carrying the platform's
-`{ code, message, details }` envelope. It is the right entry point when your own
-backend talks to xorgate, for example to sync devices or pull telemetry history.
+`@xorgate/sdk` is the server-side JavaScript and TypeScript client for the
+xorgate platform API. It is what your own backend uses to sync devices, read
+telemetry history, manage workspaces and members, and pull recorded media.
 
-<Callout title="Not written yet">
-  Placeholder. These pages are written as a design document before the package
-  exists: the docs are the specification the SDK is built against.
+<Callout type="warn" title="The package does not exist yet">
+
+These pages are the **specification**, not a reference for shipped code.
+`npm install @xorgate/sdk` will not work today. Every signature, option and
+example here is the contract a future implementation is built to, and it is kept
+type-checkable against a single `interface.d.ts` sketch that lives with the plan.
+When the package ships, this section becomes its reference and this callout goes
+away.
+
+Until then, use the [API reference](/docs/api-reference) and call the endpoints
+directly. The [Quickstart](/docs/getting-started/quickstart) does exactly that.
+
 </Callout>
+
+## What it is
+
+```ts
+import { createClient } from "@xorgate/sdk"
+
+const xg = createClient({
+  baseUrl: process.env.XORGATE_API_URL!,
+  auth: { getToken: () => session.idToken },
+  organizationId: process.env.XORGATE_ORG_ID!,
+})
+
+const page = await xg.devices.list({ status: "online" })
+console.log(page.items.length, "of", page.page.total, "online")
+```
+
+- **One client, resource modules.** `xg.devices`, `xg.workspaces`,
+  `xg.telemetry`, `xg.media`, and so on, mirroring the API's resources.
+- **Tenancy is configuration, not per-call boilerplate.** `organizationId` is
+  required at construction and travels on every request.
+- **camelCase everywhere.** The three snake_case envelope keys on the wire
+  (`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) are
+  normalized by the SDK. So are the snake_case timestamps on `User` and
+  `Organization`.
+- **One error type.** Everything thrown is a `XorgateError` carrying the
+  platform's `{ code, message, details }` envelope, including client-side
+  validation failures.
+- **One iteration convention.** `iterate()` exists on every collection, whether
+  or not that endpoint paginates today.
+- **Zero runtime dependencies.** Node 20+, and anything with `fetch`.
+
+## The pages
+
+<Cards>
+  <Card
+    title="Installation and setup"
+    href="/docs/backend-sdk/installation"
+    description="createClient options, derived clients, and the request escape hatch."
+  />
+  <Card
+    title="Authentication"
+    href="/docs/backend-sdk/authentication"
+    description="API keys (the target) and Cognito ID tokens (what works today)."
+  />
+  <Card
+    title="Pagination"
+    href="/docs/backend-sdk/pagination"
+    description="Three endpoints paginate and the rest do not. One iterator covers both."
+  />
+  <Card
+    title="Errors"
+    href="/docs/backend-sdk/errors"
+    description="XorgateError, the code table, and what is safe to retry."
+  />
+  <Card
+    title="Resources"
+    href="/docs/backend-sdk/resources"
+    description="Every method: signature, parameters, return type, example."
+  />
+  <Card
+    title="Types"
+    href="/docs/backend-sdk/types"
+    description="The shared vocabulary, including the group.field metric contract."
+  />
+  <Card
+    title="What this SDK does not cover"
+    href="/docs/backend-sdk/not-covered"
+    description="Live video, live telemetry, workflows, and the platform gaps."
+  />
+  <Card
+    title="Walkthrough: asset tracking"
+    href="/docs/backend-sdk/asset-tracking-walkthrough"
+    description="End to end, from a workspace to an incident replay."
+  />
+</Cards>
+
+## Design principles
+
+These are the rules the surface was derived from. They explain most of the
+choices you will find surprising.
+
+**Mirror the API, do not improve it.** Where the platform paginates, the SDK
+paginates. Where it does not, the SDK returns a plain array rather than faking a
+page. `deviceRegistrations.create()` returns 200 rather than 201 upstream, and
+the SDK does not hide that; it just returns the object. A client library that
+smooths over the API teaches you a shape that is not there when you drop down to
+raw HTTP.
+
+**One exception: casing.** The two snake_case envelopes mirror Postgres table
+names and stay on the wire deliberately (see the
+[API reference overview](/docs/api-reference)). Presenting them unchanged would
+push a database naming detail into every consumer, so this is the one place the
+SDK translates.
+
+**Do work the API cannot.** Two examples. `deviceModels.create()` validates
+`ioCapabilities` client-side, because the API accepts any JSON object there but
+provisioning parses it strictly, and a document that fails that parse gives the
+device **zero KVS channels with no error anywhere**. And
+`deviceRegistrations.waitForClaim()` exists because there are no webhooks, so
+every "wait for this to finish" is a poll loop somebody would otherwise write
+badly.
+
+**Be honest in the types.** `Device.status` is machine-managed, so
+`UpdateDeviceInput` does not include it. `MediaSession.segmentCount` is present
+only on the list endpoint, so it is optional. `ApiKey.lastUsedAt` is typed
+`string | null` and documented as always null.
+
+**Never invent an endpoint.** Every method maps to a real operation, except
+`devices.getConfig()` (a view over `GET /devices/{id}`) and the two helpers
+above, each of which says so where it is documented.

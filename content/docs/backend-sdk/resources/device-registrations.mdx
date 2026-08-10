@@ -1,0 +1,153 @@
+---
+title: "Device registrations"
+description: "The onboarding code flow: mint a code, wait for the device to claim it, and why the claim itself is not an SDK method."
+---
+
+Onboarding real hardware is code-based. You mint a short-lived code in the
+cloud, the operator runs an install script on the device, and the script redeems
+the code. That single redemption creates the device row, provisions its AWS IoT
+identity and links the two, which is why this flow is preferred over
+`devices.create()` plus `devices.provision()`.
+
+```ts
+create(input?: CreateDeviceRegistrationInput): Promise<DeviceRegistration>
+get(code: string): Promise<DeviceRegistration>
+waitForClaim(code: string, options?: WaitForClaimOptions): Promise<DeviceRegistration>
+```
+
+## `create(input)`
+
+```ts
+const reg = await xg.deviceRegistrations.create({ workspaceId: yardId })
+
+console.log(reg.code) // "K7QF4M2P"
+console.log(reg.installUrl) // run this on the device
+console.log(reg.expiresAt) // 15 minutes out
+```
+
+<Callout type="warn" title="workspaceId is REQUIRED here">
+  This is the operation where `X-Workspace-Id` is a required field rather than a
+  filter, because the code carries the workspace the future device will land in.
+  Pass it explicitly or configure it on the client with `forWorkspace()`. A
+  client with neither throws `INVALID_CONFIG` before making the request, rather
+  than letting the API answer `400`.
+</Callout>
+
+**Idempotent per workspace.** While a pending, un-expired code exists for the
+workspace it is returned again instead of a new one being minted, so reloading a
+dialog or retrying a timed-out call costs nothing and does not burn codes.
+
+The device model is picked automatically: the most recently created one in the
+catalog. There is no way to choose. A deployment with no device models is a
+`400`.
+
+<Callout title="This one returns 200, not 201">
+  Unlike every other create in the API, the underlying endpoint answers `200`
+  even when it mints a code, and its body is a bare object rather than a named
+  envelope. It is the only response in the API that breaks the named-envelope
+  rule. The SDK returns the object either way, so this affects you only if you
+  drop to raw HTTP.
+</Callout>
+
+## `get(code)`
+
+```ts
+const reg = await xg.deviceRegistrations.get("K7QF4M2P")
+```
+
+Scoped to the active organization, so another organization's code is a `404`.
+
+Reading also **lazily expires** a stale pending row. There is no sweeper, so a
+code can be past `expiresAt` and still read `pending` until someone looks at it.
+Do not compare `expiresAt` against your own clock and conclude anything: call
+`get()` and read `status`.
+
+## `waitForClaim(code, options)`
+
+The whole point of the flow is waiting for the device to finish. There are no
+webhooks, so this is a poll loop, and the SDK ships the one you would otherwise
+write.
+
+```ts
+const claimed = await xg.deviceRegistrations.waitForClaim(reg.code, {
+  pollIntervalMs: 3_000,
+  timeoutMs: 900_000,
+})
+
+const device = await xg.devices.get(claimed.deviceId!)
+```
+
+<TypeTable
+  type={{
+    timeoutMs: {
+      type: "number",
+      description: "Deadline. Defaults to the 15-minute code lifetime.",
+      default: "900000",
+    },
+    pollIntervalMs: { type: "number", default: "3000" },
+    signal: { type: "AbortSignal", description: "Cancel the wait early." },
+  }}
+/>
+
+Outcomes:
+
+- `status` becomes `claimed`: resolves with the registration. `deviceId` is set.
+- `status` becomes `expired`: throws `XorgateError` with code `CONFLICT`.
+- The deadline passes: throws code `TIMEOUT`.
+- Your signal fires: throws code `ABORTED`.
+
+It is a plain loop over `get()`, so nothing stops you writing your own. Use
+`get()` directly if you want to render intermediate state, for example a countdown
+against `expiresAt`.
+
+## What the device does
+
+You do not call this, and the SDK deliberately has no method for it. Knowing
+what happens is still useful, because it is where the device's identity is
+created.
+
+The install script posts the machine's serial to
+`POST /device-registrations/{code}/claim`, **unauthenticated**: the short-lived
+code is the bearer secret. The service then, in order:
+
+1. flips the code from `pending` to `claimed` in one atomic update, so only one
+   concurrent claim wins,
+2. creates the `devices` row, with the serial unique per workspace, so
+   re-running the installer on an already-registered device is a `409`,
+3. provisions AWS IoT: a thing, an X.509 certificate, and the KVS signaling
+   channels,
+4. links the device back to the registration.
+
+A failure after step 2 rolls back, so the same code can be retried.
+
+<Callout type="warn" title="The claim route returns private key material">
+  Its response carries the device's one-shot X.509 certificate and private key.
+  It is meant to be called once, by the installer, on the device itself. It is
+  excluded from the public API reference for that reason, and it will never be
+  an SDK method. Do not build against it.
+</Callout>
+
+## The full flow
+
+```ts
+// 1. Mint.
+const reg = await xg.forWorkspace(yardId).deviceRegistrations.create()
+
+// 2. Hand this to whoever is at the device.
+console.log(`Run on the device:\n  curl -sSL ${reg.installUrl} | sudo bash`)
+
+// 3. Wait.
+const claimed = await xg.deviceRegistrations.waitForClaim(reg.code)
+
+// 4. The device exists, is provisioned, and is about to come online.
+const device = await xg.devices.get(claimed.deviceId!)
+console.log(device.serial, device.status) // "XG-0042" "provisioned"
+
+// 5. First telemetry arrives once the agent starts publishing, at 1 Hz.
+const latest = await xg.telemetry.latest(device.id)
+```
+
+Maps to the
+[Device Registrations endpoints](/docs/api-reference/device-registrations). The
+same flow in raw HTTP is the
+[Quickstart](/docs/getting-started/quickstart).

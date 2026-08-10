@@ -1,0 +1,267 @@
+---
+title: "Media"
+description: "Recorded sessions and runs, the segment index, presigned playback URLs, and the gap-aware replay manifest."
+---
+
+Devices record video locally and upload it segment by segment. This module reads
+that: the sessions, their segments, and the presigned URLs that let you actually
+fetch the bytes.
+
+Everything here is **recorded** media. Live video is KVS WebRTC and does not go
+through this API at all.
+
+```ts
+xg.media.sessions.list(deviceId, params?): Promise<Page<MediaSession>>
+xg.media.sessions.listRuns(deviceId, params?): Promise<Page<RecordingRun>>
+xg.media.sessions.iterate(deviceId, params?): AsyncIterableIterator<MediaSession>
+xg.media.sessions.iterateRuns(deviceId, params?): AsyncIterableIterator<RecordingRun>
+xg.media.sessions.listAll(deviceId, params?): Promise<MediaSession[]>
+xg.media.sessions.delete(deviceId, sessionId): Promise<void>
+
+xg.media.segments(deviceId, sessionId): Promise<SessionSegments>
+xg.media.segmentPlaybackUrl(deviceId, sessionId, seq): Promise<SegmentPlayback>
+xg.media.replayManifest(deviceId, params): Promise<ReplayManifest>
+```
+
+## Sessions and runs
+
+A **session** is one continuous recording run for **one camera**. A dual-camera
+drive is therefore two sessions with near-identical `startedAt`.
+
+A **run** is what a human means by "a drive": the sessions whose intervals are
+within 60 seconds of each other, clustered server-side. Most user-facing lists
+want runs.
+
+### `sessions.list(deviceId, params)`
+
+Paginated, so it returns `{ items, page }`.
+
+```ts
+const page = await xg.media.sessions.list(deviceId, {
+  from: "2026-08-09T00:00:00Z",
+  to: "2026-08-10T00:00:00Z",
+  streamKey: "cam0",
+})
+
+for (const s of page.items) {
+  console.log(s.startedAt, s.status, s.segmentCount, s.totalBytes)
+}
+```
+
+<TypeTable
+  type={{
+    streamKey: {
+      type: "string",
+      description: "Filter to one camera, e.g. cam0.",
+    },
+    status: {
+      type: '"open" | "closed" | "any"',
+      description: '"any" means no filter.',
+    },
+    from: {
+      type: "string | Date",
+      description:
+        "Matches sessions OVERLAPPING the range, not just those started inside it.",
+    },
+    to: { type: "string | Date" },
+    sort: { type: '"startedAt" | "createdAt"', default: '"startedAt"' },
+    order: { type: '"asc" | "desc"', default: '"desc"' },
+    limit: { type: "number", description: "Clamped at 500.", default: "100" },
+    offset: { type: "number", default: "0" },
+  }}
+/>
+
+The time filter matching **overlap** is the important detail: a session that
+started before your window but was still recording inside it is returned, which
+is what you want and is not what a naive `startedAt BETWEEN` would do.
+
+`segmentCount`, `totalBytes` and `totalDurationMs` are rollups computed by the
+list endpoint. They are optional in the type because a session obtained any other
+way does not carry them.
+
+<Callout title="Listing has a side effect">
+  Listing closes stale sessions as it goes. That is why a session can flip from
+  `open` to `closed` between two reads with nothing else having happened, and
+  why `status` is advisory rather than authoritative. A session closes roughly
+  10 minutes after segments stop arriving, and **reopens** if a straggler lands
+  later.
+</Callout>
+
+This endpoint is also the one measured latency outlier on the platform, around
+1090 ms even warm. Budget for it.
+
+### `sessions.listRuns(deviceId, params)`
+
+Same filters, different noun. `group=runs` requires `sort=startedAt` upstream, so
+it is a separate method rather than a flag, and the return type is
+`Page<RecordingRun>` with the member sessions nested.
+
+```ts
+const runs = await xg.media.sessions.listRuns(deviceId, { limit: 20 })
+
+for (const run of runs.items) {
+  console.log(run.fromTs, "to", run.toTs)
+  console.log(run.streamKeys) // ["cam0", "cam1"]
+  console.log(run.sessionCount, run.segmentCount, run.anyOpen)
+}
+```
+
+Under runs, `page.total` counts runs, and every filter selects which **runs** to
+return rather than which sessions to cluster. So `streamKey: "cam0"` returns the
+runs cam0 recorded in, with all of their cameras present.
+
+`run.key` is the earliest member session's id and is stable across polls. There
+is no run row in the database and no device-side run id, so do not expect it to
+survive a session being deleted.
+
+`run.toTs` on a run with `anyOpen: true` **grows as the upload backlog drains**,
+because an open session's interval end is estimated from the duration uploaded so
+far.
+
+### `sessions.delete(deviceId, sessionId)`
+
+<Callout type="warn" title="Device-recorded media is not re-creatable">
+  This deletes every segment object from storage, video and sidecar, plus the
+  session and its index rows. There is no undo. Owner or admin, for that reason.
+</Callout>
+
+A segment still uploading from the device after the delete recreates the session
+index, because ingest is at-least-once. Delete again once the device has drained.
+
+## Segments
+
+### `segments(deviceId, sessionId)`
+
+```ts
+const { session, segments } = await xg.media.segments(deviceId, sessionId)
+```
+
+The whole ordered index in one response, plus the session it belongs to. `seq`
+ascending is chronological by construction.
+
+This is deliberately unpaginated upstream, because a session is bounded at a few
+hours of 60-second segments, so there is no `iterate()` here. It returns the
+index only: no URLs. Use `segmentPlaybackUrl()` or `replayManifest()` to get
+something fetchable.
+
+Two fields shape any stitching you do:
+
+- `finalized: false` marks a crash-cut partial. It is a fragmented MP4 and is
+  playable up to the cut.
+- When stitching, prefer the **next segment's `startTs` delta** over
+  `durationMs`. Segment 0 includes roughly 2 seconds of pipeline startup, and
+  recorded durations drift while rotation timestamps do not. The replay manifest
+  does this for you.
+
+### `segmentPlaybackUrl(deviceId, sessionId, seq)`
+
+```ts
+const { url, expiresIn, segment } = await xg.media.segmentPlaybackUrl(
+  deviceId,
+  sessionId,
+  0,
+)
+```
+
+One presigned S3 GET at a time. For playing a span, the replay manifest
+batch-presigns everything in one call instead, which is almost always what you
+want.
+
+## Replay manifests
+
+### `replayManifest(deviceId, params)`
+
+One response feeds a whole replay: per-session timelines with effective
+durations and gaps computed server-side, plus a presigned URL per segment.
+
+Address it **either** by session **or** by range, never both. The parameter type
+is a discriminated union, so TypeScript enforces that:
+
+```ts
+// Single session.
+const replay = await xg.media.replayManifest(deviceId, { sessionId })
+
+// Range across every session that overlaps it.
+const incident = await xg.media.replayManifest(deviceId, {
+  from: "2026-08-09T14:20:00Z",
+  to: "2026-08-09T14:35:00Z",
+  streamKey: "cam0", // optional, range mode only
+})
+```
+
+Caps, each a `400` telling you to narrow the request:
+
+| Cap                   | Applies to |
+| --------------------- | ---------- |
+| 600 segments in total | both modes |
+| 10 sessions           | range mode |
+| 24 hours              | range mode |
+
+<Callout type="warn" title="Every timestamp here is epoch milliseconds">
+  `from`, `to`, `urlExpiresAt`, `startTs`, gap bounds: all numbers, all epoch
+  ms. The rest of the API uses ISO-8601 strings. The manifest is the replay
+  clock's unit, and the SDK does not convert it, because converting would break
+  the arithmetic every replay player does.
+</Callout>
+
+### The URL refresh contract
+
+```ts
+if (Date.now() > replay.urlExpiresAt - 30_000) {
+  replay = await xg.media.replayManifest(deviceId, { sessionId })
+}
+```
+
+`urlExpiresAt` is the real URL TTL minus a 5-minute safety margin. Refetch before
+it. A `403` on a segment URL means you were too late; refetch the manifest rather
+than retrying the URL.
+
+### Gaps and effective durations
+
+```ts
+for (const session of replay.sessions) {
+  for (const seg of session.segments) {
+    // Covers [startTs, startTs + effectiveDurationMs).
+  }
+  for (const gap of session.gaps) {
+    // reason: "missing-segments" | "evicted-head"
+  }
+}
+```
+
+`effectiveDurationMs` is the next-segment `startTs` delta when contiguous and the
+recorded duration otherwise. `gaps` are holes longer than 2 seconds with no
+media, computed server-side so every client renders the same timeline.
+
+`anchor: "fstat"` on a seq-0 segment means its `startTs` includes about 2 seconds
+of pipeline startup, so the first seam may hold a short buffered hole.
+
+A `sessionId` request whose segments have all been evicted returns the session
+with empty `segments` and `gaps`, rather than a 404. That is what makes
+telemetry-only replay of an old window possible.
+
+<Callout title="Format-neutral by design">
+  The manifest carries no codec strings on the segments and no playlist syntax:
+  no HLS, no DASH. Clients parse media details from the bytes and stitch fMP4
+  themselves, typically through Media Source Extensions. `session.codec`,
+  `width`, `height` and `fps` are informational.
+</Callout>
+
+## Time source
+
+`MediaSession.timeSource` and `ReplaySession.timeSource` tell you how much to
+trust the wall-clock correlation between video and telemetry.
+
+| Value          | Means                                                                             |
+| -------------- | --------------------------------------------------------------------------------- |
+| `ntp`          | Normal. Trustworthy.                                                              |
+| `gps` / `nitz` | Clock stepped offline from GNSS or modem time while NTP was pending. Good enough. |
+| `rtc`          | Battery-backed clock. Drifts.                                                     |
+| `unsynced`     | Timestamps may be wrong wall-clock. Correlating with telemetry is untrustworthy.  |
+
+`RecordingRun.anyUnsynced` surfaces the same warning at run granularity. Show it
+rather than hiding it: a replay silently misaligned by minutes is worse than one
+labelled uncertain.
+
+Maps to the
+[Media Sessions endpoints](/docs/api-reference/media-sessions).

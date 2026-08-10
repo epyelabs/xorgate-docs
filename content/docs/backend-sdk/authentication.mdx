@@ -1,0 +1,148 @@
+---
+title: "Authentication"
+description: "The two auth modes, why only one of them works today, and how the SDK tells you which is which."
+---
+
+The SDK takes exactly one `auth` value, and it is one of two shapes:
+
+```ts
+type XorgateAuth =
+  | { apiKey: string }
+  | { getToken: () => string | Promise<string> }
+```
+
+`{ apiKey }` is the intended mode for server-to-server callers. `{ getToken }`
+is the first-party mode, carrying a Cognito ID token. Only the second one
+currently authenticates against the platform.
+
+## API keys: the target mode
+
+```ts
+const xg = createClient({
+  baseUrl: process.env.XORGATE_API_URL!,
+  auth: { apiKey: process.env.XORGATE_API_KEY! },
+  organizationId: process.env.XORGATE_ORG_ID!,
+})
+```
+
+A key is a long-lived, organization-scoped credential minted with
+[`POST /api-keys`](/docs/api-reference/api-keys/create-api-key) and returned
+exactly once. This is the right shape for a backend: no interactive login, no
+refresh cycle, no token expiry to schedule around.
+
+<Callout type="warn" title="Nothing verifies an API key yet">
+
+API keys are **mint-only** on the platform today. They can be created, listed
+and deleted, and that is the whole feature. There is no request path that
+accepts one, `scope` is recorded and never enforced, `lastUsedAt` never
+advances, and keys have no expiry.
+
+A client built with `{ apiKey }` therefore gets `401 UNAUTHORIZED` on every
+call. The SDK recognizes that combination and attaches a `hint` to the error
+rather than letting you debug a bare 401:
+
+```txt
+XorgateError: UNAUTHORIZED (401) GET /devices
+  hint: This client is using { apiKey } auth, which the platform does not
+        verify yet. Use { getToken } with a Cognito ID token until API-key
+        verification ships.
+```
+
+Key verification is the first item on the platform-readiness backlog. Until it
+lands, treat this section as the committed direction, not as something you can
+build against.
+
+</Callout>
+
+### How the SDK will send it
+
+When verification ships, the SDK sends the key as a bearer credential on the
+existing header:
+
+```http
+Authorization: Bearer xg_A1b2C3d4...
+```
+
+Not `X-Api-Key`. Two reasons, both practical. Keys already carry the `xg_`
+prefix, so the backend can discriminate a key from a JWT on the token itself
+without a second header. And the API's CORS configuration is a fixed allowlist
+whose allowed request headers are exactly `Authorization`, `Content-Type`,
+`X-Request-ID`, `X-Organization-Id` and `X-Workspace-Id`; a new header would need
+a CORS change plus a deploy before any browser could use it, while
+`Authorization` already works.
+
+This is a design recommendation from the SDK side, not a shipped decision. The
+backend work that implements verification owns the final call, and if it lands on
+`X-Api-Key` instead, this page changes and your code does not: the header is the
+SDK's business, `auth: { apiKey }` is yours.
+
+## Cognito ID tokens: what works today
+
+```ts
+const xg = createClient({
+  baseUrl: process.env.XORGATE_API_URL!,
+  auth: { getToken: async () => (await auth.currentSession()).getIdToken() },
+  organizationId: orgId,
+})
+```
+
+`getToken` is called **once per request**, and may be sync or async. The SDK does
+not cache the result, on purpose: your Cognito library already caches and
+refreshes, and only it knows when the token expires. A cache in the SDK would be
+a second, worse one that hands out expired tokens.
+
+Three things to know:
+
+- It must be an **ID token**, not an access token. The platform verifies
+  `tokenUse: 'id'`, and an access token fails with `401 UNAUTHORIZED` in a way
+  the message does not explain.
+- A `getToken` that throws propagates as a `XorgateError` with code
+  `UNAUTHORIZED` and the original error as `cause`. Refresh failures surface as
+  auth failures, which is what they are.
+- The user row is created just-in-time on first successful verification, so
+  there is no registration call to make first.
+
+<Callout title="Fine for a first-party backend, awkward for a third party">
+  An ID token is tied to an interactive login, so a headless service using this
+  mode has to keep a service-account session alive. That is exactly the problem
+  API keys solve, and why they are the target mode.
+</Callout>
+
+## Roles
+
+Authentication answers who you are. Two separate role systems answer what you may
+do, and they are easy to confuse.
+
+| System          | Where it lives                       | Values                               | Gates                                                                                                                                                                                                       |
+| --------------- | ------------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Membership role | `memberships.role`, per organization | `owner`, `admin`, `member`, `viewer` | Every read is open to all four. `viewer` can write nothing. Provisioning, API keys, memberships, organization writes, session deletes and the reboot / power-off / update commands need `owner` or `admin`. |
+| Platform role   | `users.role`, global                 | `user`, `admin`                      | Device-model catalog writes only.                                                                                                                                                                           |
+
+A failure on either is `403`, distinguished by code: `INSUFFICIENT_ROLE` when you
+are a member without enough role, `FORBIDDEN` when you are not a member of the
+requested organization at all, `NO_ORGANIZATION` when you are a member of none.
+
+The SDK marks role requirements in each method's documentation. It does not
+check them client-side, because it cannot know your role without a `me()` call
+and the answer can change between the check and the request.
+
+## Storing credentials
+
+The usual rules, listed because SDK examples get copied.
+
+- Read keys and tokens from the environment or a secret manager. Never from
+  source, and never from a file committed to a public repository.
+- A plaintext key is shown once, at creation. Only its SHA-256 is stored, so a
+  lost key is replaced, never recovered.
+- An API key grants access to a whole organization. There is no per-workspace or
+  per-device key, and no expiry, so rotation is manual: mint the new key, deploy
+  it, then delete the old one with
+  [`DELETE /api-keys/{id}`](/docs/api-reference/api-keys/delete-api-key).
+- `XorgateError` never includes the credential in its `message` or `url`.
+
+## The live planes are a separate question
+
+Live telemetry (MQTT over WebSocket) and live video (KVS WebRTC) do not use this
+API's credential at all. They need temporary AWS credentials from a Cognito
+identity pool, which an API key cannot currently be exchanged for. See
+[What this SDK does not cover](/docs/backend-sdk/not-covered).

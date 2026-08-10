@@ -1,0 +1,193 @@
+---
+title: "Users and organizations"
+description: "me(), the organizations module, the memberships roster, and cross-resource search."
+---
+
+## `xg.me()`
+
+```ts
+me(): Promise<Me>
+```
+
+The bootstrap call. Resolves the credential to a user, creating the row on first
+sight, and returns every organization the caller belongs to. It is the only
+org-aware endpoint that never needs the tenancy header, which is why it is also
+available on the [bootstrap client](/docs/backend-sdk/installation).
+
+```ts
+const { user, memberships, organizations } = await xg.me()
+
+console.log(user.email, user.role) // "ops@acme.co" "user"
+console.log(organizations.map((o) => o.slug)) // ["acme-fleet"]
+```
+
+`memberships` here are the plain rows. The enriched roster, with each member's
+identity attached, comes from `xg.memberships.list()`.
+
+`organizations` is empty for a brand-new user. Create one before calling
+anything org-scoped.
+
+<Callout title="Normalized casing">
+  `user.createdAt` and `organization.createdAt` / `updatedAt` are `created_at`
+  and `updated_at` on the wire, because those rows serialize straight out of
+  Postgres. The SDK normalizes them, like the other snake_case outliers.
+</Callout>
+
+Maps to [`GET /me`](/docs/api-reference/users/get-me).
+
+## `xg.organizations`
+
+The organization is the tenant boundary. Workspaces, devices, telemetry, media
+and API keys live inside exactly one and never cross.
+
+```ts
+list(): Promise<Organization[]>
+listAll(): Promise<Organization[]>
+iterate(options?): AsyncIterableIterator<Organization>
+get(id: string): Promise<Organization>
+create(input: CreateOrganizationInput): Promise<Organization>
+update(id: string, input: UpdateOrganizationInput): Promise<Organization>
+delete(id: string): Promise<void>
+```
+
+### `list()`
+
+Unpaginated: every organization the caller is a member of, in one array. A user
+belongs to a handful at most.
+
+### `get(id)`
+
+<Callout type="warn" title="id must be the ACTIVE organization">
+
+`get()` only reads the organization the client is configured for. Reading a
+different one you belong to means switching clients, not changing the argument:
+
+```ts
+const other = xg.forOrganization(otherId)
+const org = await other.organizations.get(otherId)
+```
+
+Passing an id that is not the active organization is a `403 FORBIDDEN`, not a
+cross-organization read.
+
+</Callout>
+
+### `create(input)`
+
+```ts
+const org = await xg.organizations.create({
+  name: "Acme Fleet",
+  slug: "acme-fleet", // unique across ALL organizations
+})
+```
+
+Creates the organization and inserts a membership with `role: "owner"` for the
+caller. It does not need an active organization, which makes it the one write a
+brand-new user can perform, and why it is on the bootstrap client too.
+
+### `update(id, input)`
+
+Partial: send only what changes. An empty object is a `400`. Owner or admin.
+
+### `delete(id)`
+
+Cascades to workspaces, devices, API keys and memberships. There is no undo and
+no soft delete. Owner only.
+
+Maps to the
+[Organizations endpoints](/docs/api-reference/organizations).
+
+## `xg.memberships`
+
+```ts
+list(): Promise<MembershipWithUser[]>
+listAll(): Promise<MembershipWithUser[]>
+iterate(options?): AsyncIterableIterator<MembershipWithUser>
+add(input: AddMembershipInput): Promise<AddMembershipResult>
+remove(membershipId: string): Promise<void>
+```
+
+### `list()`
+
+The roster for the active organization, unpaginated, each row enriched with its
+member's `user` so a UI renders names and emails without a second round trip.
+
+```ts
+for (const m of await xg.memberships.list()) {
+  console.log(m.role, m.user?.email ?? m.userId)
+}
+```
+
+`user` is typed nullable because the schema allows it, but a membership cascades
+with its user, so in practice it is always present.
+
+### `add(input)`
+
+Adds a member by `userId` or by `email`. The two are mutually exclusive in the
+type.
+
+```ts
+// Existing xorgate user.
+await xg.memberships.add({ userId: "9c2f...", role: "member" })
+
+// By email. Provisions a Cognito account if there is none.
+const { membership, invited } = await xg.memberships.add({
+  email: "new.operator@acme.co",
+  role: "admin",
+})
+
+if (invited) {
+  // A new account was created and emailed a temporary password to set on
+  // first sign-in. Nothing further for you to send.
+}
+```
+
+`role` defaults to `member`. Adding someone who is already a member is a `400`,
+not a no-op, so guard on the roster if you are reconciling a list.
+
+Owner or admin.
+
+### `remove(membershipId)`
+
+Takes the **membership** id, not the user id. Removing the last remaining owner
+is refused with a `403`, so an organization can never be left ownerless.
+
+<Callout type="warn" title="There is no way to change a role">
+  The API has no membership update endpoint. Changing someone's role means
+  `remove()` then `add()`, which briefly leaves them with no access and loses
+  the original `createdAt`. A `PATCH /memberships/{id}` is on the
+  platform-readiness backlog; until it ships, the SDK has no `update()` here
+  because there is nothing to call.
+</Callout>
+
+Maps to the [Memberships endpoints](/docs/api-reference/memberships).
+
+## `xg.search(q)`
+
+```ts
+search(q: string, options?: { signal?: AbortSignal }): Promise<SearchResult[]>
+```
+
+A jump-to-detail navigator, not a result browser. It matches devices by name or
+serial, returns at most 6 hits per resource type, and normalizes every hit to one
+shape so a single code path renders them all.
+
+```ts
+const hits = await xg.search("XG-0042")
+
+for (const hit of hits) {
+  if (hit.type === "device") {
+    const device = await xg.devices.get(hit.id)
+  }
+}
+```
+
+A `q` shorter than two characters returns an empty array rather than an error,
+and `%` and `_` are matched literally rather than as wildcards.
+
+`SearchResult.type` includes `workflow-template` and `workflow-instance`. The
+endpoint returns those, and the SDK does not filter them out, but their resources
+are not part of this SDK's surface. Treat any hit that is not a `device` as
+something you cannot follow.
+
+Maps to [`GET /search`](/docs/api-reference/search/search).

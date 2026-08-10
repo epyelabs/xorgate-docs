@@ -1,0 +1,411 @@
+---
+title: "Walkthrough: asset tracking"
+description: "One end-to-end integration, from onboarding a tracker to pulling an incident replay, written entirely against this SDK."
+---
+
+This is the acceptance test for the surface: a complete asset-tracking backend,
+built only from methods documented in this section. If something here needs
+`xg.request()` or a raw `curl`, the SDK design has a hole.
+
+The scenario is an off-grid asset tracker. Rugged devices on heavy equipment
+report position and motion over cellular, record video locally, and upload it
+when they have bandwidth. Your service owns its own users and dashboards; xorgate
+is the device platform underneath.
+
+<Callout type="warn" title="Two things do not work yet">
+
+**Auth.** An application with its own user layer wants
+`auth: { apiKey }`, and nothing verifies keys today, so the examples below use
+`{ getToken }` with a service-account Cognito session. Swapping the two lines is
+the only change when key verification ships.
+
+**Live planes.** Live video and the 1 Hz MQTT feed need identity-pool
+credentials federated from xorgate's Cognito, which an application authenticating
+its own users cannot obtain. Everything below is REST and works regardless. See
+[What this SDK does not cover](/docs/backend-sdk/not-covered).
+
+</Callout>
+
+## 0. One client per organization
+
+```ts
+import { createClient, isXorgateError } from "@xorgate/sdk"
+
+export function clientFor(organizationId: string) {
+  return createClient({
+    baseUrl: process.env.XORGATE_API_URL!,
+    auth: { getToken: () => serviceSession.idToken() },
+    // auth: { apiKey: process.env.XORGATE_API_KEY! },  // once verification ships
+    organizationId,
+    timeoutMs: 30_000,
+  })
+}
+```
+
+If you operate a single tenant, build this once at startup. If your product maps
+its own customers onto xorgate organizations, build one per customer and cache
+it: clients are cheap and hold no connection state of their own.
+
+## 1. Model the fleet as workspaces
+
+One workspace per site, yard or customer. Workspaces are what device lists filter
+by, so getting the granularity right early is worth more than it looks.
+
+```ts
+const xg = clientFor(orgId)
+
+const existing = await xg.workspaces.list()
+const yard =
+  existing.find((w) => w.slug === "north-yard") ??
+  (await xg.workspaces.create({
+    name: "North Yard",
+    slug: "north-yard",
+    description: "Phase 2 staging",
+  }))
+```
+
+## 2. Onboard a tracker
+
+```ts
+const yardClient = xg.forWorkspace(yard.id)
+
+const reg = await yardClient.deviceRegistrations.create()
+// Hand this to the installer: curl -sSL <reg.installUrl> | sudo bash
+
+const claimed = await xg.deviceRegistrations.waitForClaim(reg.code)
+const device = await xg.devices.get(claimed.deviceId!)
+
+await xg.devices.update(device.id, { name: "Excavator 12" })
+```
+
+The code lives 15 minutes and the call is idempotent per workspace, so a retry
+or a page reload returns the same code rather than burning a new one.
+
+## 3. Turn on recording
+
+Trackers ship with recording off. Enable telemetry logging and video, and let
+the device defer the camera at boot until it has power budget and a GPS fix.
+
+```ts
+const { config } = await xg.devices.getConfig(device.id)
+
+await xg.devices.patchConfig(device.id, {
+  recording: {
+    ...config.recording,
+    telemetry: { enabled: true, rateHz: 1 },
+    video: {
+      ...config.recording?.video,
+      enabled: true,
+      preset: "1080p15-2mbps",
+      segmentSeconds: 60,
+      bootDefer: "auto",
+      gpsGate: true,
+    },
+  },
+})
+```
+
+The spread is not optional style. Each namespace is **replaced whole**, so
+omitting `telemetry` while writing `video` would delete the telemetry block. See
+[Devices](/docs/backend-sdk/resources/devices).
+
+Then wait for the device to confirm, because the write only means the cloud
+stored it:
+
+```ts
+async function waitForConfig(deviceId: string, attempts = 20) {
+  for (let i = 0; i < attempts; i++) {
+    const cfg = await xg.devices.getConfig(deviceId)
+    if (!cfg.pending) return cfg
+    await new Promise((r) => setTimeout(r, 3_000))
+  }
+  return null // offline, or still applying
+}
+```
+
+## 4. The fleet view
+
+The dashboard's main query: every device in a workspace, with its last known
+position.
+
+```ts
+type FleetRow = {
+  id: string
+  name: string
+  status: Device["status"]
+  lastSeenAt: string | null
+  lat?: number
+  lon?: number
+  speedKmh?: number
+  stale: boolean
+}
+
+async function fleet(workspaceId: string): Promise<FleetRow[]> {
+  const rows: FleetRow[] = []
+
+  for await (const d of xg.devices.iterate({ workspaceId, sort: "lastSeenAt" })) {
+    const latest = await xg.telemetry.latestByMetric(d.id)
+    const fix = latest["gps.lat"]
+
+    rows.push({
+      id: d.id,
+      name: d.name ?? d.serial,
+      status: d.status,
+      lastSeenAt: d.lastSeenAt,
+      lat: latest["gps.lat"]?.value ?? undefined,
+      lon: latest["gps.lon"]?.value ?? undefined,
+      speedKmh: latest["gps.speed"]?.value ?? undefined,
+      stale: !fix || Date.now() - Date.parse(fix.ts) > 5 * 60_000,
+    })
+  }
+
+  return rows
+}
+```
+
+<Callout type="warn" title="latest() is stale, not empty, on an offline device">
+  A device that went offline yesterday keeps returning yesterday's position
+  forever. The `stale` flag above is not decoration: without it, a dashboard
+  shows a stolen excavator sitting exactly where it was last seen. Always check
+  `ts`, and cross-check `device.status`.
+</Callout>
+
+This is one request per device, so it is fine for a workspace and wrong for a
+fleet of thousands. At that size, cache per device and refresh on a stagger
+rather than sweeping the whole fleet on every dashboard load. There is no batch
+telemetry endpoint and no rate limiting to catch you.
+
+## 5. Yesterday's track
+
+For a map trail, bucket-average the position. One-minute buckets over a day is
+1,440 points per metric, well inside the 10,000-bucket cap.
+
+```ts
+async function dayTrack(deviceId: string, day: Date) {
+  const from = new Date(day)
+  from.setUTCHours(0, 0, 0, 0)
+  const to = new Date(from.getTime() + 24 * 60 * 60_000)
+
+  const { readings, truncated } = await xg.telemetry.history(deviceId, {
+    from,
+    to,
+    metric: ["gps.lat", "gps.lon", "gps.speed"],
+    interval: 60,
+  })
+
+  if (truncated) throw new Error("track truncated: narrow the window")
+
+  // Readings are ordered by ts then metric. Fold them into points.
+  const points = new Map<string, { lat?: number; lon?: number; speed?: number }>()
+  for (const r of readings) {
+    const p = points.get(r.ts) ?? {}
+    if (r.metric === "gps.lat") p.lat = r.value ?? undefined
+    if (r.metric === "gps.lon") p.lon = r.value ?? undefined
+    if (r.metric === "gps.speed") p.speed = r.value ?? undefined
+    points.set(r.ts, p)
+  }
+
+  return [...points.entries()]
+    .map(([ts, p]) => ({ ts, ...p }))
+    .filter((p) => p.lat !== undefined && p.lon !== undefined)
+}
+```
+
+Check `truncated` on every `history()` call. It is the only signal that data was
+left behind, and a truncated track looks like a vehicle that stopped moving.
+
+For full-resolution position over a long window, use `iterateReadings()` instead
+and watch `totalIsCapped`:
+
+```ts
+let capped = false
+const raw: TelemetryReading[] = []
+
+for await (const r of xg.telemetry.iterateReadings(deviceId, {
+  from,
+  to,
+  order: "asc",
+  metric: ["gps.lat", "gps.lon"],
+  onPage: (p) => {
+    capped ||= p.totalIsCapped === true
+  },
+})) {
+  raw.push(r)
+}
+```
+
+## 6. Detect an incident
+
+A harsh-braking or impact event, from the accelerometer. There is no server-side
+alerting, so this runs on your side over a rolling window.
+
+```ts
+async function impacts(deviceId: string, from: Date, to: Date, thresholdMs2 = 12) {
+  const { readings, truncated } = await xg.telemetry.history(deviceId, {
+    from,
+    to,
+    metric: ["imu.accel_x", "imu.accel_y", "imu.accel_z"],
+    interval: 1, // one-second peaks; raw 1 Hz would hit the 5,000-row cap fast
+  })
+
+  if (truncated) {
+    // Split the window and recurse rather than reporting a partial answer.
+  }
+
+  return readings
+    .filter((r) => r.value !== null && Math.abs(r.value) > thresholdMs2)
+    .map((r) => ({ ts: r.ts, metric: r.metric, value: r.value! }))
+}
+```
+
+Metric names come from the device model, so confirm rather than assume:
+
+```ts
+import { declaredMetrics } from "@xorgate/sdk"
+
+const model = await xg.deviceModels.get(device.deviceModelId)
+declaredMetrics(model).filter((m) => m.startsWith("imu."))
+```
+
+## 7. Pull the video for that window
+
+```ts
+async function incidentReplay(deviceId: string, at: Date) {
+  const from = new Date(at.getTime() - 60_000)
+  const to = new Date(at.getTime() + 60_000)
+
+  const replay = await xg.media.replayManifest(deviceId, { from, to })
+
+  for (const session of replay.sessions) {
+    console.log(session.streamKey, session.segments.length, session.gaps.length)
+    if (session.timeSource === "unsynced") {
+      // Video and telemetry timestamps cannot be trusted to line up. Label it.
+    }
+  }
+
+  return replay
+}
+```
+
+The manifest batch-presigns every segment in one call, computes gaps
+server-side, and gives you `effectiveDurationMs` per segment so a player does
+not have to reconcile drifting durations. All of its timestamps are epoch
+milliseconds, unlike the rest of the API.
+
+Refetch before the URLs expire:
+
+```ts
+if (Date.now() > replay.urlExpiresAt - 30_000) {
+  replay = await xg.media.replayManifest(deviceId, { from, to })
+}
+```
+
+Range mode caps at 600 segments, 10 sessions and 24 hours, each a `400`. A
+two-minute incident window is nowhere near any of them.
+
+For a browsable "recent drives" list, ask for runs rather than sessions, so a
+dual-camera drive is one row:
+
+```ts
+const runs = await xg.media.sessions.listRuns(deviceId, { limit: 20 })
+for (const run of runs.items) {
+  console.log(run.fromTs, run.toTs, run.streamKeys, run.anyUnsynced)
+}
+```
+
+Then replay one by its earliest session:
+
+```ts
+const replay = await xg.media.replayManifest(deviceId, {
+  sessionId: run.sessions[0].id,
+})
+```
+
+## 8. Keep the fleet healthy
+
+A nightly sweep. Everything here is a poll, because there are no webhooks.
+
+```ts
+async function healthSweep(workspaceId: string) {
+  const latest = await xg.devices.latestAgentBuild()
+
+  for await (const d of xg.devices.iterate({ workspaceId })) {
+    // Stale agent. String equality only: shas do not order.
+    if (latest && d.agentVersion && d.agentVersion !== latest.version) {
+      report.staleAgent.push(d.id)
+    }
+
+    // Config the device has not acknowledged.
+    const cfg = await xg.devices.getConfig(d.id)
+    if (cfg.pending) report.configPending.push(d.id)
+
+    // Silent for over an hour despite reading online.
+    const latestReadings = await xg.telemetry.latest(d.id)
+    const newest = latestReadings.reduce(
+      (max, r) => Math.max(max, Date.parse(r.ts)),
+      0,
+    )
+    if (d.status === "online" && Date.now() - newest > 3_600_000) {
+      report.silent.push(d.id)
+    }
+  }
+}
+```
+
+Updating an agent is one call, but it is not a status you can read back:
+
+```ts
+await xg.devices.updateAgent(deviceId) // 202: reached the broker, nothing more
+// Poll devices.get(id) until agentVersion changes. Unchanged after the device
+// comes back online means the install failed and rolled back.
+```
+
+## 9. Handle the errors that actually happen
+
+```ts
+try {
+  await xg.devices.reboot(deviceId)
+} catch (e) {
+  if (!isXorgateError(e)) throw e
+
+  switch (e.code) {
+    case "CONFLICT":
+      // Offline. Commands are not retained; there is nothing to queue.
+      break
+    case "INSUFFICIENT_ROLE":
+      // The service account is a member, not an owner or admin.
+      break
+    case "COMMAND_PUBLISH_FAILED":
+      // Never reached the broker. Safe to retry.
+      break
+    case "NOT_FOUND":
+      // Deleted, OR in another organization. You cannot tell which.
+      break
+    default:
+      throw e
+  }
+}
+```
+
+The one that catches people: `CONFIG_PUBLISH_FAILED` is **not** a failed write.
+The config was saved and only delivery failed, so retrying bumps `configRev`
+again and makes the device look permanently behind. See
+[Errors](/docs/backend-sdk/errors).
+
+## What this exercise found
+
+Writing it turned up four things worth stating plainly, because they are
+properties of the platform rather than of the SDK.
+
+1. **There is no batch telemetry read.** A fleet view is one request per device.
+   Fine for a workspace, wrong for thousands.
+2. **Everything interesting is a poll.** Onboarding, config convergence, agent
+   updates, new media, device silence. Webhooks would collapse most of the code
+   above.
+3. **`latest()` never expires.** Every consumer has to re-implement staleness,
+   and every one that forgets ships a dashboard that lies.
+4. **No server-side alerting exists.** Geofences and impact thresholds run in
+   your service, over data you pulled, at whatever interval you chose.
+
+None of these blocks the integration. All four are on the platform-readiness
+backlog.

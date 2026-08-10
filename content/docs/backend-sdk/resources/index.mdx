@@ -1,0 +1,136 @@
+---
+title: "Resources"
+description: "Every method on the client, grouped by resource, with the role each one needs."
+---
+
+Resource modules hang off the client and mirror the API's resources. Each page
+below documents every method: signature, parameters, return type, the role it
+needs, and a runnable example.
+
+<Cards>
+  <Card
+    title="Users and organizations"
+    href="/docs/backend-sdk/resources/users-and-organizations"
+    description="me(), organizations, memberships, search()."
+  />
+  <Card
+    title="Workspaces"
+    href="/docs/backend-sdk/resources/workspaces"
+    description="The unit devices belong to. Full CRUD."
+  />
+  <Card
+    title="API keys"
+    href="/docs/backend-sdk/resources/api-keys"
+    description="Mint, list and delete. The snake_case envelope lives here."
+  />
+  <Card
+    title="Device models"
+    href="/docs/backend-sdk/resources/device-models"
+    description="The platform catalog, and the ioCapabilities validation that matters."
+  />
+  <Card
+    title="Devices"
+    href="/docs/backend-sdk/resources/devices"
+    description="CRUD, config, commands, provisioning, identity."
+  />
+  <Card
+    title="Device registrations"
+    href="/docs/backend-sdk/resources/device-registrations"
+    description="The onboarding code flow, and waiting for a claim."
+  />
+  <Card
+    title="Media"
+    href="/docs/backend-sdk/resources/media"
+    description="Sessions, runs, segments, playback URLs, replay manifests."
+  />
+  <Card
+    title="Telemetry"
+    href="/docs/backend-sdk/resources/telemetry"
+    description="History, latest, recent, and the paginated readings table."
+  />
+</Cards>
+
+## Method index
+
+Role column, verified against the handlers rather than the spec, which does not
+state most of these:
+
+- **any**: any valid credential. No organization role is checked.
+- **read**: any membership role, `viewer` included.
+- **write**: `owner`, `admin` or `member`. A `viewer` gets `INSUFFICIENT_ROLE`.
+- **owner/admin**: exactly those two.
+- **owner**: owner only.
+- **platform admin**: `user.role === "admin"`, unrelated to any membership.
+
+| Method                                      | Endpoint                                          | Role           |
+| ------------------------------------------- | ------------------------------------------------- | -------------- |
+| `xg.me()`                                   | `GET /me`                                         | any            |
+| `xg.search(q)`                              | `GET /search`                                     | read           |
+| `xg.organizations.list()`                   | `GET /organizations`                              | any            |
+| `xg.organizations.get(id)`                  | `GET /organizations/{id}`                         | read           |
+| `xg.organizations.create(input)`            | `POST /organizations`                             | any            |
+| `xg.organizations.update(id, input)`        | `PUT /organizations/{id}`                         | owner/admin    |
+| `xg.organizations.delete(id)`               | `DELETE /organizations/{id}`                      | owner          |
+| `xg.memberships.list()`                     | `GET /memberships`                                | read           |
+| `xg.memberships.add(input)`                 | `POST /memberships`                               | owner/admin    |
+| `xg.memberships.remove(id)`                 | `DELETE /memberships/{id}`                        | owner/admin    |
+| `xg.apiKeys.list()`                         | `GET /api-keys`                                   | read           |
+| `xg.apiKeys.create(input)`                  | `POST /api-keys`                                  | owner/admin    |
+| `xg.apiKeys.delete(id)`                     | `DELETE /api-keys/{id}`                           | owner/admin    |
+| `xg.workspaces.list()`                      | `GET /workspaces`                                 | read           |
+| `xg.workspaces.get(id)`                     | `GET /workspaces/{id}`                            | read           |
+| `xg.workspaces.create(input)`               | `POST /workspaces`                                | write          |
+| `xg.workspaces.update(id, input)`           | `PUT /workspaces/{id}`                            | write          |
+| `xg.workspaces.delete(id)`                  | `DELETE /workspaces/{id}`                         | write          |
+| `xg.deviceModels.list()`                    | `GET /device-models`                              | any            |
+| `xg.deviceModels.get(id)`                   | `GET /device-models/{id}`                         | any            |
+| `xg.deviceModels.create(input)`             | `POST /device-models`                             | platform admin |
+| `xg.deviceModels.update(id, input)`         | `PUT /device-models/{id}`                         | platform admin |
+| `xg.deviceModels.delete(id)`                | `DELETE /device-models/{id}`                      | platform admin |
+| `xg.devices.list(params)`                   | `GET /devices`                                    | read           |
+| `xg.devices.get(id)`                        | `GET /devices/{id}`                               | read           |
+| `xg.devices.create(input)`                  | `POST /devices`                                   | write          |
+| `xg.devices.update(id, input)`              | `PUT /devices/{id}`                               | write          |
+| `xg.devices.delete(id)`                     | `DELETE /devices/{id}`                            | write          |
+| `xg.devices.getConfig(id)`                  | `GET /devices/{id}` (view)                        | read           |
+| `xg.devices.patchConfig(id, patch)`         | `PATCH /devices/{id}/config`                      | write          |
+| `xg.devices.patchUiPrefs(id, patch)`        | `PATCH /devices/{id}/ui-prefs`                    | write          |
+| `xg.devices.identity(id)`                   | `GET /devices/{id}/identity`                      | read           |
+| `xg.devices.provision(id)`                  | `POST /devices/{id}/provision`                    | owner/admin    |
+| `xg.devices.kvsChannels(id)`                | `GET /devices/{id}/kvs-channels`                  | read           |
+| `xg.devices.reboot(id)`                     | `POST /devices/{id}/reboot`                       | owner/admin    |
+| `xg.devices.powerOff(id)`                   | `POST /devices/{id}/power-off`                    | owner/admin    |
+| `xg.devices.refreshState(id)`               | `POST /devices/{id}/refresh-state`                | read           |
+| `xg.devices.updateAgent(id)`                | `POST /devices/{id}/update`                       | owner/admin    |
+| `xg.devices.latestAgentBuild()`             | `GET /device-dist/latest`                         | read           |
+| `xg.deviceRegistrations.create(input)`      | `POST /device-registrations`                      | write          |
+| `xg.deviceRegistrations.get(code)`          | `GET /device-registrations/{code}`                | read           |
+| `xg.deviceRegistrations.waitForClaim(code)` | polls the above                                   | read           |
+| `xg.media.sessions.list(deviceId, p)`       | `GET /devices/{id}/sessions`                      | read           |
+| `xg.media.sessions.listRuns(deviceId, p)`   | the same, `group=runs`                            | read           |
+| `xg.media.sessions.delete(deviceId, sid)`   | `DELETE /devices/{id}/sessions/{sessionId}`       | owner/admin    |
+| `xg.media.segments(deviceId, sid)`          | `GET /devices/{id}/sessions/{sessionId}/segments` | read           |
+| `xg.media.segmentPlaybackUrl(d, s, seq)`    | `.../segments/{seq}/playback`                     | read           |
+| `xg.media.replayManifest(deviceId, p)`      | `GET /devices/{id}/replay-manifest`               | read           |
+| `xg.telemetry.history(deviceId, p)`         | `GET /devices/{id}/telemetry`                     | read           |
+| `xg.telemetry.latest(deviceId)`             | `GET /devices/{id}/telemetry/latest`              | read           |
+| `xg.telemetry.latestByMetric(deviceId)`     | the same, reshaped                                | read           |
+| `xg.telemetry.recent(deviceId, p)`          | `GET /devices/{id}/telemetry/recent`              | read           |
+| `xg.telemetry.readings(deviceId, p)`        | `GET /devices/{id}/telemetry/readings`            | read           |
+| `xg.telemetry.readingsFlat(deviceId, p)`    | the same, `shape=flat`                            | read           |
+
+Collections additionally carry `iterate()` and `listAll()`; see
+[Pagination](/docs/backend-sdk/pagination). Two collections deliberately do not,
+because the platform commits to returning them whole: a session's segments and a
+device's KVS channels.
+
+## Not modelled
+
+`POST /iot/attach-policy` has no SDK method. It attaches an IoT policy to the
+**caller's own** Cognito identity so a browser can subscribe to live telemetry,
+which makes it meaningless from a server. It belongs to the frontend SDK. See
+[What this SDK does not cover](/docs/backend-sdk/not-covered).
+
+`POST /device-registrations/{code}/claim` and `GET /get/{code}` have no SDK
+method either. They are the install script's private contract, called on the
+device, and the claim route returns X.509 private key material.
