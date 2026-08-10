@@ -1,0 +1,251 @@
+---
+title: "Live video"
+description: "useKvsChannels, useKvsViewer and KvsVideo: the WebRTC VIEWER lifecycle, its reconnect machinery, and why you should gate it."
+---
+
+Live video is WebRTC through Amazon Kinesis Video Streams. The device runs a
+KVS **master** per camera; the browser runs a **viewer**. The REST API is barely
+involved: `GET /devices/{id}/kvs-channels` returns channel metadata and nothing
+else, and the browser mints its own AWS credentials from there.
+
+```tsx
+import { useKvsChannels, KvsVideo } from "@xorgate/react"
+
+function LiveGrid({ deviceId }: { deviceId: string }) {
+  const { data: channels } = useKvsChannels(deviceId)
+  return (
+    <div>
+      {channels?.map((c) => (
+        <KvsVideo key={c.streamKey} channel={c} width={640} />
+      ))}
+    </div>
+  )
+}
+```
+
+## `useKvsChannels`
+
+```tsx
+const { data: channels, isLoading } = useKvsChannels(deviceId)
+```
+
+Returns `KvsChannel[]`: `streamKey`, `channelName`, `channelArn`, `region`. One
+per provisioned video stream. **An empty array means the device is not
+provisioned**, not that it has no cameras, and it is worth distinguishing those
+in your UI.
+
+Channels come from the device model's `ioCapabilities` at provisioning time. A
+model whose capabilities document fails to parse provisions with **zero**
+channels and no error is raised anywhere, so live video silently never works.
+If a device you expect to have cameras returns an empty array, that is the first
+thing to check.
+
+## `useKvsViewer`
+
+```tsx
+const { videoRef, status, error, stats } = useKvsViewer(channel)
+```
+
+Runs a VIEWER session for one channel and attaches the received `MediaStream` to
+`videoRef`. Pass `null` to stay idle, which is how you obey the Rules of Hooks
+inside a grid.
+
+<TypeTable
+  type={{
+    videoRef: {
+      type: "RefObject<HTMLVideoElement | null>",
+      description:
+        "Attach to a <video playsInline muted>. The hook sets srcObject; the element is yours.",
+    },
+    status: {
+      type: '"connecting" | "waiting" | "connected" | "closed" | "error" | "unavailable"',
+    },
+    unavailableReason: { type: "LiveUnavailableReason | null" },
+    error: { type: "XorgateError | null" },
+    stats: {
+      type: "KvsStreamStats | null",
+      description:
+        "What you are receiving, sampled from inbound-rtp. Null until the first sample.",
+    },
+  }}
+/>
+
+`waiting` is its own state and it is the one people misread. It means the offer
+has been sent and no answer has come back, which almost always means the device
+is not running its master right now. It is not a stalled connection; it is a
+correctly working viewer talking to nobody.
+
+```tsx
+function Camera({ channel }: { channel: KvsChannel }) {
+  const { videoRef, status, stats } = useKvsViewer(channel)
+  return (
+    <figure>
+      <video ref={videoRef} playsInline muted />
+      <figcaption>
+        {status === "waiting" ? "Waiting for the device" : status}
+        {stats?.width ? ` · ${stats.width}x${stats.height}` : ""}
+        {stats?.kbps ? ` · ${Math.round(stats.kbps)} kbps` : ""}
+      </figcaption>
+    </figure>
+  )
+}
+```
+
+### `stats`
+
+Sampled from the peer connection's `inbound-rtp` report every two seconds, which
+is also the bitrate averaging window.
+
+<TypeTable
+  type={{
+    width: { type: "number | null" },
+    height: { type: "number | null" },
+    fps: { type: "number | null" },
+    kbps: { type: "number | null" },
+  }}
+/>
+
+This is what you are **receiving**, not what the device was configured to send,
+which makes it the honest number to put on screen. Every field is nullable for
+real reasons: browsers differ on which counters they expose, none are populated
+until frames are decoding, `fps` falls back to a decoded-frame delta where
+`framesPerSecond` is missing, and `kbps` is a delta between samples so the first
+sample after any reconnect has none.
+
+`stats` resets to null on every reconnect, deliberately: carrying a delta across
+the gap would report a bitrate that never happened.
+
+## Reconnect behaviour
+
+This is the part that looks over-engineered until you watch a device drive under
+a bridge. All of it was added in response to a real failure, and all of it
+survives the lift into the SDK.
+
+**Generation counter.** Every `open()` invalidates prior in-flight attempts, so a
+stalled attempt that resumes after an `await` cannot cross-wire itself into a
+newer session.
+
+**Per-step deadlines, 10 s.** On a flaky network the pre-signaling AWS calls
+(credentials, endpoint resolution, ICE configuration) hang without rejecting,
+which would park the connection forever with no retry scheduled. Each step is
+deadlined so a hang becomes an error, and an error becomes a reconnect.
+
+**Whole-attempt deadline, 15 s.** KVS does not queue SDP offers. If the master is
+offline when the offer goes out, no answer and no event ever arrives, and the
+session sits in `waiting` indefinitely. The deadline tears the attempt down and
+re-offers on a fresh session, so the viewer picks the master up shortly after it
+comes back.
+
+**Disconnect grace, 2.5 s.** A peer connection can dip to `disconnected` on a
+brief ICE blip and recover on its own. But the KVS master frees its side of the
+session the instant ICE drops, so a `disconnected` here will not self-heal. The
+grace window covers a genuine micro-blip; past it, the viewer forces a fresh
+session rather than sitting frozen on the last frame.
+
+**Backoff, 1 s to 30 s**, reset on the first inbound track.
+
+**Credential cycle, 50 minutes.** A proactive re-open with fresh credentials,
+inside the roughly one hour expiry.
+
+**Visibility nudges.** Mobile browsers freeze background tabs: timers suspend,
+network events drop, and the peer connection is usually dead by the time the
+user returns. `online`, `pageshow` and `visibilitychange` all trigger an
+immediate fresh attempt rather than waiting out a stale backoff.
+
+**A fresh client id per connection**, because KVS refuses a duplicate VIEWER
+client id and a stale id from a half-closed session gets rejected.
+
+One deliberate omission: a reconnect does **not** clear the `<video>` element.
+The last frame stays on screen instead of flashing to black, which is what makes
+a two-second blip look like a two-second blip rather than an outage.
+
+## `KvsVideo`
+
+```tsx
+<KvsVideo channel={channel} className="camera" onStatusChange={log} />
+```
+
+`useKvsViewer` plus the `<video>` element, and nothing else. No card, no
+spinner, no error text, no aspect ratio, no status badge. It exists so the
+common case is one line, not so it can be your player: the moment you want a
+loading state, write the hook version.
+
+Every `<video>` attribute passes through except `src`, `srcObject` and `ref`.
+`playsInline` and `muted` default to true, because a stream that is neither will
+not autoplay in Safari.
+
+## Gate the viewer before you mount it
+
+<Callout type="warn" title="Do not mount a viewer the device will refuse">
+
+When a device parks its masters, for a boot-time GPS and cellular gate or a
+power load-shed, there is nothing on the other end of the channel. A viewer
+mounted against it will connect to signaling, send an offer, wait out the 15
+second deadline, tear down, back off, and try again forever. The user sees a
+spinner that never resolves, and the tab burns credentials and signaling calls
+doing it.
+
+The device tells you this is happening. Read
+[the live-block gate](/docs/frontend-sdk/live-telemetry) and render a tile
+instead.
+
+</Callout>
+
+The precedence that matters, in order:
+
+<Steps>
+
+<Step>
+  **The camera is disabled in device settings.** Device configuration beats a
+  transient condition: the camera would be off either way. Read
+  `config.recording.video.cameras`, where an **absent** key means enabled.
+</Step>
+
+<Step>
+  **`liveBlock` is present.** Render the blocked state. This is device-wide by
+  construction: the shed parks every master at once, never a subset.
+</Step>
+
+<Step>**Otherwise**, mount the player.</Step>
+
+</Steps>
+
+```tsx
+function StreamTile({
+  deviceId,
+  channel,
+  cameraEnables,
+}: {
+  deviceId: string
+  channel: KvsChannel
+  cameraEnables?: Record<string, boolean>
+}) {
+  const feed = useLiveTelemetry(deviceId)
+  const block = useLiveBlock(feed)
+
+  if (cameraEnables?.[channel.streamKey] === false) {
+    return <p>{channel.streamKey} is turned off</p>
+  }
+  if (block.blocked) {
+    return <p>Live view paused: {block.detail}</p>
+  }
+  return <KvsVideo channel={channel} />
+}
+```
+
+Notice that this costs you nothing extra: the same live telemetry feed the rest
+of the page already uses is what carries the verdict, and the socket is shared.
+
+## Availability
+
+`status: "unavailable"` means the live plane is unreachable, with
+`unavailableReason` explaining which piece is missing. It is not an error state
+and should not render like one.
+
+<Callout type="warn" title="The KVS browser policy is org-blind">
+  Like the IoT policy, the browser's KVS permissions are scoped to any
+  authenticated user rather than to your organization. Any signed-in user of the
+  platform can open a viewer on any device's channel if they know its ARN. This
+  is why live video is not ready for third parties. The full caveat is on [the
+  provider page](/docs/frontend-sdk/provider).
+</Callout>

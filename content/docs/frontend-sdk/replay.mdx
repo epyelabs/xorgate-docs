@@ -1,0 +1,414 @@
+---
+title: "Replay"
+description: "The replay manifest, the wall-clock replay clock, lanes, the headless MSE player, and the pure timeline utilities behind a scrubber."
+---
+
+Replay plays a device's recorded 60-second MP4 segments back as one continuous
+timeline, with telemetry resolved at the playhead. It is fragmented MP4 through
+Media Source Extensions, not HLS, so it is browser-only and there is no URL you
+can hand to another player.
+
+```tsx
+import { useReplayManifest, useReplayPlayer, ReplayVideo } from "@xorgate/react"
+
+function Replay({ deviceId, run }: { deviceId: string; run: RecordingRun }) {
+  const { data: manifest } = useReplayManifest(deviceId, {
+    from: run.fromTs,
+    to: run.toTs,
+  })
+  const player = useReplayPlayer(manifest)
+
+  return (
+    <div>
+      {player.lanes.map((lane) => (
+        <ReplayVideo
+          key={lane.streamKey}
+          player={player}
+          streamKey={lane.streamKey}
+        />
+      ))}
+      <button onClick={player.toggle}>{player.playing ? "Pause" : "Play"}</button>
+    </div>
+  )
+}
+```
+
+## Everything here is epoch milliseconds
+
+<Callout type="warn" title="The replay plane uses a different timestamp unit">
+
+Timestamps are ISO strings everywhere else on this platform. In the replay
+manifest and everything derived from it, they are epoch **milliseconds**.
+
+That is not an inconsistency to paper over. The replay clock does arithmetic on
+every one of them at animation-frame rate, and converting would mean parsing
+strings sixty times a second. The API returns them this way, and neither SDK
+converts.
+
+The query parameters are still ISO or `Date`. Only the response is milliseconds.
+
+</Callout>
+
+## `useReplayManifest`
+
+```tsx
+const { data: manifest, error, refreshUrls } = useReplayManifest(deviceId, {
+  from: run.fromTs,
+  to: run.toTs,
+})
+```
+
+Two mutually exclusive parameter shapes: `{ sessionId }` for one recording
+session, or `{ from, to, streamKey? }` for a window. Pass `null` for the params
+to stay idle.
+
+One request returns the whole ordered index: every session in the window, every
+segment with a presigned URL, and the gaps between them.
+
+<Callout type="warn" title="The window has hard caps">
+  600 segments in total, and in range mode 10 sessions and 24 hours. Exceeding
+  one is a 400 telling you to narrow the request, which arrives as `error`
+  rather than as a short manifest. At 60-second segments and two cameras, 600
+  segments is about five hours of driving.
+</Callout>
+
+`manifest.urlExpiresAt` is the real URL lifetime minus a five-minute safety
+margin. The hook refetches itself shortly before it, so a replay left open for
+an hour keeps working. `refreshUrls()` forces it now, and swaps the presigned
+URLs **without** rebuilding the timeline or resetting the clock. The player
+calls it automatically when a segment fetch gets a 403.
+
+## Lanes
+
+A **lane** is one camera laid onto the shared wall clock.
+
+A range-mode manifest returns N sessions, and several per camera when recording
+restarted mid-window. Lane assembly merges same-`streamKey` sessions onto one
+lane, so a camera that restarted three times is still one video element and one
+continuous timeline.
+
+```ts
+interface ReplayLane {
+  streamKey: StreamKey
+  sessions: ReplaySession[]
+  timeline: ReplayTimeline // lane-local, over the SHARED replay bounds
+  unsynced: boolean
+  hasPartial: boolean
+  open: boolean
+}
+```
+
+Every lane's timeline shares the manifest's `from` and `to`, which is what makes
+wall-clock and media-position arithmetic agree across the page.
+
+`unsynced` means a contributing session recorded with an untrusted clock, so
+correlating its video against telemetry is not reliable. Surface it; a user
+watching a replay that is silently ninety seconds off has no way to tell.
+
+<Callout title="A gap is per lane, and that is deliberate">
+
+One camera dark while another records is a **lane** state, not a replay gap.
+The clock's merged timeline only calls something a gap when **no** lane has
+video there.
+
+This is the honesty rule the whole design rests on. Showing "no video recorded"
+across the page because the rear camera was disabled would be false; showing it
+on the rear tile alone is true.
+
+</Callout>
+
+A session with no surviving segments produces no lane at all. That is the
+telemetry-only replay case, where the media aged out of its 90-day lifecycle but
+the telemetry did not, and it is not an error.
+
+## `useReplayPlayer`
+
+```tsx
+const player = useReplayPlayer(manifest, { startTs, rate: 1, skipGaps: true })
+```
+
+<TypeTable
+  type={{
+    clock: {
+      type: "ReplayClock | null",
+      description:
+        "The imperative escape hatch. Null until a manifest arrives.",
+    },
+    timeline: {
+      type: "ReplayTimeline | null",
+      description: "The merged clock timeline: coverage across ALL lanes.",
+    },
+    lanes: { type: "ReplayLane[]" },
+    playheadTs: {
+      type: "number",
+      description: "Epoch ms. Throttled to roughly 10 Hz for rendering.",
+    },
+    playing: { type: "boolean" },
+    rate: { type: "0.5 | 1 | 2 | 4" },
+    skipGaps: { type: "boolean" },
+    lastSkip: {
+      type: "GapSkipEvent | null",
+      description:
+        "The most recent gap the clock jumped, with a monotonic seq.",
+    },
+    laneVideoRef: {
+      type: "(streamKey) => RefCallback<HTMLVideoElement>",
+      description:
+        "Attach a <video> to one lane. Stable per streamKey, so it is safe inline in a map.",
+    },
+    laneState: {
+      type: "(streamKey) => ReplayLaneState",
+      description: "Per-lane status, inGap and isPacer.",
+    },
+  }}
+/>
+
+Transport controls are `play`, `pause`, `toggle`, `seek(ts)`, `setRate`,
+`setSkipGaps` and `stepBoundary(-1 | 1)`.
+
+Attaching a `<video>` through `laneVideoRef` is what starts the MSE engine for
+that lane. Detaching stops it. There is no other lifecycle to manage.
+
+```tsx
+function Lane({ player, lane }: { player: UseReplayPlayer; lane: ReplayLane }) {
+  const state = player.laneState(lane.streamKey)
+  return (
+    <div>
+      <video ref={player.laneVideoRef(lane.streamKey)} playsInline muted />
+      {state.inGap ? <p>No video recorded for this part of the timeline.</p> : null}
+    </div>
+  )
+}
+```
+
+### `playheadTs` is throttled
+
+The clock notifies at animation-frame rate. Re-rendering a React tree sixty
+times a second to move a scrubber is waste, so the hook's snapshot is throttled
+to 100 ms by default, with a trailing edge so the last event of a burst always
+lands.
+
+A component that genuinely needs every tick should subscribe imperatively:
+
+```tsx
+useEffect(() => {
+  const clock = player.clock
+  if (!clock) return
+  return clock.subscribe(() => {
+    element.style.transform = `translateX(${position(clock.getState().playheadTs)}px)`
+  })
+}, [player.clock])
+```
+
+That is how the video lanes themselves work.
+
+## The clock
+
+One wall-clock playhead in epoch milliseconds that everything on the page
+follows. **Nothing reads `video.currentTime` directly.** Video elements register
+as pacer candidates and the clock elects who rules.
+
+<Steps>
+
+<Step>
+
+**Playing with coverage.** One elected lane's video element **paces** the clock:
+the clock reads the playhead off that element. Drift between video and telemetry
+is therefore structurally impossible rather than merely small.
+
+Election is sticky. The incumbent keeps pacing while its lane covers the
+playhead; when it stops covering, the first registered lane with coverage takes
+over. Other lanes are followers: they chase the clock and re-seek when drift
+exceeds about 150 ms.
+
+A stalled pacer freezes the clock. That is correct, not a bug: telemetry and the
+other lanes wait with it, and the page stays coherent.
+
+</Step>
+
+<Step>
+
+**Playing with no lane covering.** The clock free-runs at `rate` times real
+time, or jumps manifest gaps when `skipGaps` is on.
+
+</Step>
+
+<Step>
+
+**Seek.** The user sets the clock and every follower re-derives. Discontinuities
+bump `seekSeq` so lanes know to realign; a pacing tick never does.
+
+</Step>
+
+</Steps>
+
+The clock itself is a plain class with no React in it, which is what makes it
+unit-testable with synthetic ticks. `useReplayPlayer` owns the
+`requestAnimationFrame` driver, and clamps its delta to 250 ms so a tab returning
+from the background does not free-run the playhead minutes ahead.
+
+Rates are fixed at `0.5`, `1`, `2` and `4`, exported as `REPLAY_RATES`.
+
+## Inside the MSE engine
+
+You do not have to know any of this to use the player. It is here because the
+next person to debug a frozen video will need it.
+
+One `SourceBuffer` per lane, and:
+
+- **`MediaSource.duration` is pinned to the replay span before the first
+  append.** Without that, seeks beyond appended data clamp and hang.
+- **Each segment's `timestampOffset` comes from its parsed `tfdt`**, not from an
+  assumption that the file starts at zero. Segments do restart at roughly zero
+  today; parsing guards against a future muxer change.
+- **The codec string is read out of the first segment's `avcC` box**, not
+  hardcoded. The manifest is deliberately format-neutral.
+- **`video.buffered` is the source of truth for what is buffered**, never a set
+  of appended sequence numbers, because WebKit evicts silently and a bookkeeping
+  set would lie.
+- **One segment of prefetch.** Enough that gap exits and seeks feel instant, and
+  it never starved even at 4x.
+- **On `QuotaExceededError`, evict to about 120 seconds behind the playhead and
+  retry the append.** Chrome throws it; WebKit never does.
+- **A crash-cut partial segment resets the box parser after appending**, because
+  the next append otherwise inherits a half-parsed state.
+- **Sub-5-second buffered holes get nudged past.** The element stalls at any
+  buffered hole and never recovers on its own. These holes are the seams an
+  `fstat`-anchored first segment leaves, since it includes about two seconds of
+  pipeline startup.
+- **A 403 on a segment fetch triggers a manifest refresh**, and the backed-off
+  retry then uses the fresh URL.
+
+## Gaps and partial segments
+
+`ReplayGap` carries a `reason`, either `"missing-segments"` or
+`"evicted-head"`. The second one means the recording ran long enough that the
+device's retention policy deleted its own head while it was still recording,
+which is worth saying out loud in a UI rather than showing as an unexplained
+hole.
+
+`ReplaySegment.finalized: false` marks a crash-cut partial: the device lost
+power or crashed mid-segment. It is playable up to the cut. `ReplayTimeline`
+carries `partialEnds`, the wall-clock ends of those segments, which is what a
+scrubber renders as warning ticks.
+
+`ReplaySegment.anchor` records where `startTs` came from. An `"fstat"` anchor on
+the first segment of a session includes roughly two seconds of pipeline startup,
+so the first seam of a session commonly holds a small buffered hole. The player
+jumps it; you may want to know why it is there.
+
+## Building a scrubber
+
+The timeline utilities are pure, exported, and unit-tested. Every lookup is a
+binary search, so a caller running at animation-frame rate never scans an array.
+
+<TypeTable
+  type={{
+    "buildTimeline(session, from, to)": { type: "ReplayTimeline" },
+    "buildLanes(manifest)": { type: "ReplayLane[]" },
+    "buildClockTimeline(lanes, from, to)": { type: "ReplayTimeline" },
+    "segmentAt(timeline, ts)": {
+      type: "{ segment, offsetMs } | null",
+      description: "Null in a gap or outside coverage.",
+    },
+    "hasCoverageAt(timeline, ts)": { type: "boolean" },
+    "gapAt(timeline, ts)": {
+      type: "ReplayGap | null",
+      description:
+        "Only manifest gaps. Uncovered stretches the server did not call out return null.",
+    },
+    "nextSegmentAfter(timeline, ts)": { type: "ReplaySegment | null" },
+    "prevBoundary(timeline, ts)": {
+      type: "number",
+      description:
+        "A 1.5 s grace, so repeated presses walk backwards instead of re-snapping.",
+    },
+    "nextBoundary(timeline, ts)": { type: "number" },
+    "segmentEnd(segment)": { type: "number" },
+    "clampTs(timeline, ts)": { type: "number" },
+  }}
+/>
+
+`timeline.boundaries` is every segment start plus every gap end, sorted: the far
+side of a gap is where video resumes, which is where a "next" button should
+land.
+
+```tsx
+function Scrubber({ player }: { player: UseReplayPlayer }) {
+  const timeline = player.timeline
+  if (!timeline) return null
+  const span = timeline.to - timeline.from
+  const pct = ((player.playheadTs - timeline.from) / span) * 100
+
+  return (
+    <div
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const f = (e.clientX - rect.left) / rect.width
+        player.seek(timeline.from + f * span)
+      }}
+    >
+      {timeline.gaps.map((g) => (
+        <span
+          key={g.fromTs}
+          data-reason={g.reason}
+          style={{
+            left: `${((g.fromTs - timeline.from) / span) * 100}%`,
+            width: `${((g.toTs - g.fromTs) / span) * 100}%`,
+          }}
+        />
+      ))}
+      <span style={{ left: `${pct}%` }} />
+    </div>
+  )
+}
+```
+
+## Telemetry at the playhead
+
+```tsx
+const { latest, position, routeLines, traveledLines, hasGps } =
+  useReplayTelemetry(deviceId, player)
+```
+
+`latest` is `LatestByMetric`, **the same shape the live feed emits**. That is
+what lets one readout component render a live device and a replay of last
+Tuesday without knowing which it has.
+
+The hook fetches in two tiers: one coarse interval-averaged pass over the whole
+window, for the route line and a scrub preview, plus a raw high-resolution
+window that follows the playhead. The window slides with hysteresis, so scrubbing
+inside its middle half never refetches.
+
+Two behaviours are worth stating because they look like bugs and are not.
+
+**A stale metric disappears rather than freezing.** Each metric group has a
+freshness cutoff, sized from its measured native cadence: IMU 2.5 s, GPS 5 s,
+system 10 s, cellular 60 s. Past the cutoff the metric is **absent** from
+`latest` and the view renders its placeholder. A group stops producing rows the
+moment its source stops updating, so a hole in the rows is a genuine recording
+hole, and interpolating across one would invent data.
+
+**A GPS hole hides the map marker.** `position` is interpolated between
+bracketing fixes when they are close enough and not across a trace break, else
+the last fix while it is still fresh, else `null`. Freezing a marker at the last
+known position is the failure mode that puts an asset somewhere it never was.
+
+`routeLines` and `traveledLines` are arrays of `[lon, lat]` polylines, split at
+recording holes, in Mapbox coordinate order.
+
+The pure functions behind all of it are exported too, for anyone building
+something the hook does not cover: `seriesFromReadings`, `floorIndex`,
+`latestWithin`, `stalenessMs`, `overviewStalenessMs`, `chooseIntervalSeconds`,
+`windowBoundsFor`, `windowNeedsRefetch`, `buildTrace`, `traceLines`,
+`traveledLines` and `positionAt`.
+
+## `ReplayVideo`
+
+```tsx
+<ReplayVideo player={player} streamKey="cam0" className="lane" />
+```
+
+`laneVideoRef` plus the `<video>` element. Same minimalism as
+[`KvsVideo`](/docs/frontend-sdk/live-video): no chrome, no gap overlay, no
+loading state. Read `player.laneState(streamKey)` and render those yourself.

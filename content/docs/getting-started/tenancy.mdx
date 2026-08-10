@@ -9,7 +9,7 @@ the first thing to get right, because two request headers depend on it.
 ## The chain
 
 ```
-user ──(membership: owner | admin | member)──> organization
+user ──(membership: owner | admin | member | viewer)──> organization
                                                    │
                                                    ├── workspace ──> device ──> telemetry, media, sessions
                                                    ├── workspace ──> device
@@ -36,9 +36,11 @@ every one of its MQTT topics. That identity chain is load-bearing.
 
 ## Roles
 
-Membership roles are `owner`, `admin`, and `member`. Roles gate writes: creating
-and deleting API keys, for instance, requires `owner` or `admin`, while any
-member can read them.
+Membership roles are `owner`, `admin`, `member` and `viewer`. Roles gate writes:
+creating and deleting API keys, for instance, requires `owner` or `admin`, while
+any member can read them. `viewer` can read everything in the organization and
+write nothing. The verified per-endpoint table is on the
+[backend SDK resources page](/docs/backend-sdk/resources).
 
 Separately, a user carries a **platform** role. Only platform admins can mutate
 the device-model catalog, since it is shared across all organizations rather than

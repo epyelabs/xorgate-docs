@@ -1,0 +1,333 @@
+---
+title: "Live telemetry"
+description: "useLiveTelemetry over MQTT, the metric interop contract, socket sharing, QoS 0 semantics, and the live-block gate."
+---
+
+`useLiveTelemetry` subscribes to `xorgate/devices/{id}/telemetry` over
+MQTT-over-WebSocket, signed with SigV4 from Cognito Identity Pool credentials.
+Devices publish at 1 Hz.
+
+```tsx
+import { useLiveTelemetry } from "@xorgate/react"
+
+function Speed({ deviceId }: { deviceId: string }) {
+  const { latest, status } = useLiveTelemetry(deviceId)
+  if (status !== "connected") return <p>Connecting…</p>
+  const speed = latest["gps.speed"]
+  return <p>{speed ? `${speed.value} ${speed.unit ?? ""}` : "no fix"}</p>
+}
+```
+
+## Return value
+
+<TypeTable
+  type={{
+    latest: {
+      type: "LatestByMetric",
+      description:
+        "Record<`group.field`, LatestReading>. The interop shape. Empty until the first payload.",
+    },
+    history: {
+      type: "TelemetryPoint[]",
+      description:
+        "Ring buffer, oldest first, capped at historyLimit. Flattened for charting libraries.",
+    },
+    recording: {
+      type: "TelemetryRecordingStatus | null",
+      description:
+        "The device's recording block. Last seen value; NOT nulled by a payload that omits it.",
+    },
+    media: {
+      type: "TelemetryMediaStatus | null",
+      description:
+        "KVS and on-device video recording flags, plus per-stream state.",
+    },
+    receivedAt: {
+      type: "number | null",
+      description:
+        "BROWSER-clock ms when the last valid payload arrived. The only trustworthy freshness signal.",
+    },
+    status: {
+      type: '"connecting" | "connected" | "closed" | "error" | "unavailable"',
+    },
+    unavailableReason: {
+      type: "LiveUnavailableReason | null",
+      description: 'Set only while status is "unavailable".',
+    },
+    error: { type: "XorgateError | null" },
+  }}
+/>
+
+Options are `enabled` (default true), `historyLimit` (default 300, about five
+minutes at 1 Hz) and `flushMs` (default 250).
+
+## The metric interop contract
+
+```ts
+type MetricName = `${string}.${string}` // "gps.lat", "imu.accel_z", "system.cpu_temp"
+type LatestByMetric = Record<MetricName, LatestReading>
+
+interface LatestReading {
+  metric: MetricName
+  value: number | null
+  unit: string | null
+  ts: string // ISO 8601
+}
+```
+
+This is the single most important type in the SDK, because three different
+sources produce it:
+
+| Source                               | Hook                          |
+| ------------------------------------ | ----------------------------- |
+| Live MQTT                            | `useLiveTelemetry().latest`   |
+| `GET /devices/{id}/telemetry/latest` | `useTelemetryLatest()`        |
+| Replayed history at the playhead     | `useReplayTelemetry().latest` |
+
+A readout component written against `LatestByMetric` therefore renders live
+data, a polled snapshot and a replay of last Tuesday without knowing which it
+has. That is the whole reason the shape is fixed.
+
+<Callout title="A normalization happens here">
+Inside `xorgate-web` the live feed's own reading shape is
+`{ value: number; unit?: string; ts: number }`, with `ts` in epoch milliseconds
+and no `metric` field. The SDK normalizes on the way out: it adds `metric`,
+widens `value` and `unit` to nullable, and converts `ts` to an ISO string, so
+the live plane and the REST plane are genuinely the same type rather than two
+similar ones. Charts that want epoch milliseconds use `history`, which keeps
+them.
+</Callout>
+
+<Callout type="warn" title="A missing metric is undefined">
+`Record<MetricName, LatestReading>` is keyed by a template literal type, so
+without `noUncheckedIndexedAccess` TypeScript will let you write
+`latest["gps.lat"].value` for a metric the device has never reported. Turn the
+flag on, or check first. Devices report only what their model's
+`ioCapabilities` declares, and a GPS group vanishes entirely after ten seconds
+without a fix.
+</Callout>
+
+## The payload
+
+Payload v1, validated on arrival. A payload that fails validation is dropped
+silently rather than surfaced as an error, because a malformed frame from one
+device is not something a user can act on.
+
+```json
+{
+  "v": 1,
+  "deviceId": "dev_...",
+  "ts": 1786000000000,
+  "seq": 41213,
+  "metrics": {
+    "gps": { "lat": { "value": 45.42, "unit": "deg" } },
+    "imu": { "accel_z": { "value": 9.79, "unit": "m/s2" } }
+  },
+  "media": { "kvs": { "value": true }, "recording": { "value": true } },
+  "recording": { "enabled": true, "backlogSegments": 0, "uploading": false }
+}
+```
+
+`metrics` is a two-level object, `group` then `field`, and the SDK flattens it to
+`group.field` on the way into `latest` and `history`. The `media` and
+`recording` blocks are validated defensively and independently: if either fails
+to parse, it is treated as absent and the metrics still land. That is why they
+are typed nullable and why the SDK never nulls them out on a payload that omits
+them, only replaces them when a new one arrives.
+
+### Two clocks, and only one of them is trustworthy
+
+`payload.ts` and `recording.liveBlock.since` are the **device's** clock. A device
+whose RTC has not synced can publish a timestamp that makes arithmetic against
+it absurd or negative.
+
+`receivedAt` is the **browser's** clock, stamped on every accepted payload
+including one that carries no `recording` block. Freshness is a property of the
+feed, not of the block. Anything that asks "how current is this?" must use
+`receivedAt`.
+
+## Charting with `history`
+
+```ts
+interface TelemetryPoint {
+  ts: number // epoch ms, device clock
+  [metric: `${string}.${string}`]: number | undefined
+}
+```
+
+One entry per payload, flat, which is the shape chart libraries want. The buffer
+is capped at `historyLimit` and trimmed from the front.
+
+```tsx
+function LiveChart({ deviceId }: { deviceId: string }) {
+  const { history } = useLiveTelemetry(deviceId, { historyLimit: 600 })
+  return <LineChart data={history} xKey="ts" yKey="imu.accel_z" />
+}
+```
+
+## One socket per device
+
+All simultaneous consumers of the same device share **one** connection. The feed
+is a module-level, reference-counted store: the first mount opens it, later
+mounts attach, and it closes when the last consumer unmounts.
+
+This matters more than it sounds. A device page that shows a status header, a
+map, a chart and a live-video gate is four consumers of the same feed. Without
+sharing that is four WebSocket connections to AWS IoT per open tab, each paying
+its own credential mint and its own presign.
+
+Consequences worth knowing:
+
+- **Mount it freely.** Calling `useLiveTelemetry(deviceId)` in five components
+  is the intended usage, not a thing to optimize around.
+- **A late mounter gets the current snapshot immediately**, rather than an empty
+  `latest` until the next payload arrives a second later.
+- **Tab switches inside a device page do not bounce the socket**, as long as one
+  consumer stays mounted across them. Keep one at the layout level if you care.
+- **Updates are coalesced.** A 1 Hz feed carrying twenty metrics would otherwise
+  be twenty state writes per second; `flushMs` batches them into at most four
+  renders per second.
+
+## Reconnect behaviour
+
+Manual, not mqtt.js's own: the presigned URL is effectively single-use, so a
+library-level reconnect would replay a stale signature.
+
+- Backoff doubles from 1 s to a 30 s ceiling, and resets on a successful
+  connect.
+- The connection is proactively cycled at 50 minutes, comfortably inside the
+  roughly one hour credential and URL lifetime. You will see a brief `closed`
+  followed by `connected` on a long-lived page. That is healthy.
+- `POST /iot/attach-policy` runs before every connect attempt, not once. It is
+  idempotent and cheap, and doing it every time removes a whole class of "worked
+  yesterday, 403 today" bugs.
+
+## QoS 0, and nothing retained
+
+<Callout type="warn" title="Frames published before your subscription lands are gone">
+
+The subscription is QoS 0 and the telemetry topic is not retained. Between mount
+and the broker acknowledging the subscription there is a credential mint, a
+presign, a TCP and TLS handshake and a CONNECT round trip. Every payload the
+device publishes in that window is dropped by design.
+
+In practice that is the first second or two of a page load. A chart seeded only
+from live data therefore starts empty and stays a second behind wall clock.
+
+</Callout>
+
+Seed it from history instead:
+
+```tsx
+function SeededChart({ deviceId }: { deviceId: string }) {
+  const xg = useXorgate()
+  const { history } = useLiveTelemetry(deviceId)
+  const [seed, setSeed] = useState<TelemetryReading[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void xg.telemetry
+      .recent(deviceId, { metric: ["gps.speed"], limit: 300 })
+      .then((r) => {
+        if (!cancelled) setSeed(r.readings)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [xg, deviceId])
+
+  return <LineChart data={merge(seed, history)} xKey="ts" yKey="gps.speed" />
+}
+```
+
+## The live-block gate
+
+Devices park every video stream at once when the GPS and cellular boot gate is
+armed, or when the power load-shedding ladder drops to its first rung, and they
+publish why in `recording.liveBlock`. `useLiveBlock` turns that into a verdict.
+
+```tsx
+import { useLiveBlock, useLiveTelemetry } from "@xorgate/react"
+
+function DeviceVideo({ deviceId }: { deviceId: string }) {
+  const feed = useLiveTelemetry(deviceId)
+  const block = useLiveBlock(feed)
+
+  if (block.blocked) {
+    return (
+      <div>
+        <p>Live view is paused ({block.reason}).</p>
+        <p>{block.detail}</p>
+        {block.parked ? <p>It will not resume on its own.</p> : null}
+      </div>
+    )
+  }
+  return <LiveGrid deviceId={deviceId} />
+}
+```
+
+Two rules govern it, and they pull in opposite directions.
+
+**Fail open on absence.** No feed, no payload yet, a payload older than 30
+seconds, an agent too old to send the field, or a `recording` block that failed
+validation: every one of those means **show the player**. A gate that blocks on
+missing information is a worse bug than the black tile it replaces, and the cost
+of being wrong in that direction is one timed-out connection attempt, which is
+what you would have had anyway. `block.why` tells you which branch fired.
+
+**Honour an unrecognised reason.** `reason` is an open string on the wire. A
+reason this version of your app has never heard of still blocks, with whatever
+generic copy you write, because the device explicitly **said** blocked. That is
+presence, not absence, so it does not contradict the first rule. A newer device
+against an older frontend is a normal deployment state.
+
+The verdict is data only:
+
+```ts
+type LiveBlockState =
+  | { blocked: false; why: LiveBlockOpenReason }
+  | {
+      blocked: true
+      reason: LiveBlockReason
+      detail: string
+      elapsedMs: number | null
+      parked: boolean
+    }
+```
+
+No title, no description, no icon, no "open power settings" link. **Copy is
+product voice and belongs to your app.** xorgate-web keeps its own
+reason-to-descriptor registry with icons and deep links into its settings
+screens; that registry is exactly the sort of thing an SDK should not own.
+
+`reason` is typed as `"gps-gate" | "undervoltage" | "thermal" | (string & {})`,
+so you get autocomplete for the three known reasons and no type error for a
+fourth.
+
+`elapsedMs` is null when the device's clock makes the arithmetic untrustworthy,
+which means negative or 24 hours or more. The block itself still stands; only
+the "for how long" garnish is dropped.
+
+`parked` means the shed has spent its rolling-hour cycle cap. A parked shed does
+**not** recover on its own: it holds until the device reboots or its power
+settings change. Copy promising a return is a lie in that state.
+
+`detail` is device prose, for example `cpu 66.1C >= 60C for 5s`. Display it
+verbatim and never parse it. It is the rationale that started the block and does
+not track live numbers, so a thermal block that fired at 66.1 C keeps saying
+66.1 C for its whole life.
+
+## Availability
+
+`status: "unavailable"` is a terminal state, not an error. It means the live
+plane cannot be reached at all, and `unavailableReason` says why:
+`"no-aws-credentials"` for an API-key-only provider, `"not-configured"` when the
+provider has no `iotEndpoint` or `identityPoolId`, `"not-provisioned"` when the
+device has no IoT identity.
+
+<Callout type="warn" title="The IoT policy is org-blind">
+  The browser policy attached by `POST /iot/attach-policy` is scoped to any
+  authenticated user, not to your organization. Any signed-in user of the
+  platform can subscribe to any device's telemetry topic. The full caveat is on
+  [the provider page](/docs/frontend-sdk/provider).
+</Callout>

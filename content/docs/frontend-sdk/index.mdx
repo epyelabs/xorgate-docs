@@ -1,14 +1,150 @@
 ---
 title: "Frontend SDK (React)"
-description: "Headless React hooks and players for live video, live telemetry, and replay."
+description: "A design document for @xorgate/react, the headless browser SDK for live video, live telemetry and replay, written before the package exists."
 ---
 
-This section documents the React SDK: a provider that carries configuration and
-credentials, plus headless hooks for devices, live telemetry over MQTT, telemetry
-history, the KVS WebRTC live viewer, and the recorded-media replay player. It
-brings no styling opinion, so the chrome stays yours.
+`@xorgate/react` is the browser half of the xorgate SDK. It wraps
+[`@xorgate/sdk`](/docs/backend-sdk) for everything REST, and adds the two planes
+that never go through the REST API at all: live telemetry over MQTT and live
+video over WebRTC, plus the recorded-media replay player.
 
-<Callout title="Not written yet">
-  Placeholder. Like the backend SDK, these pages are written as a design
-  document first, and the package follows the docs.
+It is headless. There is no styling, no design system, no layout. Hooks return
+state and refs; you render.
+
+<Callout type="warn" title="The package does not exist yet">
+
+These pages are the **specification**, not a reference for shipped code.
+`npm install @xorgate/react` will not work today. Every hook, option and example
+here is the contract a future implementation is built to, and it is kept
+type-checkable against a single `interface-react.d.ts` sketch that lives with
+the plan.
+
+The code being specified does exist, though. Every live and replay behaviour
+described here is running in production inside `xorgate-web` today. This design
+is a description of how it gets lifted out from behind its hardcoded
+environment variables, not a proposal for something new.
+
 </Callout>
+
+## What it is
+
+```tsx
+import { XorgateProvider, useDevices, useLiveTelemetry } from "@xorgate/react"
+
+function App() {
+  return (
+    <XorgateProvider
+      config={{ baseUrl, region, identityPoolId, userPoolId, iotEndpoint }}
+      auth={{ getIdToken: () => session.idToken }}
+      organizationId={orgId}
+    >
+      <Fleet />
+    </XorgateProvider>
+  )
+}
+
+function Fleet() {
+  const { data: devices, isLoading } = useDevices({ status: "online" })
+  if (isLoading) return <Spinner />
+  return devices?.map((d) => <DeviceRow key={d.id} device={d} />)
+}
+```
+
+- **One provider.** It carries the endpoint, the AWS identifiers, the auth
+  strategy and the tenancy. Nothing below it reads an environment variable.
+- **Three planes, one vocabulary.** REST, live and replay all speak the types
+  from `@xorgate/sdk`, re-exported here so there is exactly one `Device` and one
+  `LatestReading` on the platform.
+- **One metric contract.** Live MQTT, `telemetry/latest` and replayed telemetry
+  all produce `Record<"group.field", LatestReading>`, so one readout component
+  renders all three without knowing which it is looking at.
+- **No query library.** The hooks are a zero-dependency
+  subscribe-and-snapshot pattern. Bring react-query or SWR if you want one, and
+  drive it from `useXorgate()`.
+- **Nothing hidden.** The reconnect machinery, the buffered-media truth, the
+  gap semantics and the parts that are not a tenant boundary yet are all
+  documented rather than smoothed over.
+
+## The pages
+
+<Cards>
+  <Card
+    title="Installation"
+    href="/docs/frontend-sdk/installation"
+    description="Peer dependencies, bundle weight, and what is browser-only."
+  />
+  <Card
+    title="Provider and auth"
+    href="/docs/frontend-sdk/provider"
+    description="Config, the three auth modes, and the three credential flows."
+  />
+  <Card
+    title="Data hooks"
+    href="/docs/frontend-sdk/data-hooks"
+    description="Devices, telemetry latest and history, and the query contract."
+  />
+  <Card
+    title="Live telemetry"
+    href="/docs/frontend-sdk/live-telemetry"
+    description="useLiveTelemetry, the payload, socket sharing, and QoS 0."
+  />
+  <Card
+    title="Live video"
+    href="/docs/frontend-sdk/live-video"
+    description="useKvsViewer, KvsVideo, and the live-block gate."
+  />
+  <Card
+    title="Replay"
+    href="/docs/frontend-sdk/replay"
+    description="The manifest, the clock, lanes, and the headless MSE player."
+  />
+  <Card
+    title="Types"
+    href="/docs/frontend-sdk/types"
+    description="What is re-exported, what is new, and the two timestamp units."
+  />
+  <Card
+    title="What this SDK does not cover"
+    href="/docs/frontend-sdk/not-covered"
+    description="React Native, server rendering, and the org-blind live plane."
+  />
+  <Card
+    title="Walkthrough: live asset map"
+    href="/docs/frontend-sdk/asset-map-walkthrough"
+    description="A fleet map and an incident replay, with no styling framework."
+  />
+</Cards>
+
+## Design principles
+
+**Config is injected, always.** This is the one systemic change the extraction
+makes. Inside `xorgate-web` every one of these modules reads `import.meta.env`
+at module scope, which means the endpoint is chosen by whoever bundled the file.
+A library cannot work that way: one build has to serve a consumer's dev and
+production, and a test has to be able to point a hook at a fake. Every extracted
+piece takes its configuration from the provider.
+
+**Headless means headless.** Two components ship, `KvsVideo` and `ReplayVideo`,
+and each is a hook plus a bare `<video>` element. No card, no spinner, no error
+text, no aspect ratio. They exist so the common case is one line, not so they
+can be your player. Everything with an opinion in it, including the copy for
+"live view is paused because the device is too hot", stays in the app.
+
+**Mirror the platform's semantics, including the awkward ones.** A gap in a
+replay is per lane, because one camera dark while another records is not a
+replay-level gap. `telemetry/latest` has no staleness signal, so
+`useTelemetryLatest` does not invent one and the docs tell you to check `ts`
+yourself. Live telemetry is QoS 0 with nothing retained, so frames published
+before your subscription completes are gone, and this page says so rather than
+buffering something that was never received.
+
+**Keep the hardening.** The KVS viewer's reconnect logic looks
+over-engineered until you watch a device drive under a bridge. Generation
+counters, per-step and whole-attempt deadlines, a disconnect grace window,
+mobile visibility nudges: all of it survives the lift, because all of it was
+added in response to a real failure.
+
+**Say what is not a boundary.** The IoT and KVS browser policies are org-blind:
+any authenticated user can subscribe to any device. That is a platform gap with
+a fix planned, and it is the reason third-party live access is not generally
+available. It appears on every live page here rather than in a footnote.

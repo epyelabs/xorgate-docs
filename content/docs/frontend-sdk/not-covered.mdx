@@ -1,0 +1,184 @@
+---
+title: "What this SDK does not cover"
+description: "Runtime limits, deliberate omissions, and the platform gaps a browser consumer will hit."
+---
+
+Everything here is a known limit, not an oversight. Reading it before you design
+around this package is cheaper than discovering it afterwards.
+
+## Runtime limits
+
+### React Native is not supported
+
+There is no plan to support it. The live plane needs `RTCPeerConnection` with
+the browser's ICE behaviour, `MediaSource`, `HTMLVideoElement` and a
+`WebSocket` that mqtt.js recognises. React Native has partial or third-party
+equivalents for some of that and nothing at all for MSE-based replay.
+
+The REST hooks would work, but shipping a package that supports one of three
+planes on a platform is worse than not shipping it.
+
+### Server rendering renders a shell
+
+The provider renders on the server without error. Every REST hook returns
+`{ data: undefined, isLoading: true }` there, so a page renders its loading
+state and hydration fills it in. That is the whole extent of the support.
+
+The live and replay hooks touch browser APIs on mount, so put them below a
+client boundary. Under Next.js, mark the component that mounts the provider
+`"use client"`.
+
+There is no server-side data fetching helper, no `dehydrate`/`hydrate` pair and
+no streaming integration. If you want data on the server, call `@xorgate/sdk`
+there directly and pass the result down as props; that is what it is for.
+
+### No Suspense, no `use()`
+
+The hooks return state, they do not throw promises. Suspense boundaries around
+them do nothing. If you want Suspense, drive `@xorgate/sdk` through a library
+that provides it.
+
+### Video playback is browser-only
+
+Replay is fragmented MP4 through Media Source Extensions. There is no HLS, no
+DASH and no plain URL you can hand to another player, and there is no
+transcoding service to ask for one. Recorded segments are 60-second fMP4 files
+in S3, and stitching them is the client's job.
+
+## Deliberate omissions
+
+### No styling, and no copy
+
+Two components ship, `KvsVideo` and `ReplayVideo`, and each is a hook plus a
+bare `<video>` element. There is no grid, no scrubber component, no status
+badge, no gap overlay, no error card.
+
+The same rule applies to words. `useLiveBlock` returns
+`{ blocked, reason, detail, elapsedMs, parked }` and no human-readable copy at
+all, even though xorgate-web has three carefully written paragraphs for the
+three known reasons. Copy is product voice; an SDK that ships it makes every
+consumer sound like xorgate.
+
+### No query cache
+
+No deduplication across components, no background revalidation beyond
+`refetchIntervalMs`, no optimistic updates, no mutation helpers. The data hooks
+are thin wrappers over `@xorgate/sdk` calls.
+
+Bring your own library and drive it from `useXorgate()`. That is a first-class
+way to use this package, not a workaround.
+
+### No writes
+
+The hooks are read-only. There is no `useUpdateDevice` or `usePatchConfig`,
+because a mutation hook without a cache to invalidate is just a `useState`
+around a promise. Do writes imperatively:
+
+```tsx
+const xg = useXorgate()
+await xg.devices.patchConfig(deviceId, { gnssAntBias: true })
+await refetch()
+```
+
+### No workflows, no AI
+
+The workflow templates, instances, runs, catalog, model registry and simulation
+surfaces are out of scope for the whole SDK effort, in both packages.
+
+## Platform gaps you will hit
+
+These are limits of the platform, not of the SDK. They are recorded on the
+plan's backlog; they are listed here so you can design around them today.
+
+### The live plane is not a tenant boundary
+
+<Callout type="warn" title="Any authenticated user can watch any device">
+
+The browser IoT policy and the browser KVS policy are both scoped to "any
+authenticated user", not to the devices in your organization. Any signed-in user
+of the platform can subscribe to any device's telemetry topic and open a viewer
+on any device's video channel.
+
+The REST API is not affected; every endpoint there enforces membership.
+
+The consequence: live video and live telemetry are safe inside a single trusted
+organization, and are **not** ready for third parties. This is the single
+biggest reason third-party live access is not generally available.
+
+</Callout>
+
+### A consumer with its own auth has no live plane
+
+An application that runs its own authentication cannot federate into xorgate's
+Cognito Identity Pool, so its browser cannot mint the AWS credentials the live
+plane needs. Until credential vending exists, such a consumer has two options:
+
+- Poll `useTelemetryLatest` with `refetchIntervalMs` for current state.
+- Use recorded [replay](/docs/frontend-sdk/replay) instead of live video.
+
+Both work today with an API key. The provider's `auth` slot already has the
+shape the fix will use, so nothing you write now has to change.
+
+### API keys are not verified yet
+
+Keys are mint-only. Nothing on the platform verifies one, so an API-key provider
+gets a 401 on every request until that lands.
+
+### No webhooks, so polling is the only option
+
+Nothing pushes over the REST plane. Device state, config acknowledgement,
+registration claims and new recording sessions are all discovered by polling.
+`refetchIntervalMs` is the tool; be gentle with it, especially against
+`useRecordingRuns`, which is the slowest endpoint in the API.
+
+Live telemetry **is** push, and it carries more than metrics: the `recording`
+and `media` blocks tell you whether the device is uploading, whether video is
+recording and whether live streaming is parked. Where a device is online, that
+feed is a better source than any poll.
+
+### No batch telemetry read
+
+There is one `telemetry/latest` per device. A fleet map is N requests, so a
+workspace dashboard is N+1 and a thousand-device fleet is not servable this way.
+For a fleet view, poll a bounded page of devices rather than the whole fleet.
+
+### `telemetry/latest` has no staleness signal
+
+It returns the last reading it ever ingested, forever. Compare `reading.ts`
+against now yourself, on every consumer, or ship a map that lies about where an
+asset is.
+
+### Config writes have no optimistic concurrency
+
+`PATCH /devices/{id}/config` replaces each namespace whole with no `If-Match` on
+`configRev`. Two browser tabs editing the same device silently clobber each
+other, and the loser never learns. Read, merge and write is a mitigation, not a
+fix.
+
+### The development API is slow when cold
+
+First call after an idle period runs 1 to 2.5 s. Warm calls are 200 to 420 ms,
+except `GET /devices/{id}/sessions`, which is about 1,090 ms even warm. The
+cause is Lambda cold starts against a database sitting at its minimum capacity,
+not the SDK. Do not set `timeoutMs` below about 3,000, and do not write a test
+that assumes a fast first request.
+
+## Where to go instead
+
+<Cards>
+  <Card
+    title="Backend SDK"
+    href="/docs/backend-sdk"
+    description="Server-side JavaScript: writes, provisioning, and everything with a role gate."
+  />
+  <Card
+    title="API reference"
+    href="/docs/api-reference"
+    description="Every endpoint, with a playground that calls the live API."
+  />
+  <Card
+    title="Device SDK"
+    href="/docs/device-sdk"
+    description="The agent, the MQTT contract, and the device side of all of this."
+  />
+</Cards>

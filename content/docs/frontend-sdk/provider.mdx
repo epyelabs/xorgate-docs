@@ -1,0 +1,319 @@
+---
+title: "Provider and auth"
+description: "XorgateProvider configuration, the three auth modes, and the three separate credential flows behind REST, live telemetry and live video."
+---
+
+`XorgateProvider` carries four things: where the API is, what AWS resources the
+live plane uses, how to authenticate, and which tenant you are acting as.
+Everything below it reads them from context.
+
+```tsx
+import { XorgateProvider } from "@xorgate/react"
+
+;<XorgateProvider
+  config={{
+    baseUrl: import.meta.env.VITE_API_BASE_URL,
+    region: import.meta.env.VITE_AWS_REGION,
+    identityPoolId: import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID,
+    userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,
+    iotEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
+  }}
+  auth={{ getIdToken }}
+  organizationId={organizationId}
+  workspaceId={workspaceId}
+>
+  <App />
+</XorgateProvider>
+```
+
+Reading `import.meta.env` in your own application code is fine. The rule is that
+the **SDK** never does it: the values arrive as props, so one build of the
+package serves your development and production environments, and a test can
+point a hook at a fake without a bundler.
+
+## `config`
+
+<TypeTable
+  type={{
+    baseUrl: {
+      type: "string",
+      required: true,
+      description:
+        "API origin. No default: there is no stable public API domain yet.",
+    },
+    region: {
+      type: "string",
+      description:
+        "AWS region for the live plane. Also the fallback for a KVS channel that reports no region of its own.",
+    },
+    identityPoolId: {
+      type: "string",
+      description:
+        "Cognito Identity Pool that vends AWS credentials to the browser.",
+    },
+    userPoolId: {
+      type: "string",
+      description:
+        "Cognito User Pool. Used to build the Identity Pool logins key from an ID token.",
+    },
+    iotEndpoint: {
+      type: "string",
+      description:
+        "The account's iot:Data-ATS endpoint host, no scheme. Live telemetry only.",
+    },
+    fetch: {
+      type: "(input, init) => Promise<Response>",
+      description: "Injected for tests. Defaults to the global fetch.",
+    },
+    timeoutMs: {
+      type: "number",
+      default: "30000",
+      description: "Per-request deadline for REST calls.",
+    },
+    headers: {
+      type: "Record<string, string>",
+      description:
+        "Merged into every REST request. Cannot override auth or tenancy headers.",
+    },
+  }}
+/>
+
+Only `baseUrl` is required. The four AWS fields are what the **live** plane
+needs, and leaving them out is a supported configuration rather than a mistake:
+every live hook then reports `status: "unavailable"` with
+`unavailableReason: "not-configured"` instead of failing at runtime. REST and
+replay work without any of them.
+
+Today's development API base is <ApiBaseUrl /> in <AwsRegion />.
+
+`iotEndpoint` is the one value that is not in any console page you would think
+to look at. Get it with `aws iot describe-endpoint --endpoint-type iot:Data-ATS`,
+or read it off `iot.dataEndpoint` in a `POST /devices/{id}/provision` response.
+
+## `auth`
+
+Three modes. They differ in which planes they can reach, which is the single
+most important thing to understand about this SDK.
+
+### `{ getIdToken }`, Cognito
+
+```tsx
+auth={{ getIdToken: async () => (await auth.currentSession()).getIdToken() }}
+```
+
+The only mode that can do live video and live telemetry today. It returns a
+Cognito **ID** token, not an access token: the API verifies `tokenUse: "id"`,
+and the Identity Pool federates on the ID token as well.
+
+It is called on every REST request and before every live reconnect. The SDK does
+not cache it, because your Cognito library already does and only that library
+knows when it expires. Returning `null` means "not signed in yet": REST hooks
+stay `isLoading`, live hooks stay `connecting`, and nothing throws.
+
+### `{ apiKey }`, REST only
+
+```tsx
+auth={{ apiKey: process.env.XORGATE_API_KEY }}
+```
+
+Sent as `Authorization: Bearer xg_…`, matching
+[the backend SDK](/docs/backend-sdk/authentication). Two warnings, both real:
+
+<Callout type="warn" title="An API key in a browser bundle is a published key">
+  This mode exists for React rendered on a server you control, or behind a proxy
+  that injects the header. It is not for a public single-page app. Nothing in
+  the platform can scope a key to an origin, so a leaked key is a
+  full-organization credential.
+</Callout>
+
+<Callout type="warn" title="No endpoint verifies an API key yet">
+  Keys are mint-only. Every request in this mode gets a 401 until the backend
+  grows key verification. The SDK attaches a `hint` to that error saying so.
+</Callout>
+
+This mode has no live plane. Live hooks report
+`unavailableReason: "no-aws-credentials"`.
+
+### `{ getAwsCredentials }`, the forward slot
+
+```tsx
+auth={{
+  apiKey: undefined,
+  getAwsCredentials: () => myBackend.mintXorgateCredentials(),
+}}
+```
+
+Not implementable today, and it is in the type anyway. Here is why that is the
+right call rather than speculative design.
+
+A consumer that runs its own authentication cannot federate into xorgate's
+Cognito Identity Pool. Project Alocate is exactly that: it manages its own users
+and talks to xorgate server-to-server with an API key, so its browser has no
+route to AWS credentials and therefore no live video and no live telemetry. The
+planned fix is credential vending, where the consumer's backend exchanges its
+API key for scoped temporary AWS credentials through a Cognito
+developer-authenticated identity.
+
+When that lands, an affected consumer supplies this one function and every live
+hook starts working **with no change to its contract**. Nothing in
+`useLiveTelemetry`, `useKvsViewer` or `useReplayPlayer` mentions an auth mode;
+they ask an internal resolver for credentials. That is the entire point of
+shaping the slot now.
+
+`getAwsCredentials` is called on connect and again on the roughly 50 minute
+refresh cycle, so an implementation should cache and only mint when its own copy
+is near expiry.
+
+Until it exists, an Alocate-shaped consumer has two options for showing an
+asset's current state: poll `useTelemetryLatest` with `refetchIntervalMs`, and
+use recorded [replay](/docs/frontend-sdk/replay) instead of live video. Both
+work today with an API key.
+
+## Tenancy
+
+```tsx
+organizationId={organizationId}   // string | null, required prop
+workspaceId={workspaceId}         // optional
+```
+
+`organizationId` is **nullable on purpose**, which is a deliberate divergence
+from the backend SDK, where it is a required string. A browser renders before
+the user has picked an organization, and a brand-new user has none at all.
+Making the prop required but the value nullable forces you to think about that
+state instead of discovering it as a 400.
+
+While it is null:
+
+- `useMe()` and `useOrganizations()` still work. They are two of the three
+  operations that need no active organization, which is how you populate an
+  organization switcher in the first place.
+- Every org-scoped hook resolves to
+  `error.code === "ORGANIZATION_REQUIRED"` **without making a request**. No
+  wasted round trip, no confusing 400 in the network tab.
+
+`workspaceId` is a filter on `useDevices()` and a required field on device
+registration. It is sent on nothing else. Note that an out-of-organization
+workspace id yields an **empty page**, not an error, so an empty device list
+never distinguishes "no devices" from "wrong workspace".
+
+Changing either prop refetches the REST hooks. It does not disturb the live
+sockets, which are keyed by device.
+
+## The three credential flows
+
+This is the part worth reading twice. The three planes authenticate in three
+different ways, and they fail independently.
+
+| Plane          | Credential                                    | How                                                                                                           |
+| -------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| REST           | `Authorization: Bearer <id token or xg_ key>` | Sent by `@xorgate/sdk` on every request, plus the tenancy headers.                                            |
+| Live telemetry | SigV4 over WebSocket                          | ID token to Identity Pool credentials, then a hand-rolled presigned WSS URL, after `POST /iot/attach-policy`. |
+| Live video     | SigV4                                         | ID token to Identity Pool credentials, then the KVS signaling client and a WebRTC VIEWER session.             |
+
+<Steps>
+
+<Step>
+
+**REST** is the simple one. The token or key goes in `Authorization`,
+`X-Organization-Id` goes on every request, `X-Workspace-Id` goes on the two
+places it means something.
+
+</Step>
+
+<Step>
+
+**Live telemetry** needs an extra step nothing else does. AWS IoT authorizes
+Cognito identities through an **attached IoT policy**, not through the IAM role
+on the credentials. So before the first connect, the SDK calls
+`POST /iot/attach-policy`, which attaches the browser policy to the **caller's
+own** Cognito identity.
+
+That is why `@xorgate/sdk` has no method for it and this package does: an
+endpoint that acts on the identity of whoever calls it is meaningless from a
+server. It is idempotent, so calling it on every page load is fine, and the SDK
+does exactly that rather than trying to remember.
+
+Then it mints Identity Pool credentials and builds a presigned WSS URL by hand.
+Two quirks make that hand-rolled rather than a call into
+`@aws-sdk/signature-v4`, and both survive into the SDK:
+
+- IoT signs a GET with **only** the `host` header against service
+  `iotdevicegateway`, and `X-Amz-Security-Token` must be appended to the query
+  string **after** signing. The device gateway rejects the handshake if the
+  session token is inside the signed canonical query, which is the opposite of
+  what most AWS services want.
+- mqtt.js rebuilds the WebSocket URL from host and path and **drops the query
+  string**, which would strip every SigV4 parameter and earn a 403. The
+  connection passes `transformWsUrl: () => url` to force the full presigned URL
+  through.
+
+</Step>
+
+<Step>
+
+**Live video** is the easy one by comparison. KVS authorizes with plain
+IAM and SigV4, so there is no attach-policy step. The SDK mints the same
+Identity Pool credentials, resolves the channel's VIEWER endpoints, fetches the
+ICE server configuration, and runs a WebRTC VIEWER session.
+
+</Step>
+
+</Steps>
+
+## The live plane is not a tenant boundary yet
+
+<Callout type="warn" title="Live IoT and KVS policies are org-blind">
+
+The browser IoT policy attached by `POST /iot/attach-policy` and the browser KVS
+policy are both scoped to "any authenticated user", not to the devices in your
+organization. **Any signed-in user of this platform can subscribe to any
+device's live telemetry topic and open a viewer on any device's video channel.**
+
+The REST API is not affected. Every REST endpoint enforces organization
+membership; this is specific to the two live planes, which bypass the API
+entirely and talk to AWS directly.
+
+The consequence for you: live video and live telemetry are safe inside a single
+trusted organization, which is what xorgate-web is, and are **not** ready for
+third parties. Fixing it is Phase 6 P2 of the platform-readiness work, and it is
+the same work item as credential vending, because both need per-identity policy
+scoping.
+
+</Callout>
+
+`useLivePlane()` tells you whether the live plane is reachable at all, so a page
+can render one honest banner instead of three broken tiles.
+
+```tsx
+import { useLivePlane } from "@xorgate/react"
+
+function LiveBanner() {
+  const { available, reason } = useLivePlane()
+  if (available) return null
+  return <p role="status">Live view is unavailable ({reason}).</p>
+}
+```
+
+`reason` is one of `"no-aws-credentials"` (the auth mode cannot produce AWS
+credentials), `"not-configured"` (the provider is missing one of the four AWS
+fields), or `"not-provisioned"` (reported per device, not by this hook, when the
+device has no IoT identity or no KVS channels).
+
+## Escape hatches
+
+`useXorgate()` returns the underlying `@xorgate/sdk` client. Use it for anything
+the hooks do not model, for imperative calls in event handlers, and as the
+`queryFn` if you would rather drive fetching with react-query or SWR.
+
+```tsx
+import { useXorgate } from "@xorgate/react"
+
+function RebootButton({ deviceId }: { deviceId: string }) {
+  const xg = useXorgate()
+  return <button onClick={() => xg.devices.reboot(deviceId)}>Reboot</button>
+}
+```
+
+`useAwsCredentials()` returns the credentials the live hooks resolved, so a
+consumer can drive an AWS client of its own with the same session instead of
+building a parallel credential path.

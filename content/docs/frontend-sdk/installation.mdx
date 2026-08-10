@@ -1,0 +1,118 @@
+---
+title: "Installation"
+description: "Peer dependencies, what each one costs, and why this package is browser-only."
+---
+
+<Callout type="warn" title="Not published yet">
+  `@xorgate/react` is a design document. The commands below are what installing
+  it will look like.
+</Callout>
+
+## Install
+
+<Tabs items={["npm", "pnpm", "yarn"]}>
+  <Tab value="npm">
+
+```bash
+npm install @xorgate/react @xorgate/sdk react
+```
+
+  </Tab>
+  <Tab value="pnpm">
+
+```bash
+pnpm add @xorgate/react @xorgate/sdk react
+```
+
+  </Tab>
+  <Tab value="yarn">
+
+```bash
+yarn add @xorgate/react @xorgate/sdk react
+```
+
+  </Tab>
+</Tabs>
+
+`@xorgate/sdk` is a hard dependency, not a peer, and it is deliberately pinned:
+that is what makes `import type { Device } from "@xorgate/react"` and the same
+import from `@xorgate/sdk` resolve to the identical type. If it were a peer, two
+resolved copies would give you two structurally identical but nominally
+unrelated `XorgateError` classes, and `instanceof` would start lying.
+
+## Peer dependencies
+
+| Peer    | Range            | Needed for |
+| ------- | ---------------- | ---------- |
+| `react` | `^18.2 \|\| ^19` | everything |
+
+That is the whole peer list. React 18 is the floor because the hooks use
+`useSyncExternalStore` semantics for the shared live feeds.
+
+## What comes with it
+
+The live and replay planes need real AWS machinery, and it is not small. These
+are regular dependencies, not peers, because their versions are coupled to
+signing behaviour the SDK depends on.
+
+| Dependency                                      | Used by                    | Notes                           |
+| ----------------------------------------------- | -------------------------- | ------------------------------- |
+| `mqtt`                                          | live telemetry             | MQTT 5 over WebSocket           |
+| `@aws-crypto/sha256-js`                         | live telemetry             | the hand-rolled SigV4 presigner |
+| `@aws-sdk/credential-provider-cognito-identity` | live telemetry, live video | Identity Pool credentials       |
+| `@aws-sdk/client-kinesis-video`                 | live video                 | signaling endpoint resolution   |
+| `@aws-sdk/client-kinesis-video-signaling`       | live video                 | ICE server configuration        |
+| `amazon-kinesis-video-streams-webrtc`           | live video                 | the signaling client            |
+
+**Every one of them is behind a dynamic import.** An app that only lists devices
+and reads telemetry history never pulls the AWS SDK clients or `mqtt` into its
+initial bundle: they load the first time a live hook actually connects. This
+matters because the KVS and Cognito clients together are the largest thing in
+the dependency tree by a wide margin, and most pages never mount a video.
+
+Replay pulls nothing extra. The MSE engine, the MP4 box walker and the timeline
+math are all hand-written and dependency-free.
+
+## Entry points
+
+```ts
+import { XorgateProvider, useDevices } from "@xorgate/react"
+```
+
+One entry point. There is no `@xorgate/react/live` or `@xorgate/react/replay`
+subpath, because the dynamic imports already give you the code-splitting that
+subpaths would be for, without asking you to know which hook lives where.
+
+## Browser only
+
+This package uses `WebSocket`, `RTCPeerConnection`, `MediaSource`,
+`HTMLVideoElement`, `document.visibilityState` and `crypto.randomUUID`. There is
+no server-side fallback for any of it.
+
+Under a server-rendering framework, mount the provider in a client component and
+keep the live and replay hooks below it. The provider itself renders on the
+server without error, and every data hook returns
+`{ data: undefined, isLoading: true }` there, so a shell renders and hydration
+fills it in. See [what this SDK does not cover](/docs/frontend-sdk/not-covered)
+for the details, including React Native, which is not supported.
+
+## TypeScript
+
+Types ship with the package; there is no `@types/xorgate__react`. The package
+targets ES2022 and ships ESM only, which is what every modern React toolchain
+consumes. `strict` is assumed throughout the examples.
+
+One `tsconfig` flag is worth turning on:
+
+```json
+{
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true
+  }
+}
+```
+
+`LatestByMetric` is a `Record` keyed by a template literal type, so without that
+flag TypeScript will happily let you write `latest["gps.lat"].value` for a
+metric the device has never reported. With it on, you get the `undefined` you
+would actually receive. The [types page](/docs/frontend-sdk/types) covers this.

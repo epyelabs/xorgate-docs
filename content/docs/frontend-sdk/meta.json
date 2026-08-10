@@ -1,4 +1,15 @@
 {
   "title": "Frontend SDK (React)",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "installation",
+    "provider",
+    "data-hooks",
+    "live-telemetry",
+    "live-video",
+    "replay",
+    "types",
+    "not-covered",
+    "asset-map-walkthrough"
+  ]
 }

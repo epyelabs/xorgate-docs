@@ -1,0 +1,350 @@
+---
+title: "Data hooks"
+description: "The query contract, the device and telemetry hooks, and why there is no query library underneath."
+---
+
+The data hooks are thin. Each one calls a single `@xorgate/sdk` method, tracks
+four pieces of state and hands them back. They exist so the common case does not
+need a `useEffect`, not because they are trying to be a caching layer.
+
+## The query contract
+
+Every REST hook returns the same shape.
+
+<TypeTable
+  type={{
+    data: {
+      type: "T | undefined",
+      description:
+        "Undefined until the first successful load. Stays put across a refetch.",
+    },
+    error: {
+      type: "XorgateError | null",
+      description: "The last failure. Cleared by a successful load.",
+    },
+    isLoading: {
+      type: "boolean",
+      description:
+        "True only while there is no data yet. A refetch does NOT flip it.",
+    },
+    isFetching: {
+      type: "boolean",
+      description:
+        "True whenever a request is in flight, including a refetch and loadMore.",
+    },
+    refetch: {
+      type: "() => Promise<void>",
+      description:
+        "Re-runs the query. Resolves when it settles and never rejects; the failure lands in error.",
+    },
+  }}
+/>
+
+The split between `isLoading` and `isFetching` is the one thing worth being
+careful about. `isLoading` is a first-paint signal, so a list does not flicker
+back to a skeleton every time you poll. `isFetching` is what a subtle refresh
+indicator watches.
+
+Options are the same everywhere too:
+
+<TypeTable
+  type={{
+    enabled: {
+      type: "boolean",
+      default: "true",
+      description:
+        "False keeps the hook idle: no request, data stays undefined.",
+    },
+    refetchIntervalMs: {
+      type: "number",
+      description:
+        "Poll interval. Off by default. There are no webhooks, so this is how you stay current.",
+    },
+    refetchOnFocus: {
+      type: "boolean",
+      description:
+        "Refetch when the tab becomes visible. Defaults to true when refetchIntervalMs is set.",
+    },
+  }}
+/>
+
+`refetchOnFocus` defaults on with polling because a background tab's timers are
+throttled to roughly once a minute, so the first frame after the user comes back
+is almost always stale.
+
+Every hook that takes an id accepts `null` to stay idle. That is how you obey
+the Rules of Hooks on a route where the id is not known yet.
+
+## Why there is no query library
+
+`@xorgate/react` does not depend on react-query, SWR or anything like them, and
+does not ship a cache.
+
+The reason is that the pattern is already proven here without one. The live
+telemetry feed is a module-level, reference-counted store that consumers
+subscribe to and snapshot; it survives many mounts of the same device, coalesces
+a 1 Hz firehose into at most four renders a second, and shares one socket across
+every consumer. The data hooks use the same subscribe-and-snapshot shape. Adding
+a query library would give the REST hooks a cache the live hooks cannot use, and
+put a peer dependency in front of a consumer who already has a different one.
+
+If you want caching, deduplication across components, optimistic updates or
+suspense, use your own library and drive it from `useXorgate()`:
+
+```tsx
+import { useQuery } from "@tanstack/react-query"
+import { useXorgate } from "@xorgate/react"
+
+function useCachedDevices() {
+  const xg = useXorgate()
+  return useQuery({
+    queryKey: ["xorgate", "devices"],
+    queryFn: () => xg.devices.listAll(),
+  })
+}
+```
+
+That is a supported, first-class way to use this package. The hooks are a
+convenience, not a wall.
+
+## `useDevices`
+
+```tsx
+const { data, page, hasMore, loadMore, isLoading, isFetching, error, refetch } =
+  useDevices({ status: "online", limit: 100 })
+```
+
+Parameters are the backend SDK's `ListDevicesParams` minus `signal` (a hook owns
+its own abort, tied to unmount), plus the query options: `workspaceId`,
+`status`, `sort`, `order`, `limit`, `offset`.
+
+`data` is a flat `Device[]`, **not** the backend SDK's `Page<Device>`.
+
+That is a deliberate divergence, and it is worth explaining because Phase 3 went
+the other way on purpose. The backend SDK returns `Page<T>` from the three
+endpoints that paginate specifically so a caller cannot mistake the first 100
+devices for all of them. In React that hazard is answered better by an
+affordance than by a wrapper: `hasMore` and `loadMore` are visible in the
+destructure and in the editor tooltip, and `page` sits right beside `data`.
+Forcing `data.items.map()` on one of six data hooks would be a wart everywhere
+else.
+
+The extra fields:
+
+<TypeTable
+  type={{
+    page: {
+      type: "PageMeta | undefined",
+      description:
+        "The echoed page block, including the CLAMPED limit. Read it back rather than assuming the limit you sent.",
+    },
+    hasMore: {
+      type: "boolean",
+      description: "page.offset + data.length < page.total.",
+    },
+    loadMore: {
+      type: "() => Promise<void>",
+      description:
+        "APPENDS the next page to data. A no-op when hasMore is false.",
+    },
+    isLoadingMore: { type: "boolean" },
+  }}
+/>
+
+```tsx
+function Fleet() {
+  const { data, hasMore, loadMore, isLoadingMore, isLoading } = useDevices({
+    sort: "lastSeenAt",
+    order: "desc",
+  })
+
+  if (isLoading) return <p>Loading…</p>
+
+  return (
+    <>
+      <ul>
+        {data?.map((d) => (
+          <li key={d.id}>
+            {d.name ?? d.serial} ({d.status})
+          </li>
+        ))}
+      </ul>
+      {hasMore ? (
+        <button onClick={() => void loadMore()} disabled={isLoadingMore}>
+          Load more
+        </button>
+      ) : null}
+    </>
+  )
+}
+```
+
+<Callout type="warn" title="An empty list is ambiguous">
+  A `workspaceId` outside your organization returns an empty page rather than an
+  error, so an empty `data` never distinguishes "no devices" from "wrong
+  workspace". If that distinction matters, check the workspace exists with
+  `useWorkspaces()`.
+</Callout>
+
+## `useDevice`
+
+```tsx
+const { data: device, error, isLoading } = useDevice(deviceId)
+```
+
+One device, including its `config`, `configRev`, `reportedConfig` and
+`uiPrefs`. Pass `null` to stay idle.
+
+There is no `GET /devices/{id}/config` route; a device read is the config read.
+If you need the pending-versus-applied view, the backend SDK's
+`devices.getConfig()` computes it, and `useXorgate()` gets you there.
+
+## `useTelemetryLatest`
+
+```tsx
+const { data: latest } = useTelemetryLatest(deviceId, {
+  refetchIntervalMs: 15_000,
+})
+
+const lat = latest?.["gps.lat"]
+const lon = latest?.["gps.lon"]
+```
+
+Returns `LatestByMetric`, the keyed shape, rather than the array the endpoint
+returns. That is the platform's metric interop contract: live MQTT and replayed
+telemetry produce the same thing, so a readout component works against all
+three sources without knowing which one it has.
+
+<Callout type="warn" title="There is no staleness signal">
+
+This endpoint returns the last reading it ever ingested, forever. A device that
+has been off for a week still answers with its final position and no indication
+that anything is wrong.
+
+Compare `reading.ts` against now yourself, and decide what "stale" means for
+your application. Every consumer of this endpoint re-implements that check, and
+any consumer that forgets ships a dashboard that lies about where an asset is.
+
+</Callout>
+
+```tsx
+const STALE_MS = 120_000
+
+function isFresh(reading: LatestReading | undefined, now: number): boolean {
+  return reading !== undefined && now - Date.parse(reading.ts) < STALE_MS
+}
+```
+
+There is also no batch read: a fleet view is one request per device, so a
+workspace dashboard is N+1 requests. Both of these are recorded platform gaps.
+
+## `useTelemetryHistory`
+
+```tsx
+const { data: history } = useTelemetryHistory(deviceId, {
+  from: dayStart,
+  to: dayEnd,
+  metric: ["gps.speed", "imu.accel_z"],
+  interval: 60,
+})
+```
+
+`from` and `to` are required and accept a `Date` or an ISO string. The range may
+not exceed 31 days, and `metric` takes at most 20 entries. With `interval` the
+server bucket-averages, up to 10,000 buckets; without it you get raw rows up to
+5,000.
+
+<Callout type="warn" title="Check `truncated` on every use">
+  This endpoint does not paginate. `data.truncated` is the **only** signal that
+  rows were left behind, so a chart that ignores it silently stops early and
+  looks like a device that stopped reporting. Narrow the range or coarsen the
+  interval.
+</Callout>
+
+```tsx
+function Chart({ deviceId }: { deviceId: string }) {
+  const { data } = useTelemetryHistory(deviceId, {
+    from: from,
+    to: to,
+    metric: ["gps.speed"],
+    interval: 60,
+  })
+  if (!data) return null
+  return (
+    <>
+      {data.truncated ? <p role="alert">Showing a partial range.</p> : null}
+      <Sparkline points={data.readings} />
+    </>
+  )
+}
+```
+
+## The rest
+
+<TypeTable
+  type={{
+    "useMe()": {
+      type: "QueryResult<Me>",
+      description:
+        "The signed-in user, their memberships and their organizations. Works with a null organizationId.",
+    },
+    "useOrganizations()": {
+      type: "QueryResult<Organization[]>",
+      description:
+        "Works with a null organizationId. This is how an organization switcher is populated.",
+    },
+    "useWorkspaces()": {
+      type: "QueryResult<Workspace[]>",
+      description: "Unpaginated: the platform returns them whole.",
+    },
+    "useDeviceModel(id)": {
+      type: "QueryResult<DeviceModel>",
+      description:
+        "Mostly for ioCapabilities, which tells you which metrics and video streams a device can produce.",
+    },
+    "useKvsChannels(id)": {
+      type: "QueryResult<KvsChannel[]>",
+      description:
+        "Channel metadata only, no credentials. An empty array means the device is not provisioned.",
+    },
+    "useRecordingRuns(id, params)": {
+      type: "UseRunsResult",
+      description:
+        "Recorded drives, clustered server-side. Paginated like useDevices.",
+    },
+    "useSessions(id, params)": {
+      type: "UseSessionsResult",
+      description:
+        "The flat session list. Prefer useRecordingRuns for anything user-facing.",
+    },
+  }}
+/>
+
+`useRecordingRuns` is the one to reach for when building a "past recordings"
+list. One drive with two cameras is two sessions and one run, and the clustering
+happens server-side, so pages are even and no run straddles a page boundary.
+Each run carries `fromTs` and `toTs`, which is exactly the window
+[`useReplayManifest`](/docs/frontend-sdk/replay) wants.
+
+<Callout title="This endpoint is the slow one">
+  `GET /devices/{id}/sessions` measures around 1,090 ms warm against the
+  development stage, several times any other endpoint. Budget for it, and do not
+  put it on a page's critical render path if you can avoid it.
+</Callout>
+
+## Errors
+
+Everything thrown or reported is a `XorgateError` from `@xorgate/sdk`, including
+client-side failures, so one check covers the lot. The
+[backend SDK's error page](/docs/backend-sdk/errors) has the full code table.
+
+```tsx
+const { error } = useDevices()
+
+if (error?.code === "ORGANIZATION_REQUIRED") return <PickOrganization />
+if (error?.code === "FORBIDDEN") return <NoAccess />
+if (error) return <p role="alert">{error.message}</p>
+```
+
+The provider's `onError` callback fires once per surfaced error, which is the
+place to wire logging without touching every hook.

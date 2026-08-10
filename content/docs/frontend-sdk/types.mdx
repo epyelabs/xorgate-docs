@@ -1,0 +1,165 @@
+---
+title: "Types"
+description: "What is re-exported from the backend SDK, what this package adds, and the two timestamp units you have to keep straight."
+---
+
+## One vocabulary, re-exported
+
+`@xorgate/react` does not declare its own `Device`, `LatestReading`,
+`ReplayManifest` or `XorgateError`. It imports them from `@xorgate/sdk` and
+re-exports them, so a component and a server route pass the same object around
+and `instanceof XorgateError` works across the boundary.
+
+```ts
+import type { Device, LatestByMetric, ReplayManifest } from "@xorgate/react"
+// identical to the same import from "@xorgate/sdk"
+```
+
+That is also why `@xorgate/sdk` is a hard dependency rather than a peer. Two
+resolved copies would give you two structurally identical but nominally
+unrelated error classes.
+
+Re-exported: `Device`, `DeviceModel`, `KvsChannel`, `LatestByMetric`,
+`LatestReading`, `Me`, `MediaSession`, `MetricName`, `Organization`, `PageMeta`,
+`RecordingRun`, `ReplayGap`, `ReplayManifest`, `ReplaySegment`,
+`ReplaySession`, `StreamKey`, `TelemetryHistory`, `TelemetryReading`,
+`Workspace`, `XorgateClient`, `XorgateError`, and the `isXorgateError` guard.
+Their reference is the
+[backend SDK types page](/docs/backend-sdk/types).
+
+## The metric contract
+
+```ts
+type MetricName = `${string}.${string}`
+type LatestByMetric = Record<MetricName, LatestReading>
+
+interface LatestReading {
+  metric: MetricName
+  value: number | null
+  unit: string | null
+  ts: string // ISO 8601
+}
+```
+
+Three sources produce this exact shape: live MQTT, `telemetry/latest`, and
+replayed telemetry resolved at the playhead. A component written against it
+renders all three.
+
+<Callout type="warn" title="Turn on noUncheckedIndexedAccess">
+
+`Record` keyed by a template literal type means TypeScript believes every
+possible `"a.b"` key exists. Without the flag,
+`latest["gps.lat"].value` compiles and throws at runtime for a device that has
+never reported GPS.
+
+```json
+{ "compilerOptions": { "noUncheckedIndexedAccess": true } }
+```
+
+With it on, `latest["gps.lat"]` is `LatestReading | undefined` and the compiler
+makes you handle it. Devices report only what their model's `ioCapabilities`
+declares, and the GPS group disappears entirely after ten seconds without a fix,
+so this is a live hazard rather than a theoretical one.
+
+</Callout>
+
+## Two timestamp units
+
+This is the one thing in the SDK that will bite you if you skim.
+
+| Where                                                                                                                             | Unit               | Why                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+| `LatestReading.ts`, `TelemetryReading.ts`, `Device.lastSeenAt`, `MediaSession.startedAt`, everything REST                         | ISO 8601 string    | Round-trips through JSON without a serializer.                           |
+| `ReplayManifest` and everything derived from it: `ReplaySegment.startTs`, `ReplayGap.fromTs`, `ReplayTimeline.from`, `playheadTs` | epoch milliseconds | The replay clock does arithmetic on all of them at animation-frame rate. |
+| `TelemetryPoint.ts` in the live `history` buffer                                                                                  | epoch milliseconds | Chart libraries want a number.                                           |
+| `receivedAt`, `LiveBlockPayload.since`                                                                                            | epoch milliseconds | Elapsed-time arithmetic.                                                 |
+
+Inputs are lenient: anywhere the SDK takes a time from you, `string | Date` is
+accepted. Outputs are not converted, in either direction.
+
+## Two clocks
+
+Independently of the unit, some timestamps come from the **device** and some
+from the **browser**, and only one of them is trustworthy for freshness.
+
+- **Device clock:** `payload.ts`, `TelemetryPoint.ts`,
+  `TelemetryRecordingStatus.lastUploadAt`, `LiveBlockPayload.since`. A device
+  whose real-time clock has not synced yet can publish values that make
+  arithmetic against them absurd or negative. The SDK never silently corrects
+  them; where it does arithmetic (`elapsedMs`), it returns `null` for an
+  implausible result rather than a wrong number.
+- **Browser clock:** `receivedAt`. Anything asking "how current is this?" must
+  use it.
+
+## What this package adds
+
+Types that exist because the live and replay planes are not REST.
+
+### Provider
+
+`XorgateConfig`, `XorgateAuth` (the union of `CognitoAuth`, `ApiKeyAuth` and
+`VendedCredentialsAuth`), `AwsCredentials`, `XorgateProviderProps`,
+`LiveUnavailableReason`.
+
+### Queries
+
+`QueryResult<T>`, `QueryOptions`, `UseDevicesResult`, `UseRunsResult`,
+`UseSessionsResult`.
+
+### Live telemetry
+
+`LiveStatus`, `UseLiveTelemetry`, `TelemetryPoint`,
+`TelemetryRecordingStatus`, `TelemetryMediaStatus`, `TelemetryStreamStatus`.
+
+These model the device's payload v1, which the backend SDK does not describe
+because it has no live plane.
+
+<Callout title="The payload shape lives in three repositories">
+  `TelemetryRecordingStatus` and friends mirror the device agent's own types and
+  the backend's telemetry schema. There is no generated contract for them, so
+  changing one means changing all three together. This is the one place in the
+  SDK where a type is a hand-maintained copy rather than a derivation, and it is
+  worth knowing before you assume a field is authoritative.
+</Callout>
+
+### Live block
+
+`LiveBlockReason`, `LiveBlockPayload`, `LiveBlockState`, `LiveBlockOpenReason`,
+`ResolveLiveBlockInput`.
+
+`LiveBlockReason` is `"gps-gate" | "undervoltage" | "thermal" | (string & {})`.
+The `(string & {})` is not a typo: it gives you autocomplete for the three known
+reasons while still accepting a fourth one the device invents later. The wire
+contract is an open set on purpose, and narrowing it to an enum would mean a
+newer device against an older frontend gets its whole `recording` block
+discarded.
+
+### Live video
+
+`KvsStatus`, `KvsStreamStats`, `UseKvsViewer`, `UseKvsViewerOptions`,
+`KvsVideoProps`.
+
+### Replay
+
+`ReplayTimeline`, `ReplayLane`, `LaneSegment`, `ReplayClock`,
+`ReplayClockState`, `ReplayRate`, `REPLAY_RATES`, `GapSkipEvent`,
+`PacerCandidate`, `UseReplayPlayer`, `ReplayLaneState`, `MetricSeries`,
+`GpsTrace`, `WindowBounds`, `PositionResolution`, `UseReplayTelemetry`.
+
+`LaneSegment extends ReplaySegment` with one extra field, `sessionId`. It exists
+because `seq` stops being unique the moment a lane merges two sessions: both
+start at zero.
+
+## Nullability conventions
+
+Same rules as the backend SDK, plus one.
+
+- `null` means the platform knows the value is absent. `Device.name` is
+  `string | null` because a device can genuinely have no name.
+- `undefined` means not loaded yet or not applicable here.
+  `QueryResult.data` is `T | undefined` until the first successful load.
+- **A live hook's `status` is the state machine, not `data`.** Live hooks return
+  usable values immediately: `latest` is `{}` before the first payload, not
+  `undefined`. Read `status` to know whether they mean anything. This differs
+  from the REST hooks on purpose, because a live feed has no single "loaded"
+  moment.

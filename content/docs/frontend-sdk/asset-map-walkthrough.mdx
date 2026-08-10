@@ -1,0 +1,471 @@
+---
+title: "Walkthrough: live asset map"
+description: "A fleet map with live positions and an incident replay page, built end to end with no styling framework assumed."
+---
+
+This builds the browser half of an asset-tracking application: a map of where
+every asset is right now, and a replay page for going back over an incident. No
+CSS framework, no component library, no map library in particular. The map
+calls below are pseudocode for whichever one you use.
+
+The server half of the same application is the
+[backend SDK walkthrough](/docs/backend-sdk/asset-tracking-walkthrough).
+
+<Callout type="warn" title="Pick your live plane before you start">
+
+Everything on this page except the live positions works with any auth mode.
+Live positions have two implementations, and which one you can use depends on
+how your application authenticates:
+
+- **Signed in with xorgate Cognito**: use `useLiveTelemetry`. One socket per
+  device, 1 Hz, push.
+- **Running your own auth**: use `useTelemetryLatest` with
+  `refetchIntervalMs`. Slower and pollier, works today.
+
+Both are shown. The rest of the page is identical either way.
+
+</Callout>
+
+## 1. Mount the provider
+
+```tsx
+import { XorgateProvider } from "@xorgate/react"
+import { useAuth } from "./auth"
+
+export function App() {
+  const { idToken, organizationId } = useAuth()
+
+  return (
+    <XorgateProvider
+      config={{
+        baseUrl: import.meta.env.VITE_XORGATE_API_URL,
+        region: import.meta.env.VITE_AWS_REGION,
+        identityPoolId: import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID,
+        userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,
+        iotEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
+      }}
+      auth={{ getIdToken: () => idToken }}
+      organizationId={organizationId}
+      onError={(e) => console.error("xorgate", e.code, e.message)}
+    >
+      <Router />
+    </XorgateProvider>
+  )
+}
+```
+
+`organizationId` is nullable, so this renders correctly during sign-in and
+before the user has picked an organization. Org-scoped hooks below will report
+`ORGANIZATION_REQUIRED` without making a request.
+
+## 2. The fleet list
+
+```tsx
+import { useDevices } from "@xorgate/react"
+
+export function useFleet() {
+  return useDevices({
+    status: "any",
+    sort: "lastSeenAt",
+    order: "desc",
+    limit: 100,
+  })
+}
+```
+
+`status: "any"` matters. The default excludes decommissioned devices, but an
+asset map wants everything that exists, including the ones that have been
+offline for a week, because "where was it last?" is the question being asked.
+
+## 3. Live positions, push
+
+One `useLiveTelemetry` per device. This looks expensive and is not: consumers of
+the same device share one socket, and a fleet of distinct devices is one socket
+each, which is what a live map costs.
+
+```tsx
+import { useLiveTelemetry, type LatestReading } from "@xorgate/react"
+
+interface AssetPosition {
+  deviceId: string
+  lon: number
+  lat: number
+  speedKph: number | null
+  /** Browser clock. The only trustworthy freshness signal. */
+  receivedAt: number | null
+  live: boolean
+}
+
+function num(reading: LatestReading | undefined): number | null {
+  return reading && typeof reading.value === "number" ? reading.value : null
+}
+
+export function useAssetPosition(deviceId: string): AssetPosition | null {
+  const { latest, receivedAt, status } = useLiveTelemetry(deviceId)
+  const lat = num(latest["gps.lat"])
+  const lon = num(latest["gps.lon"])
+  if (lat === null || lon === null) return null
+  return {
+    deviceId,
+    lon,
+    lat,
+    speedKph: num(latest["gps.speed"]),
+    receivedAt,
+    live: status === "connected",
+  }
+}
+```
+
+Two things to be careful about.
+
+The GPS group **disappears** from `latest` after roughly ten seconds without a
+fix. That is why the code checks for the metric rather than for a sentinel
+value. A device in a parking garage has no `gps.lat` key at all.
+
+`receivedAt` is the browser's clock, not the device's. Devices can publish from
+an unsynced real-time clock, so `latest["gps.lat"].ts` is not usable for "how
+fresh is this?".
+
+## 4. Live positions, polled
+
+The same shape, for an application whose browser cannot reach the live plane.
+
+```tsx
+import { useTelemetryLatest } from "@xorgate/react"
+
+const STALE_MS = 120_000
+
+export function usePolledAssetPosition(
+  deviceId: string,
+  now: number,
+): AssetPosition | null {
+  const { data: latest } = useTelemetryLatest(deviceId, {
+    refetchIntervalMs: 20_000,
+  })
+  if (!latest) return null
+  const lat = num(latest["gps.lat"])
+  const lon = num(latest["gps.lon"])
+  const ts = latest["gps.lat"]?.ts
+  if (lat === null || lon === null || ts === undefined) return null
+  const at = Date.parse(ts)
+  return {
+    deviceId,
+    lon,
+    lat,
+    speedKph: num(latest["gps.speed"]),
+    receivedAt: at,
+    live: now - at < STALE_MS,
+  }
+}
+```
+
+The staleness check is the important line. `telemetry/latest` returns the last
+reading it ever ingested, with no indication that the device stopped reporting
+three days ago. Every consumer has to decide what stale means; a consumer that
+forgets ships a map that lies.
+
+Because both hooks produce the same `AssetPosition`, the map component does not
+know which one it is fed.
+
+## 5. The map
+
+```tsx
+export function FleetMap({ devices }: { devices: Device[] }) {
+  return (
+    <Map>
+      {devices.map((d) => (
+        <AssetMarker key={d.id} device={d} />
+      ))}
+    </Map>
+  )
+}
+
+function AssetMarker({ device }: { device: Device }) {
+  const pos = useAssetPosition(device.id)
+  if (!pos) return null
+  return (
+    <Marker longitude={pos.lon} latitude={pos.lat} opacity={pos.live ? 1 : 0.4}>
+      <span>{device.name ?? device.serial}</span>
+    </Marker>
+  )
+}
+```
+
+Dimming rather than hiding a stale asset is the honest rendering: the position
+is real, it is just old. Hiding it makes an asset disappear from a fleet view
+because its device lost signal.
+
+## 6. Live video for the selected asset
+
+```tsx
+import { useKvsChannels, useLiveBlock, KvsVideo } from "@xorgate/react"
+
+export function AssetLiveView({ deviceId }: { deviceId: string }) {
+  const feed = useLiveTelemetry(deviceId)
+  const block = useLiveBlock(feed)
+  const { data: channels, isLoading } = useKvsChannels(deviceId)
+
+  if (block.blocked) {
+    return (
+      <div>
+        <p>Live view is paused.</p>
+        <p>{block.detail}</p>
+        {block.parked ? (
+          <p>It will not resume without a restart or a settings change.</p>
+        ) : null}
+      </div>
+    )
+  }
+  if (isLoading) return <p>Loading cameras…</p>
+  if (!channels || channels.length === 0) {
+    return <p>This device has no cameras provisioned.</p>
+  }
+  return (
+    <>
+      {channels.map((c) => (
+        <KvsVideo key={c.streamKey} channel={c} />
+      ))}
+    </>
+  )
+}
+```
+
+The block check comes **first**, before the channels even load. Mounting a
+viewer against a device that has parked its masters produces a spinner that
+never resolves: signaling connects, the offer goes out, nothing answers, the 15
+second deadline fires, and it retries forever.
+
+Notice this costs nothing extra. The `useLiveTelemetry` call here shares the
+socket the map marker already opened.
+
+## 7. Find the incident
+
+Somebody reports a hard brake at 14:32. Recording runs are how you find it.
+
+```tsx
+import { useRecordingRuns } from "@xorgate/react"
+
+export function IncidentPicker({
+  deviceId,
+  around,
+  onPick,
+}: {
+  deviceId: string
+  around: Date
+  onPick: (run: RecordingRun) => void
+}) {
+  const { data: runs, isLoading } = useRecordingRuns(deviceId, {
+    from: new Date(around.getTime() - 60 * 60 * 1000),
+    to: new Date(around.getTime() + 60 * 60 * 1000),
+  })
+
+  if (isLoading) return <p>Loading recordings…</p>
+  return (
+    <ul>
+      {runs?.map((run) => (
+        <li key={run.key}>
+          <button onClick={() => onPick(run)}>
+            {new Date(run.fromTs).toLocaleTimeString()} ·{" "}
+            {run.streamKeys.join(", ")} · {run.sessionCount} sessions
+            {run.anyUnsynced ? " · clock unsynced" : ""}
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+A run is one drive. Two cameras recording the same drive are two sessions and
+one run, and the clustering happens server-side, so the list is what a human
+would call "trips" rather than a list of files.
+
+Surface `anyUnsynced`. A session recorded on an unsynced clock cannot be trusted
+to line up with telemetry, and a user watching a replay that is silently ninety
+seconds off has no way to tell.
+
+This is the slowest endpoint in the API, around 1,090 ms warm. Do not put it on
+the critical render path of the map page.
+
+## 8. The replay page
+
+```tsx
+import {
+  useReplayManifest,
+  useReplayPlayer,
+  useReplayTelemetry,
+} from "@xorgate/react"
+
+export function IncidentReplay({
+  deviceId,
+  run,
+}: {
+  deviceId: string
+  run: RecordingRun
+}) {
+  const { data: manifest, error } = useReplayManifest(deviceId, {
+    from: run.fromTs,
+    to: run.toTs,
+  })
+  const player = useReplayPlayer(manifest)
+  const telemetry = useReplayTelemetry(deviceId, player)
+
+  if (error) return <p role="alert">{error.message}</p>
+  if (!manifest) return <p>Loading replay…</p>
+
+  return (
+    <div>
+      <div>
+        {player.lanes.map((lane) => (
+          <ReplayLaneTile key={lane.streamKey} player={player} lane={lane} />
+        ))}
+      </div>
+
+      <Transport player={player} />
+
+      <RouteMap
+        lines={telemetry.routeLines}
+        traveled={telemetry.traveledLines}
+        marker={telemetry.position}
+      />
+
+      <Readouts latest={telemetry.latest} />
+    </div>
+  )
+}
+```
+
+`useReplayTelemetry` returns `latest` in the **same** `LatestByMetric` shape the
+live feed emits, which is what lets `Readouts` be one component used on both the
+live page and the replay page:
+
+```tsx
+import type { LatestByMetric } from "@xorgate/react"
+
+export function Readouts({ latest }: { latest: LatestByMetric }) {
+  const speed = latest["gps.speed"]
+  const accel = latest["imu.accel_z"]
+  return (
+    <dl>
+      <dt>Speed</dt>
+      <dd>{speed ? `${speed.value} ${speed.unit ?? ""}` : "-"}</dd>
+      <dt>Vertical g</dt>
+      <dd>{accel ? `${accel.value} ${accel.unit ?? ""}` : "-"}</dd>
+    </dl>
+  )
+}
+```
+
+That placeholder is doing real work. A metric absent from `latest` means the
+recording genuinely has no fresh sample there, because each group has a
+freshness cutoff and a stale sample is dropped rather than held. Rendering the
+last known value would invent data across a recording hole.
+
+## 9. Lanes and gaps
+
+```tsx
+export function ReplayLaneTile({
+  player,
+  lane,
+}: {
+  player: UseReplayPlayer
+  lane: ReplayLane
+}) {
+  const state = player.laneState(lane.streamKey)
+  return (
+    <figure>
+      <video ref={player.laneVideoRef(lane.streamKey)} playsInline muted />
+      {state.inGap ? (
+        <figcaption>No footage from {lane.streamKey} here.</figcaption>
+      ) : null}
+      {lane.unsynced ? (
+        <figcaption>Recorded with an unsynced clock.</figcaption>
+      ) : null}
+    </figure>
+  )
+}
+```
+
+`inGap` is per lane on purpose. The rear camera being disabled during this drive
+must not make the whole page claim there is no footage; the front camera is
+playing.
+
+## 10. Transport and scrubber
+
+```tsx
+import { REPLAY_RATES } from "@xorgate/react"
+
+export function Transport({ player }: { player: UseReplayPlayer }) {
+  const timeline = player.timeline
+  if (!timeline) return null
+  const span = timeline.to - timeline.from
+
+  return (
+    <div>
+      <button onClick={() => player.stepBoundary(-1)}>Prev</button>
+      <button onClick={player.toggle}>{player.playing ? "Pause" : "Play"}</button>
+      <button onClick={() => player.stepBoundary(1)}>Next</button>
+
+      {REPLAY_RATES.map((r) => (
+        <button
+          key={r}
+          aria-pressed={player.rate === r}
+          onClick={() => player.setRate(r)}
+        >
+          {r}x
+        </button>
+      ))}
+
+      <label>
+        <input
+          type="checkbox"
+          checked={player.skipGaps}
+          onChange={(e) => player.setSkipGaps(e.currentTarget.checked)}
+        />
+        Skip gaps
+      </label>
+
+      <input
+        type="range"
+        min={timeline.from}
+        max={timeline.to}
+        value={player.playheadTs}
+        onChange={(e) => player.seek(Number(e.currentTarget.value))}
+      />
+
+      <time>{new Date(player.playheadTs).toLocaleTimeString()}</time>
+
+      {player.lastSkip ? (
+        <span>
+          Skipped{" "}
+          {Math.round((player.lastSkip.toTs - player.lastSkip.fromTs) / 1000)}s
+          with no video
+        </span>
+      ) : null}
+    </div>
+  )
+}
+```
+
+`stepBoundary` jumps to a real edge: a segment start, or the far side of a gap,
+which is where video actually resumes. A naive "skip 10 seconds" button lands in
+the middle of dead air.
+
+`player.playheadTs` is throttled to about 10 Hz, which is right for this and
+wrong for a canvas-driven scrubber. For one of those, subscribe to
+`player.clock` directly.
+
+## 11. What is left
+
+Two things this page deliberately does not do.
+
+**Geofences and impact alerts.** There is no server-side alerting on the
+platform. Every threshold runs in your application, over data you polled or
+subscribed to. That is probably correct for the platform's scope, but it means
+an alert only fires while somebody has the page open. Real alerting belongs on
+your backend, over the
+[backend SDK](/docs/backend-sdk/asset-tracking-walkthrough).
+
+**Fleet-wide history.** There is no batch telemetry read, so "show me every
+asset's path yesterday" is one request per device. Keep the map to a bounded
+page of devices and load history on selection.
