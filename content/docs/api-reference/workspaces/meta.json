@@ -1,6 +1,6 @@
 {
   "title": "Workspaces",
-  "description": "The grouping devices belong to, one level below an organization.",
+  "description": "The grouping devices belong to, one level below an organization. Also the tenancy unit for a consumer running its own multi-tenancy: a session token can be confined to one.",
   "pages": [
     "index",
     "list-workspaces",
