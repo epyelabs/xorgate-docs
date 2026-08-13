@@ -1,6 +1,6 @@
 {
   "title": "API Keys",
-  "description": "Organization-scoped keys. Mint-only today: no endpoint accepts one as a credential yet.",
+  "description": "Organization-scoped keys. Send one as `Authorization: Bearer xg_...` to authenticate any organization-scoped operation, at the role the key was minted with.",
   "pages": [
     "index",
     "list-api-keys",

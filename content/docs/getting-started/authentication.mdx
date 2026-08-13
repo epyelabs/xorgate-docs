@@ -7,11 +7,27 @@ There is **no API Gateway authorizer** in front of xorgate-core-service. Every
 route is reachable at the gateway and each handler enforces its own auth. A route
 described as unauthenticated is simply one whose handler does not check.
 
-## Today: Cognito ID tokens
+## Two credentials, one header
 
-The only credential the API verifies is a **Cognito ID token** (not an access
-token) on the `Authorization` header, plus the tenancy headers from
-[Tenancy model](/docs/getting-started/tenancy):
+The API accepts two kinds of bearer credential, and tells them apart by the
+credential itself rather than by a separate header:
+
+| Credential           | Prefix | Who sends it                          | Carries a user |
+| -------------------- | ------ | ------------------------------------- | -------------- |
+| Cognito **ID** token | a JWT  | a signed-in browser or mobile session | yes            |
+| API key              | `xg_`  | a server-to-server integration        | no             |
+
+A third prefix, `xgs_`, is reserved for short-lived session tokens. Nothing
+mints one yet and sending one returns `401 SESSION_TOKEN_UNSUPPORTED`.
+
+There is **no API Gateway authorizer** in front of xorgate-core-service. Every
+route is reachable at the gateway and each handler enforces its own auth. A route
+described as unauthenticated is simply one whose handler does not check.
+
+## Cognito ID tokens
+
+A Cognito ID token (not an access token) on the `Authorization` header, plus the
+tenancy headers from [Tenancy model](/docs/getting-started/tenancy):
 
 ```http
 GET /devices HTTP/1.1
@@ -24,11 +40,10 @@ The token is verified against the platform user pool. On the first request from 
 new identity, a `users` row is created from the token's `sub`, `email` and
 `name`, so there is no separate registration step.
 
-## Target: API keys
+## API keys
 
 For server-to-server integrations, an ID token is the wrong shape: it is
-short-lived and tied to an interactive login. The platform's answer is API keys,
-and the endpoints to manage them already exist:
+short-lived and tied to an interactive login. Mint a key instead:
 
 ```http
 POST /api-keys
@@ -36,7 +51,7 @@ Content-Type: application/json
 Authorization: Bearer <cognito-id-token>
 X-Organization-Id: 8f1c1e2a-....
 
-{ "name": "alocate-backend", "scope": "cloud" }
+{ "name": "alocate-backend", "scope": "cloud", "role": "member" }
 ```
 
 ```json
@@ -45,6 +60,9 @@ X-Organization-Id: 8f1c1e2a-....
     "id": "...",
     "name": "alocate-backend",
     "scope": "cloud",
+    "role": "member",
+    "keyPrefix": "xg_9c1f0",
+    "expiresAt": null,
     "...": "..."
   },
   "plaintext_key": "xg_9c1f...."
@@ -52,24 +70,68 @@ X-Organization-Id: 8f1c1e2a-....
 ```
 
 The key is returned **exactly once**, at creation. Only its SHA-256 hash is
-stored, so a lost key has to be replaced rather than recovered. Keys are
-organization-scoped, and creating or deleting one requires the `owner` or `admin`
-role.
+stored, so a lost key has to be replaced rather than recovered. Minting or
+deleting a key requires the `owner` or `admin` role.
 
-<Callout type="warn" title="Key authentication is not live yet">
+Then send it in the same header a token goes in:
 
-API keys can currently be minted, listed and deleted, but **nothing verifies
-them**. There is no `X-Api-Key` request path, the `scope` value
-(`edge`, `cloud`, `client`) is validated on write and then unused, and keys have
-no expiry or last-used tracking. Until verification ships, a server-side
-integration still has to present a Cognito ID token. Treat the shape above as the
-committed direction, not as something you can build against today.
+```http
+GET /devices HTTP/1.1
+Authorization: Bearer xg_9c1f....
+```
+
+Three things follow from a key having no user behind it.
+
+**It is bound to one organization.** The organization comes from the key row, so
+`X-Organization-Id` is never required. Sending a _different_ organization is a
+`403 FORBIDDEN` rather than a silently ignored header: a consumer that thinks it
+is switching tenants and is not has a bug worth hearing about.
+
+**It acts with a role.** Every key carries one, defaulting to `member`, and it
+runs through the same role gates a membership role does. A `member` key can read
+everything and write devices, workspaces and device registrations, which is what
+a data-plane integration needs. It cannot touch memberships, API keys or
+organization settings. A key is also never a _platform_ admin, so device-model
+writes are closed to every key regardless of its role. See the
+[method index](/docs/backend-sdk/resources) for the per-operation gates.
+
+You cannot mint a key more privileged than you are: an `admin` minting an
+`owner` key gets a `403`.
+
+**Four operations refuse it**, because they describe or act on a person, and
+answer `401 USER_CREDENTIAL_REQUIRED`: `GET /me`, `GET /organizations`,
+`POST /organizations`, and the two live-access operations.
+
+### Rotation, expiry and revocation
+
+A key can be given an `expiresAt` at mint time (ISO-8601, must be in the
+future); omit it for a key that never expires. Past its expiry a key gets
+`401 API_KEY_EXPIRED`.
+
+`DELETE /api-keys/{id}` is a hard delete, not a revocation: the row goes and the
+key thereafter reads as unknown (`401 INVALID_API_KEY`). Rotation is therefore
+mint-then-delete, with both keys live in between.
+
+`lastUsedAt` advances as a key is used, but treat it as a liveness hint for
+finding unused keys rather than an audit trail: the write is throttled to at most
+once per minute per serving process and is deliberately fire-and-forget, so it
+never delays or fails a request.
+
+<Callout type="info" title="One key spans everything its organization can see">
+
+A key is organization-scoped, not workspace-scoped, so a consumer that maps its
+own customers onto workspaces has one key covering all of them. Keep keys on
+your server, give each integration its own so one can be replaced without
+disturbing the others, and set an expiry on anything long-lived.
 
 </Callout>
 
-Once key verification exists, the API reference will carry it as a first-class
-security scheme and the backend SDK will accept it directly. Until then this page
-is the honest answer.
+### Programmatic onboarding, and the one thing you cannot do
+
+`POST /organizations` needs a user, so a key cannot create an organization. A
+consumer onboarding its own customers maps them onto **workspaces** inside its
+one organization, which a default `member` key can create. Organizations for a
+new consumer are provisioned out of band.
 
 ## The live planes
 
@@ -99,10 +161,13 @@ that call granted.
 
 </Callout>
 
-Because API keys cannot be exchanged for AWS credentials today, an application
-that authenticates its own users (rather than federating them into xorgate's
-Cognito) has no live-plane path yet. The REST endpoints for telemetry history and
-recorded media work regardless.
+An API key has no live-plane path. Both live planes are entered with AWS
+credentials from the Cognito Identity Pool, which needs a Cognito identity, and
+a key does not have one: the two live-access operations refuse keys with
+`401 USER_CREDENTIAL_REQUIRED`. So an application that authenticates its own
+users, rather than federating them into xorgate's Cognito, can use the whole
+REST surface with a key but cannot yet open a live stream. Telemetry history and
+recorded media go through REST and work regardless.
 
 ## CORS
 

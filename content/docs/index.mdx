@@ -48,6 +48,7 @@ rather than implying it exists. In particular:
   which does not yet cover every route.
 - The **Backend SDK** and **Frontend SDK** sections are design documents first.
   The packages follow the docs, not the other way around.
-- API-key authentication is documented as the target for server-to-server
-  integrations, but the API does not verify keys yet. See
+- API-key authentication **works**: a minted `xg_` key authenticates the REST
+  surface at its own role. It has no live-plane path, because that needs a
+  Cognito identity. See
   [Authentication](/docs/getting-started/authentication).

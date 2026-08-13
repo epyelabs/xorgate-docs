@@ -126,13 +126,15 @@ Sent as `Authorization: Bearer xg_…`, matching
   full-organization credential.
 </Callout>
 
-<Callout type="warn" title="No endpoint verifies an API key yet">
-  Keys are mint-only. Every request in this mode gets a 401 until the backend
-  grows key verification. The SDK attaches a `hint` to that error saying so.
+<Callout type="warn" title="A key cannot reach the live plane">
+  Live telemetry and live video need AWS credentials from the Cognito identity
+  pool, and an API key has no Cognito identity to get them with. Live hooks in
+  this mode report `unavailableReason: "no-aws-credentials"`. REST works fully.
 </Callout>
 
-This mode has no live plane. Live hooks report
-`unavailableReason: "no-aws-credentials"`.
+A key also cannot reach the four person-scoped operations (`GET /me`,
+`GET`/`POST /organizations`, and the two live-access operations), which answer
+`401 USER_CREDENTIAL_REQUIRED`.
 
 ### `{ getAwsCredentials }`, the forward slot
 

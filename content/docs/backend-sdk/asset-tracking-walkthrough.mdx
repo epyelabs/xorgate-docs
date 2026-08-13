@@ -12,19 +12,18 @@ report position and motion over cellular, record video locally, and upload it
 when they have bandwidth. Your service owns its own users and dashboards; xorgate
 is the device platform underneath.
 
-<Callout type="warn" title="Two things do not work yet">
-
-**Auth.** An application with its own user layer wants
-`auth: { apiKey }`, and nothing verifies keys today, so the examples below use
-`{ getToken }` with a service-account Cognito session. Swapping the two lines is
-the only change when key verification ships.
+<Callout type="warn" title="One thing does not work yet">
 
 **Live planes.** Live video and the 1 Hz MQTT feed need identity-pool
-credentials federated from xorgate's Cognito, which an application authenticating
-its own users cannot obtain. Everything below is REST and works regardless. See
+credentials federated from xorgate's Cognito, which neither an API key nor an
+application authenticating its own users can obtain. Everything below is REST
+and works regardless. See
 [What this SDK does not cover](/docs/backend-sdk/not-covered).
 
 </Callout>
+
+Auth below is `auth: { apiKey }`, which is what an application with its own user
+layer wants and what the platform now verifies.
 
 ## 0. One client per organization
 
@@ -34,17 +33,21 @@ import { createClient, isXorgateError } from "@xorgate/sdk"
 export function clientFor(organizationId: string) {
   return createClient({
     baseUrl: process.env.XORGATE_API_URL!,
-    auth: { getToken: () => serviceSession.idToken() },
-    // auth: { apiKey: process.env.XORGATE_API_KEY! },  // once verification ships
+    auth: { apiKey: process.env.XORGATE_API_KEY! },
     organizationId,
     timeoutMs: 30_000,
   })
 }
 ```
 
-If you operate a single tenant, build this once at startup. If your product maps
-its own customers onto xorgate organizations, build one per customer and cache
-it: clients are cheap and hold no connection state of their own.
+If you operate a single tenant, build this once at startup. A key is bound to one
+organization, so `organizationId` here is really an assertion rather than a
+choice: naming a different one is a `403`.
+
+If your product serves multiple customers, map them onto **workspaces** inside
+your one organization rather than onto organizations, which is what the next
+step does. A key cannot create an organization, and workspace is the unit the
+platform can scope to.
 
 ## 1. Model the fleet as workspaces
 

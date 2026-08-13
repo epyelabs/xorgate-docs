@@ -91,7 +91,12 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 
 | Code                        | Status | Means                                                                                                                       |
 | --------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `UNAUTHORIZED`              | 401    | Missing, malformed or expired credential. Also what an API key gets today, since nothing verifies one.                      |
+| `UNAUTHORIZED`              | 401    | Missing, malformed or expired credential.                                                                                   |
+| `INVALID_API_KEY`           | 401    | The `xg_` key presented is not recognized. Also what a deleted key looks like.                                              |
+| `API_KEY_REVOKED`           | 401    | The key was revoked.                                                                                                        |
+| `API_KEY_EXPIRED`           | 401    | The key is past its `expiresAt`. Mint a replacement.                                                                        |
+| `USER_CREDENTIAL_REQUIRED`  | 401    | An API key was sent to an operation that needs a signed-in user (`GET /me`, `GET`/`POST /organizations`, live access).      |
+| `SESSION_TOKEN_UNSUPPORTED` | 401    | An `xgs_` token was sent. Nothing mints one yet.                                                                            |
 | `ORGANIZATION_REQUIRED`     | 400    | A caller in several organizations sent no `X-Organization-Id`. Should be impossible through the SDK, which always sends it. |
 | `NO_ORGANIZATION`           | 403    | The caller belongs to no organization at all.                                                                               |
 | `FORBIDDEN`                 | 403    | Not a member of the requested organization.                                                                                 |
