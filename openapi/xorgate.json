@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.2.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <token>`, where the token is a Cognito **ID** token (not an access\ntoken). A user row is created on first successful verification. API keys can be minted but\nare not yet accepted as credentials.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. `X-Workspace-Id` narrows `GET /devices` and is required by\n`POST /device-registrations`.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
+    "version": "0.3.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are two kinds. A Cognito **ID** token (not an\naccess token) authenticates a person; a user row is created on first successful verification.\nAn **API key** from `POST /api-keys` authenticates a program: it carries the `xg_` prefix, which\nis how the server tells the two apart in the one header, and it acts inside the organization it\nwas minted from with its own `role`. Four operations accept only an ID token, because they\ndescribe or act on a person: `GET /me`, `GET`/`POST /organizations`, and the two live-access\noperations. Everything else takes either. A third prefix, `xgs_`, is reserved for short-lived\nsession tokens and currently returns `401 SESSION_TOKEN_UNSUPPORTED`.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key needs no header at all: its organization is fixed by the key row, and a\nheader naming a different organization is `403 FORBIDDEN`. `X-Workspace-Id` narrows\n`GET /devices` and is required by `POST /device-registrations`.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
   },
   "servers": [
     {
@@ -13,6 +13,9 @@
   "security": [
     {
       "BearerAuth": []
+    },
+    {
+      "ApiKeyAuth": []
     }
   ],
   "tags": [
@@ -34,7 +37,7 @@
     {
       "name": "API Keys",
       "x-displayName": "API Keys",
-      "description": "Organization-scoped keys. Mint-only today: no endpoint accepts one as a credential yet."
+      "description": "Organization-scoped keys. Send one as `Authorization: Bearer xg_...` to authenticate any organization-scoped operation, at the role the key was minted with."
     },
     {
       "name": "Workspaces",
@@ -88,7 +91,13 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "A Cognito **ID** token (not an access token). Users are created just-in-time on first successful verification. API keys exist but are not accepted as credentials yet. See the API Keys section."
+        "description": "A Cognito **ID** token (not an access token). Users are created just-in-time on first successful verification. This is what a signed-in browser session sends. A handful of operations accept ONLY this, because they describe or act on a person: `GET /me`, both `/organizations` collection operations, and the two live-access operations."
+      },
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "xorgate API key",
+        "description": "An API key from `POST /api-keys`, sent in the same header as a token: `Authorization: Bearer xg_...`. The server tells the two apart by the `xg_` prefix, so no extra header is involved. A key is bound to one organization by the row it was minted from, which makes `X-Organization-Id` redundant; sending a DIFFERENT organization is `403 FORBIDDEN` rather than an ignored header. The key acts with its own `role` (default `member`), so every role gate in this document applies to it unchanged. Keys carry no user, so operations that need one refuse them with `401 USER_CREDENTIAL_REQUIRED`."
       }
     },
     "parameters": {
@@ -100,7 +109,7 @@
           "type": "string",
           "format": "uuid"
         },
-        "description": "Active organization UUID. Resolution order: this header if present (it must match one of your memberships, else `403 FORBIDDEN`), otherwise your sole membership. A caller who belongs to more than one organization and omits it gets `400 ORGANIZATION_REQUIRED`, and a caller who belongs to none gets `403 NO_ORGANIZATION`. Practically: always send it."
+        "description": "Active organization UUID. Resolution order: this header if present (it must match one of your memberships, else `403 FORBIDDEN`), otherwise your sole membership. A caller who belongs to more than one organization and omits it gets `400 ORGANIZATION_REQUIRED`, and a caller who belongs to none gets `403 NO_ORGANIZATION`. Practically: always send it. When the credential is an API key the organization comes from the key itself, so this header is optional and never required; sending one that is not the key's organization is `403 FORBIDDEN`, deliberately not a silent override."
       },
       "WorkspaceIdHeader": {
         "name": "X-Workspace-Id",
@@ -455,9 +464,10 @@
           "organizationId",
           "name",
           "scope",
+          "role",
           "createdAt"
         ],
-        "description": "API key metadata. `hashedKey` is never returned; the plaintext key is shown exactly once, at creation. Keys are MINT-ONLY today: nothing in this API verifies one yet, so `scope` is recorded but not enforced, `lastUsedAt` never advances, and there is no expiry. Server-to-server callers still have to use a Cognito ID token.",
+        "description": "API key metadata. `hashedKey` is never returned; the plaintext key is shown exactly once, at creation. A key is a real credential: send it as `Authorization: Bearer xg_...` to any organization-scoped operation, and it acts with its own `role` inside the organization it was minted from. `scope` remains recorded but unenforced.",
         "properties": {
           "id": {
             "type": "string",
@@ -477,18 +487,42 @@
               "cloud",
               "client"
             ],
-            "description": "Validated on create, but not enforced anywhere yet."
+            "description": "Validated on create, but not enforced anywhere: every key behaves as `cloud` (server-to-server) regardless of what is recorded here."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "viewer"
+            ],
+            "default": "member",
+            "description": "The role this key acts with, using the same vocabulary and the same gates as a membership role. The default `member` can write devices, workspaces and device registrations, and read everything, but cannot touch memberships, API keys or organization settings. A key is never a PLATFORM admin, so device-model writes are closed to every key regardless of this field."
+          },
+          "keyPrefix": {
+            "type": "string",
+            "nullable": true,
+            "example": "xg_A1b2C",
+            "description": "The first 8 characters of the plaintext, stored so you can tell which key a holder has. **Null for any key minted before this field existed** and unbackfillable, because only the SHA-256 was ever stored. Show those as unknown rather than guessing."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the key stops authenticating. Null means never, which is what every key minted before this field existed is. After it passes, requests get `401 API_KEY_EXPIRED`."
           },
           "lastUsedAt": {
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "Always null today: no code path verifies a key, so nothing stamps this."
+            "description": "Roughly when this key last authenticated a request, and null until it does. Deliberately approximate: the write is throttled to at most once per minute per serving process and is fire-and-forget, so it never delays or fails a request. Read it as a liveness hint for finding unused keys, not as an audit log."
           },
           "revokedAt": {
             "type": "string",
             "format": "date-time",
-            "nullable": true
+            "nullable": true,
+            "description": "Set means the key is dead: requests get `401 API_KEY_REVOKED`. No endpoint sets this today; `DELETE /api-keys/{id}` removes the row outright instead."
           },
           "createdAt": {
             "type": "string",
@@ -2100,7 +2134,7 @@
     },
     "responses": {
       "Unauthorized": {
-        "description": "Missing, malformed, or expired bearer token (`UNAUTHORIZED`).",
+        "description": "No usable credential. `UNAUTHORIZED` for a missing, malformed or expired bearer token; `INVALID_API_KEY`, `API_KEY_REVOKED` or `API_KEY_EXPIRED` for an `xg_` key that does not verify; `USER_CREDENTIAL_REQUIRED` when a key was sent to an operation that needs a signed-in user; `SESSION_TOKEN_UNSUPPORTED` for an `xgs_` token, which nothing mints yet.",
         "content": {
           "application/json": {
             "schema": {
@@ -2110,7 +2144,7 @@
         }
       },
       "Forbidden": {
-        "description": "Not a member of the requested organization (`FORBIDDEN`), a member of none (`NO_ORGANIZATION`), or a member without the required role (`INSUFFICIENT_ROLE`).",
+        "description": "Not a member of the requested organization (`FORBIDDEN`), a member of none (`NO_ORGANIZATION`), or a member without the required role (`INSUFFICIENT_ROLE`). An API key sent with an `X-Organization-Id` other than its own is `FORBIDDEN`, and a key whose `role` is below the operation is `INSUFFICIENT_ROLE`.",
         "content": {
           "application/json": {
             "schema": {
@@ -2224,9 +2258,14 @@
       "get": {
         "operationId": "getMe",
         "summary": "Current user, memberships, and organizations",
-        "description": "The bootstrap call. It resolves the bearer token to a user (creating the row on first sight) and returns every organization the caller belongs to, which is how a client learns what to put in `X-Organization-Id`. `memberships` are the plain rows, not the enriched roster shape that `GET /memberships` returns. This is the only org-aware endpoint that never needs the tenancy header.",
+        "description": "The bootstrap call. It resolves the bearer token to a user (creating the row on first sight) and returns every organization the caller belongs to, which is how a client learns what to put in `X-Organization-Id`. `memberships` are the plain rows, not the enriched roster shape that `GET /memberships` returns. This is the only org-aware endpoint that never needs the tenancy header.\n\n**Cognito ID token only.** An `xg_` API key is refused here with `401 USER_CREDENTIAL_REQUIRED`: this operation describes a person, and a key has no user behind it.",
         "tags": [
           "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
         ],
         "responses": {
           "200": {
@@ -2275,9 +2314,14 @@
       "get": {
         "operationId": "listOrganizations",
         "summary": "List organizations the caller is a member of",
-        "description": "Unpaginated: the whole set comes back in one `organizations` array with no `page` block. A user belongs to a handful of organizations at most.",
+        "description": "Unpaginated: the whole set comes back in one `organizations` array with no `page` block. A user belongs to a handful of organizations at most.\n\n**Cognito ID token only.** The result is defined by the caller's memberships, which an API key does not have; a key is refused with `401 USER_CREDENTIAL_REQUIRED`. A key already knows its one organization.",
         "tags": [
           "Organizations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
         ],
         "responses": {
           "200": {
@@ -2312,9 +2356,14 @@
       "post": {
         "operationId": "createOrganization",
         "summary": "Create a new organization and become its owner",
-        "description": "Bootstraps an organization for the caller and inserts a `memberships` row with `role: owner`. Does NOT require `X-Organization-Id` (the caller may have no orgs yet), which makes it the one write a brand-new user can perform.",
+        "description": "Bootstraps an organization for the caller and inserts a `memberships` row with `role: owner`. Does NOT require `X-Organization-Id` (the caller may have no orgs yet), which makes it the one write a brand-new user can perform.\n\n**Cognito ID token only** (`401 USER_CREDENTIAL_REQUIRED` for an API key). The new organization needs an owner, and an owner is a user. This is a known limit for a consumer that wants to onboard its own customers programmatically: today it maps them onto WORKSPACES inside its one organization, which a default `member` key can create. Organizations for a consumer are provisioned out of band.",
         "tags": [
           "Organizations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
         ],
         "requestBody": {
           "required": true,
@@ -2664,7 +2713,7 @@
       "get": {
         "operationId": "listApiKeys",
         "summary": "List API keys for the active organization",
-        "description": "Unpaginated, newest first. The envelope key is `api_keys` (snake_case, mirroring the Postgres table name) while its contents are camelCase. That inconsistency is deliberate and stays on the wire; the SDKs present it as `apiKeys`.",
+        "description": "Unpaginated, newest first, and includes revoked and expired keys. The envelope key is `api_keys` (snake_case, mirroring the Postgres table name) while its contents are camelCase. That inconsistency is deliberate and stays on the wire; the SDKs present it as `apiKeys`. `keyPrefix` is null on keys minted before that column existed and cannot be recovered for them.",
         "tags": [
           "API Keys"
         ],
@@ -2704,7 +2753,7 @@
       "post": {
         "operationId": "createApiKey",
         "summary": "Mint a new API key (owner/admin only)",
-        "description": "Returns the plaintext key exactly once, as `plaintext_key`. Only its SHA-256 is stored, so a lost key cannot be recovered, only replaced. Note that minting is currently all a key does: no endpoint accepts one as a credential yet, so a key is useful for provisioning ahead of that work rather than for calling this API today.",
+        "description": "Returns the plaintext key exactly once, as `plaintext_key`. Only its SHA-256 is stored, so a lost key cannot be recovered, only replaced. Send the result as `Authorization: Bearer xg_...` to any organization-scoped operation in this document.\n\nA key may not be minted more privileged than the caller minting it: an `admin` cannot mint an `owner` key (`403`), because that would be a one-step escalation to deleting the organization.",
         "tags": [
           "API Keys"
         ],
@@ -2730,6 +2779,23 @@
                       "client"
                     ],
                     "description": "Recorded on the key. Nothing enforces it yet."
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "member",
+                      "viewer"
+                    ],
+                    "default": "member",
+                    "description": "The role the key acts with. Defaults to `member`, which is the right level for a data-plane consumer: it can register and manage devices and workspaces but cannot manage people, keys or the organization itself. Capped at the minting caller's own role."
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true,
+                    "description": "Opt-in expiry, ISO-8601, must be in the future. Omit or send null for a key that never expires."
                   }
                 }
               }
@@ -2785,7 +2851,7 @@
       "delete": {
         "operationId": "deleteApiKey",
         "summary": "Permanently delete an API key (owner/admin only)",
-        "description": "A hard delete, not a revocation: the row is removed and `revokedAt` is never used by this endpoint.",
+        "description": "A hard delete, not a revocation: the row is removed and `revokedAt` is never used by this endpoint. The key stops authenticating immediately and thereafter reads as unknown (`401 INVALID_API_KEY`) rather than revoked. Rotation is therefore mint-then-delete, and a deleted key leaves no record of having existed.",
         "tags": [
           "API Keys"
         ],
@@ -5333,9 +5399,14 @@
       "post": {
         "operationId": "attachIotPolicy",
         "summary": "Authorize the caller to subscribe to live telemetry over MQTT",
-        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\n**Use the returned `identityId` as the prefix of your MQTT client id.** The policy scopes `iot:Connect` to `client/<identityId>*`, so a CONNECT presenting any other client id is refused. Append something random after the identity id (xorgate-web uses `<identityId>-<role>-<uuid>`): one identity legitimately holds several concurrent connections, and two browser tabs of the same user resolve to the SAME identity id, so a bare identity id would make your own connections displace each other.\n\nRequires membership of at least one organization, not merely a valid token. Losing your last membership therefore ends live access rather than merely un-attaching a policy you could immediately re-attach.\n\nNote the current policy is org-blind in what it lets you SUBSCRIBE to: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing the subscribe scope is tracked as platform-readiness work. Connect scoping and revocation are done.",
+        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\n**Use the returned `identityId` as the prefix of your MQTT client id.** The policy scopes `iot:Connect` to `client/<identityId>*`, so a CONNECT presenting any other client id is refused. Append something random after the identity id (xorgate-web uses `<identityId>-<role>-<uuid>`): one identity legitimately holds several concurrent connections, and two browser tabs of the same user resolve to the SAME identity id, so a bare identity id would make your own connections displace each other.\n\nRequires membership of at least one organization, not merely a valid token. Losing your last membership therefore ends live access rather than merely un-attaching a policy you could immediately re-attach.\n\nNote the current policy is org-blind in what it lets you SUBSCRIBE to: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing the subscribe scope is tracked as platform-readiness work. Connect scoping and revocation are done.\n\n**Cognito ID token only.** The grant attaches to the caller's Cognito identity, which an API key does not have; a key is refused with `401 USER_CREDENTIAL_REQUIRED`. Live-plane access for key-authenticated consumers is separate work.",
         "tags": [
           "Live"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
         ],
         "responses": {
           "200": {
@@ -5385,9 +5456,14 @@
       "delete": {
         "operationId": "revokeLiveAccess",
         "summary": "Revoke your own access to the live plane",
-        "description": "The counterpart to `POST /iot/attach-policy`: detaches the browser policy from the Cognito identity behind your bearer token, after which the broker refuses that identity's next CONNECT and any live subscription dies on its next reconnect. Idempotent — revoking access you do not have returns the same 200.\n\nSelf-service only. Revoking someone else's live access is a consequence of removing their membership: `DELETE /memberships/{id}` detaches automatically when the removal takes away their LAST organization membership. It deliberately does not fire while the user still belongs to another organization, because the browser policy is one shared org-blind policy and they remain entitled to it.\n\nUnlike the grant, this needs only a valid token and no organization membership: someone who has just lost their last membership must still be able to clean up after themselves.",
+        "description": "The counterpart to `POST /iot/attach-policy`: detaches the browser policy from the Cognito identity behind your bearer token, after which the broker refuses that identity's next CONNECT and any live subscription dies on its next reconnect. Idempotent — revoking access you do not have returns the same 200.\n\nSelf-service only. Revoking someone else's live access is a consequence of removing their membership: `DELETE /memberships/{id}` detaches automatically when the removal takes away their LAST organization membership. It deliberately does not fire while the user still belongs to another organization, because the browser policy is one shared org-blind policy and they remain entitled to it.\n\nUnlike the grant, this needs only a valid token and no organization membership: someone who has just lost their last membership must still be able to clean up after themselves.\n\n**Cognito ID token only**, for the same reason as the grant: there is no Cognito identity behind an API key to detach from (`401 USER_CREDENTIAL_REQUIRED`).",
         "tags": [
           "Live"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
         ],
         "responses": {
           "200": {

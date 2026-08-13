@@ -11,11 +11,12 @@ create(input: CreateApiKeyInput): Promise<CreatedApiKey>
 delete(id: string): Promise<void>
 ```
 
-<Callout type="warn" title="Keys cannot authenticate anything yet">
-  Minting is currently all a key does. No endpoint accepts one as a credential,
-  `scope` is validated on write and never enforced, `lastUsedAt` never advances,
-  and there is no expiry. See [Authentication](/docs/backend-sdk/authentication)
-  for what that means for `auth: {apiKey}`.
+<Callout title="What a key can and cannot do">
+  A key authenticates the organization-scoped REST surface at its own `role`
+  (default `member`). It cannot reach the four person-scoped operations, cannot
+  write the device-model catalog, and has no live-plane path. `scope` is
+  validated on write and still never enforced. See
+  [Authentication](/docs/backend-sdk/authentication).
 </Callout>
 
 ## `create(input)`
@@ -24,6 +25,8 @@ delete(id: string): Promise<void>
 const { apiKey, plaintextKey } = await xg.apiKeys.create({
   name: "alocate-backend",
   scope: "cloud",
+  role: "member", // the default; caps at your own role
+  expiresAt: "2027-01-01T00:00:00Z", // optional, omit for never
 })
 
 await secrets.put("XORGATE_API_KEY", plaintextKey)

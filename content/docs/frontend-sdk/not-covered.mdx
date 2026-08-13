@@ -119,10 +119,14 @@ plane needs. Until credential vending exists, such a consumer has two options:
 Both work today with an API key. The provider's `auth` slot already has the
 shape the fix will use, so nothing you write now has to change.
 
-### API keys are not verified yet
+### An API key has no live plane
 
-Keys are mint-only. Nothing on the platform verifies one, so an API-key provider
-gets a 401 on every request until that lands.
+Keys authenticate the REST surface, but not the live one: both live planes are
+entered with AWS credentials from the Cognito identity pool, and a key has no
+Cognito identity. An API-key provider gets working data hooks and live hooks
+that report `unavailableReason: "no-aws-credentials"`. The
+`{ getAwsCredentials }` slot is the escape hatch for an application whose own
+backend vends credentials.
 
 ### No webhooks, so polling is the only option
 

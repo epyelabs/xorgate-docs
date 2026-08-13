@@ -1,28 +1,51 @@
 ---
 title: "Overview"
-description: "Organization-scoped keys you can mint today, and what they cannot do yet."
+description: "Organization-scoped keys: how they authenticate, what role they act with, and how to rotate them."
 ---
 
-<Callout type="warn" title="Keys are mint-only right now">
-  Nothing in this API accepts an API key as a credential. There is no
-  `X-Api-Key` path, no scope enforcement, and `lastUsedAt` never advances,
-  because no code path ever verifies a key. Server-to-server callers still have
-  to present a Cognito ID token. Key verification is the top item on the
-  platform-readiness backlog; until it ships, treat these endpoints as
-  provisioning ahead of that work.
+A key authenticates as `Authorization: Bearer xg_...` on any organization-scoped
+operation in this reference. The `xg_` prefix is how the server tells a key from
+a Cognito ID token, so no extra header is involved and no CORS change was needed.
+
+A key is bound to one organization by the row it was minted from, which makes
+`X-Organization-Id` redundant; sending a _different_ organization is a
+`403 FORBIDDEN` rather than a silently ignored header.
+
+A key acts with a `role` (default `member`), using the same gates a membership
+role does: it can read everything and write devices, workspaces and device
+registrations, but not memberships, keys or organization settings. A key is
+never a _platform_ admin, so device-model writes are closed to every key. You
+cannot mint a key more privileged than you are.
+
+<Callout type="info" title="Four operations refuse a key">
+  `GET /me`, `GET /organizations`, `POST /organizations` and the two live-access
+  operations describe or act on a person. For a key they answer
+  `USER_CREDENTIAL_REQUIRED` with a 401. In particular a key cannot create an
+  organization, so a consumer onboarding its own customers maps them onto
+  workspaces inside its one organization.
 </Callout>
 
-A key is minted with a name and a scope (`edge`, `cloud` or `client`). The scope
-is validated on create and stored, but it is inert: it describes intent for the
-authorization model that is being designed, not a restriction in force today.
+`scope` (`edge`, `cloud` or `client`) is validated on create and stored, but it
+is inert: every key behaves as `cloud` regardless. It describes intent, not a
+restriction in force.
+
+Expiry is opt-in via `expiresAt` at mint time; past it, requests get
+`401 API_KEY_EXPIRED`. `DELETE /api-keys/{id}` is a hard delete rather than a
+revocation, so rotation is mint-then-delete. `lastUsedAt` advances as a key is
+used, but the write is throttled and fire-and-forget, so read it as a liveness
+hint rather than an audit trail.
+
+`keyPrefix` is the first 8 characters of the plaintext, stored so you can tell
+which key someone is holding. It is **null on keys minted before that column
+existed** and cannot be backfilled, because only the hash was ever stored.
 
 `POST /api-keys` returns the plaintext key exactly once, as `plaintext_key`,
 alongside the key metadata. Only its SHA-256 is stored, so a lost key cannot be
 recovered, only replaced. Persist it at the moment you receive it.
 
-Deletion is a hard delete. The row carries a `revokedAt` column, but
-`DELETE /api-keys/{id}` removes the row rather than stamping it, so there is no
-audit trail of a retired key today.
+The row carries a `revokedAt` column and requests from a stamped key get
+`401 API_KEY_REVOKED`, but no endpoint sets it: `DELETE /api-keys/{id}` removes
+the row instead, so there is no audit trail of a retired key today.
 
 The envelope keys here are snake_case: `api_keys` for the list and
 `api_key` plus `plaintext_key` for the create response, while the objects inside
