@@ -23,10 +23,12 @@ version prefix yet; `/v1` arrives with the custom domain.
   the header on every request.
 </Callout>
 
-**Authentication** is a Cognito ID token (not an access token) in
-`Authorization: Bearer <token>`. See
-[Authentication](/docs/getting-started/authentication) for how to obtain one.
-API keys can be minted, but no endpoint accepts one as a credential yet.
+**Authentication** is one of three credentials in `Authorization: Bearer <…>`,
+told apart by prefix: a Cognito ID token (not an access token) for a person, an
+`xg_` [API key](/docs/api-reference/api-keys) for a program, or an `xgs_`
+[session token](/docs/api-reference/auth) for a browser or mobile app. Most
+endpoints take any of them. See
+[Authentication](/docs/getting-started/authentication) for which to reach for.
 
 **Responses are always a named object**, never a bare array: `{devices, page}`,
 `{device}`, `{organizations}`. Fields are camelCase throughout. Three envelope

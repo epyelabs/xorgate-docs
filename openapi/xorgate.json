@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.3.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are two kinds. A Cognito **ID** token (not an\naccess token) authenticates a person; a user row is created on first successful verification.\nAn **API key** from `POST /api-keys` authenticates a program: it carries the `xg_` prefix, which\nis how the server tells the two apart in the one header, and it acts inside the organization it\nwas minted from with its own `role`. Four operations accept only an ID token, because they\ndescribe or act on a person: `GET /me`, `GET`/`POST /organizations`, and the two live-access\noperations. Everything else takes either. A third prefix, `xgs_`, is reserved for short-lived\nsession tokens and currently returns `401 SESSION_TOKEN_UNSUPPORTED`.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key needs no header at all: its organization is fixed by the key row, and a\nheader naming a different organization is `403 FORBIDDEN`. `X-Workspace-Id` narrows\n`GET /devices` and is required by `POST /device-registrations`.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
+    "version": "0.4.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
   },
   "servers": [
     {
@@ -16,6 +16,9 @@
     },
     {
       "ApiKeyAuth": []
+    },
+    {
+      "SessionTokenAuth": []
     }
   ],
   "tags": [
@@ -40,9 +43,14 @@
       "description": "Organization-scoped keys. Send one as `Authorization: Bearer xg_...` to authenticate any organization-scoped operation, at the role the key was minted with."
     },
     {
+      "name": "Auth",
+      "x-displayName": "Auth",
+      "description": "Exchanging an API key for a short-lived token your client can hold. The one endpoint a third-party integration is built on."
+    },
+    {
       "name": "Workspaces",
       "x-displayName": "Workspaces",
-      "description": "The grouping devices belong to, one level below an organization."
+      "description": "The grouping devices belong to, one level below an organization. Also the tenancy unit for a consumer running its own multi-tenancy: a session token can be confined to one."
     },
     {
       "name": "Device Models",
@@ -98,6 +106,12 @@
         "scheme": "bearer",
         "bearerFormat": "xorgate API key",
         "description": "An API key from `POST /api-keys`, sent in the same header as a token: `Authorization: Bearer xg_...`. The server tells the two apart by the `xg_` prefix, so no extra header is involved. A key is bound to one organization by the row it was minted from, which makes `X-Organization-Id` redundant; sending a DIFFERENT organization is `403 FORBIDDEN` rather than an ignored header. The key acts with its own `role` (default `member`), so every role gate in this document applies to it unchanged. Keys carry no user, so operations that need one refuse them with `401 USER_CREDENTIAL_REQUIRED`."
+      },
+      "SessionTokenAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "xorgate session token",
+        "description": "A short-lived token from `POST /auth/session-tokens`, sent in the same header as the other two: `Authorization: Bearer xgs_...`. This is the only xorgate credential a browser or a mobile binary should ever hold — your server exchanges its API key for one, per end user, per request if you like.\n\nIt carries the key's organization and the key's role (never more), expires within the hour, and dies the moment the key that minted it is deleted. It can also be confined to ONE workspace, which is the only place in this API where a workspace is a boundary rather than a filter: such a token sees that workspace's devices and nothing else, gets `403 WORKSPACE_MISMATCH` for an `X-Workspace-Id` naming another workspace, and `403 WORKSPACE_SCOPED` on organization-wide operations regardless of its role. Like a key it has no user, so person-scoped operations refuse it with `401 USER_CREDENTIAL_REQUIRED`."
       }
     },
     "parameters": {
@@ -119,7 +133,7 @@
           "type": "string",
           "format": "uuid"
         },
-        "description": "Optional workspace UUID. On `GET /devices` it filters the result to that workspace (a workspace outside the active organization yields an EMPTY page, not an error). Required on `POST /device-registrations`."
+        "description": "Optional workspace UUID. On `GET /devices` it filters the result to that workspace (a workspace outside the active organization yields an EMPTY page, not an error). Required on `POST /device-registrations`.\n\nOne credential changes what this header means. For a **workspace-scoped session token** the workspace is already fixed, so the header is redundant: sending the token's own workspace is accepted, sending a different one is `403 WORKSPACE_MISMATCH` rather than an empty result, and omitting it on `POST /device-registrations` is fine because the token supplies it."
       },
       "IdPath": {
         "name": "id",
@@ -527,6 +541,89 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "CreateSessionTokenInput": {
+        "type": "object",
+        "description": "Every field is optional; an empty body mints an org-scoped token at the default TTL.",
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Confine the token to one workspace. Omit (or null) for the whole organization. A workspace outside the key's organization is `403`, and so is one that does not exist — telling those two apart would confirm other organizations' workspace ids."
+          },
+          "ttlSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600,
+            "default": 900,
+            "description": "Lifetime in seconds. Out-of-range values are REJECTED rather than clamped: a credential lifetime you believe you got and did not is a bug that surfaces as mysterious 401s later. Mint a fresh token rather than reaching for the maximum."
+          }
+        }
+      },
+      "SessionToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "expiresAt",
+          "workspaceId",
+          "role",
+          "live"
+        ],
+        "description": "A minted session token. Flat rather than wrapped in a named envelope, because it is a credential rather than a resource and there is nothing to read back later.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifies the token in your own logs. It is NOT a credential and cannot be exchanged for one."
+          },
+          "token": {
+            "type": "string",
+            "example": "xgs_1a2B3c4D5e6F7g8H9i0J1k2L3m4N5o6P7q8R",
+            "description": "The credential. Returned exactly once — only its SHA-256 is stored. Send it as `Authorization: Bearer xgs_...`, the same header everything else uses."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "After this, requests get `401 SESSION_TOKEN_EXPIRED`. Refresh before it, not after."
+          },
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Echo of the requested scope. Null means the token sees the whole organization."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "member",
+              "viewer"
+            ],
+            "description": "Inherited from the minting key. The role actually in force on a request is the lower of this and the key's role at that moment."
+          },
+          "live": {
+            "type": "object",
+            "required": [
+              "region",
+              "realtimeEndpoint"
+            ],
+            "description": "Coordinates for the live plane, which does not flow through this API. They ride along with the token so a client's configuration is just the API base URL, and so that moving them needs no consumer redeploy.",
+            "properties": {
+              "region": {
+                "type": "string",
+                "example": "us-east-1"
+              },
+              "realtimeEndpoint": {
+                "type": "string",
+                "example": "a1b2c3d4e5f6g7-ats.iot.us-east-1.amazonaws.com",
+                "description": "Host for the live telemetry stream (MQTT over WebSockets)."
+              }
+            }
           }
         }
       },
@@ -2134,7 +2231,7 @@
     },
     "responses": {
       "Unauthorized": {
-        "description": "No usable credential. `UNAUTHORIZED` for a missing, malformed or expired bearer token; `INVALID_API_KEY`, `API_KEY_REVOKED` or `API_KEY_EXPIRED` for an `xg_` key that does not verify; `USER_CREDENTIAL_REQUIRED` when a key was sent to an operation that needs a signed-in user; `SESSION_TOKEN_UNSUPPORTED` for an `xgs_` token, which nothing mints yet.",
+        "description": "No usable credential. `UNAUTHORIZED` for a missing, malformed or expired bearer token; `INVALID_API_KEY`, `API_KEY_REVOKED` or `API_KEY_EXPIRED` for an `xg_` key that does not verify; `INVALID_SESSION_TOKEN`, `SESSION_TOKEN_REVOKED` or `SESSION_TOKEN_EXPIRED` for an `xgs_` token that does not (revoked also covers a token whose minting key was revoked or deleted, and expired covers one whose key expired — the holder cannot act on the key either way, so the token-shaped code is the useful one); `USER_CREDENTIAL_REQUIRED` when a key or a token was sent to an operation that needs a signed-in user; and `API_KEY_REQUIRED` on `POST /auth/session-tokens`, which takes only a key.",
         "content": {
           "application/json": {
             "schema": {
@@ -2144,7 +2241,7 @@
         }
       },
       "Forbidden": {
-        "description": "Not a member of the requested organization (`FORBIDDEN`), a member of none (`NO_ORGANIZATION`), or a member without the required role (`INSUFFICIENT_ROLE`). An API key sent with an `X-Organization-Id` other than its own is `FORBIDDEN`, and a key whose `role` is below the operation is `INSUFFICIENT_ROLE`.",
+        "description": "Not a member of the requested organization (`FORBIDDEN`), a member of none (`NO_ORGANIZATION`), or a member without the required role (`INSUFFICIENT_ROLE`). An API key sent with an `X-Organization-Id` other than its own is `FORBIDDEN`, and a key whose `role` is below the operation is `INSUFFICIENT_ROLE`. A workspace-scoped session token adds two of its own, neither of which a role can satisfy: `WORKSPACE_MISMATCH` for an `X-Workspace-Id` that contradicts the token, and `WORKSPACE_SCOPED` for an operation that is organization-wide.",
         "content": {
           "application/json": {
             "schema": {
@@ -2851,7 +2948,7 @@
       "delete": {
         "operationId": "deleteApiKey",
         "summary": "Permanently delete an API key (owner/admin only)",
-        "description": "A hard delete, not a revocation: the row is removed and `revokedAt` is never used by this endpoint. The key stops authenticating immediately and thereafter reads as unknown (`401 INVALID_API_KEY`) rather than revoked. Rotation is therefore mint-then-delete, and a deleted key leaves no record of having existed.",
+        "description": "A hard delete, not a revocation: the row is removed and `revokedAt` is never used by this endpoint. The key stops authenticating immediately and thereafter reads as unknown (`401 INVALID_API_KEY`) rather than revoked. Rotation is therefore mint-then-delete, and a deleted key leaves no record of having existed.\n\n**Every session token minted from this key dies with it, immediately.** That cascade is the emergency stop for a leaked browser credential: there is no per-token revoke endpoint, so if you need to end sessions now, delete the key they came from. Mint the replacement key first if you also need the integration to keep working.",
         "tags": [
           "API Keys"
         ],
@@ -2874,6 +2971,55 @@
         }
       }
     },
+    "/auth/session-tokens": {
+      "post": {
+        "operationId": "createSessionToken",
+        "summary": "Exchange an API key for a short-lived session token",
+        "description": "Mints an `xgs_` **session token**: the only xorgate credential a browser or a mobile binary may hold. Call this from your SERVER, with your API key, after your own authorization decision about your own user. The token goes to the client; the key never leaves your infrastructure.\n\nxorgate never learns who your user is. You authorize the person, xorgate authorizes the key, and `workspaceId` is how you express the first decision in terms the second one can enforce.\n\n**API key only.** A Cognito ID token is `401 API_KEY_REQUIRED` (a signed-in session already authenticates this API directly and needs no exchange), and a session token cannot mint another one — otherwise a leaked token would renew itself forever and the expiry would mean nothing.\n\n**The token is never more privileged than the key.** It inherits the key's `role`, and the role in force on any request is the LOWER of the token's and the key's CURRENT role, so downgrading a key downgrades its live tokens rather than leaving them privileged until they expire.\n\n**`workspaceId` is enforced, not advisory.** Omit it and the token sees the whole organization, exactly as the key does. Supply it and the token is confined to that one workspace: device-scoped reads and writes are narrowed to it, an `X-Workspace-Id` header naming a different workspace is `403 WORKSPACE_MISMATCH`, and organization-wide operations (memberships, API keys, organization settings, workspace writes) answer `403 WORKSPACE_SCOPED` whatever the role. This is what lets you map your own customers onto workspaces and hand each of them a credential that cannot reach the others.\n\n**Revocation.** Deleting the minting key with `DELETE /api-keys/{id}` destroys every token it minted, immediately. That is the emergency stop; there is no per-token revoke endpoint, because the maximum lifetime is an hour.\n\nThe response carries the live-plane coordinates alongside the token, so a client's entire configuration is the API base URL. The plaintext token is returned exactly once and only its SHA-256 is stored; there is no way to read it back.",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionTokenInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token minted. The plaintext is shown here and nowhere else.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
     "/workspaces": {
       "parameters": [
         {
@@ -2883,7 +3029,7 @@
       "get": {
         "operationId": "listWorkspaces",
         "summary": "List workspaces in the active organization",
-        "description": "Unpaginated. Workspaces are the unit devices belong to, so this is usually the second call a client makes after `GET /me`.",
+        "description": "Unpaginated. Workspaces are the unit devices belong to, so this is usually the second call a client makes after `GET /me`.\n\nA workspace-scoped session token lists exactly one workspace: its own. Any other reads as `404` from `GET /workspaces/{id}`, indistinguishable from a workspace in another organization.",
         "tags": [
           "Workspaces"
         ],
@@ -2923,6 +3069,7 @@
       "post": {
         "operationId": "createWorkspace",
         "summary": "Create a workspace in the active organization",
+        "description": "Open to role `member`, which is what makes programmatic customer onboarding work: a consumer running its own multi-tenancy creates one workspace per customer with its default-role API key.\n\nWorkspace WRITES are organization-wide, so a workspace-scoped session token is refused with `403 WORKSPACE_SCOPED` whatever role it carries. Creating and deleting tenants is your backend's job, done with the key; a browser-held credential that could delete its own tenant would be a liability with no matching use.",
         "tags": [
           "Workspaces"
         ],
@@ -3031,7 +3178,7 @@
       "put": {
         "operationId": "updateWorkspace",
         "summary": "Update a workspace",
-        "description": "Partial update. An empty body is a 400.",
+        "description": "Partial update. An empty body is a 400. Organization-wide, like every workspace write: a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
         "tags": [
           "Workspaces"
         ],
@@ -3094,7 +3241,7 @@
       "delete": {
         "operationId": "deleteWorkspace",
         "summary": "Delete a workspace",
-        "description": "Cascades to the devices in it, and to their sessions and telemetry.",
+        "description": "Cascades to the devices in it, and to their sessions and telemetry, and to any session token scoped to it. Organization-wide: a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
         "tags": [
           "Workspaces"
         ],

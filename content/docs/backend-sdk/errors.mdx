@@ -89,27 +89,32 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 
 ## Codes from the API
 
-| Code                        | Status | Means                                                                                                                       |
-| --------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `UNAUTHORIZED`              | 401    | Missing, malformed or expired credential.                                                                                   |
-| `INVALID_API_KEY`           | 401    | The `xg_` key presented is not recognized. Also what a deleted key looks like.                                              |
-| `API_KEY_REVOKED`           | 401    | The key was revoked.                                                                                                        |
-| `API_KEY_EXPIRED`           | 401    | The key is past its `expiresAt`. Mint a replacement.                                                                        |
-| `USER_CREDENTIAL_REQUIRED`  | 401    | An API key was sent to an operation that needs a signed-in user (`GET /me`, `GET`/`POST /organizations`, live access).      |
-| `SESSION_TOKEN_UNSUPPORTED` | 401    | An `xgs_` token was sent. Nothing mints one yet.                                                                            |
-| `ORGANIZATION_REQUIRED`     | 400    | A caller in several organizations sent no `X-Organization-Id`. Should be impossible through the SDK, which always sends it. |
-| `NO_ORGANIZATION`           | 403    | The caller belongs to no organization at all.                                                                               |
-| `FORBIDDEN`                 | 403    | Not a member of the requested organization.                                                                                 |
-| `INSUFFICIENT_ROLE`         | 403    | A member, without the role this operation needs.                                                                            |
-| `BAD_REQUEST`               | 400    | Invalid body or query parameters.                                                                                           |
-| `NOT_FOUND`                 | 404    | No such resource, **or** it belongs to another organization.                                                                |
-| `METHOD_NOT_ALLOWED`        | 405    | The path exists, not with this method. Carries an `Allow` header.                                                           |
-| `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                   |
-| `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                       |
-| `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                       |
-| `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                |
-| `DIST_MANIFEST_UNAVAILABLE` | 502    | The build manifest is unreadable or empty.                                                                                  |
-| `DIST_MANIFEST_INVALID`     | 502    | The build manifest carries no version.                                                                                      |
+| Code                        | Status | Means                                                                                                                                |
+| --------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `UNAUTHORIZED`              | 401    | Missing, malformed or expired credential.                                                                                            |
+| `INVALID_API_KEY`           | 401    | The `xg_` key presented is not recognized. Also what a deleted key looks like.                                                       |
+| `API_KEY_REVOKED`           | 401    | The key was revoked.                                                                                                                 |
+| `API_KEY_EXPIRED`           | 401    | The key is past its `expiresAt`. Mint a replacement.                                                                                 |
+| `USER_CREDENTIAL_REQUIRED`  | 401    | A key or a session token was sent to an operation that needs a signed-in user (`GET /me`, `GET`/`POST /organizations`, live access). |
+| `INVALID_SESSION_TOKEN`     | 401    | The `xgs_` token presented is not recognized. Also what a token whose minting key was deleted looks like.                            |
+| `SESSION_TOKEN_REVOKED`     | 401    | The token, or the key that minted it, was revoked. Ask your backend for a new token.                                                 |
+| `SESSION_TOKEN_EXPIRED`     | 401    | The token is past its `expiresAt`, or its minting key expired. Ask your backend for a new token.                                     |
+| `API_KEY_REQUIRED`          | 401    | `POST /auth/session-tokens` takes only an `xg_` key. A user token cannot mint one, and neither can a session token.                  |
+| `WORKSPACE_MISMATCH`        | 403    | An `X-Workspace-Id` that contradicts the workspace a session token is scoped to.                                                     |
+| `WORKSPACE_SCOPED`          | 403    | A workspace-scoped session token reached an organization-wide operation. No role satisfies this one.                                 |
+| `ORGANIZATION_REQUIRED`     | 400    | A caller in several organizations sent no `X-Organization-Id`. Should be impossible through the SDK, which always sends it.          |
+| `NO_ORGANIZATION`           | 403    | The caller belongs to no organization at all.                                                                                        |
+| `FORBIDDEN`                 | 403    | Not a member of the requested organization.                                                                                          |
+| `INSUFFICIENT_ROLE`         | 403    | A member, without the role this operation needs.                                                                                     |
+| `BAD_REQUEST`               | 400    | Invalid body or query parameters.                                                                                                    |
+| `NOT_FOUND`                 | 404    | No such resource, **or** it belongs to another organization.                                                                         |
+| `METHOD_NOT_ALLOWED`        | 405    | The path exists, not with this method. Carries an `Allow` header.                                                                    |
+| `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                            |
+| `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                                |
+| `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                                |
+| `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                         |
+| `DIST_MANIFEST_UNAVAILABLE` | 502    | The build manifest is unreadable or empty.                                                                                           |
+| `DIST_MANIFEST_INVALID`     | 502    | The build manifest carries no version.                                                                                               |
 
 <Callout type="warn" title="404 hides cross-tenant reads on purpose">
   A resource in another organization answers `404`, not `403`. An unauthorized

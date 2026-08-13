@@ -1,6 +1,6 @@
 ---
 title: "Authentication"
-description: "The two auth modes, what each one can reach, and how the SDK tells you which is which."
+description: "The two auth modes, what each one can reach, and how to mint session tokens for your clients."
 ---
 
 The SDK takes exactly one `auth` value, and it is one of two shapes:
@@ -68,6 +68,48 @@ media, but cannot open a live stream.
 
 </Callout>
 
+## Minting session tokens for your clients
+
+The key stays on your server. When your own frontend or mobile app needs to talk
+to xorgate, exchange the key for a short-lived **session token** and send that
+instead:
+
+```ts
+// Your endpoint, guarded by your own auth.
+app.post("/api/xorgate-token", requireMyOwnLogin, async (req, res) => {
+  const session = await xg.auth.createSessionToken({
+    // YOUR authorization decision. xorgate never learns who req.user is.
+    workspaceId: await myDb.workspaceForUser(req.user.id),
+    ttlSeconds: 900,
+  })
+  res.json(session) // { token: "xgs_…", expiresAt, workspaceId, role, live }
+})
+```
+
+Three properties make this safe to hand out where a key would not be:
+
+- **It expires.** 15 minutes by default, an hour at most.
+- **It is never more privileged than the key.** It inherits the key's `role`,
+  and the role in force is the lower of the token's and the key's current one.
+- **It can be confined to one workspace**, and that confinement is enforced
+  rather than advisory. A workspace-scoped token sees only that workspace's
+  devices, gets `403 WORKSPACE_MISMATCH` for an `X-Workspace-Id` naming another,
+  and `403 WORKSPACE_SCOPED` on organization-wide operations at any role.
+
+Deleting the key with
+[`DELETE /api-keys/{id}`](/docs/api-reference/api-keys/delete-api-key) destroys
+every token it minted, immediately. That is the emergency stop; there is no
+per-token revoke.
+
+Full request and response shape:
+[Auth](/docs/api-reference/auth).
+
+<Callout title="A session token is a client credential, not a second backend one">
+  Do not authenticate your own backend with a token it minted. It buys nothing
+  over the key it came from, it expires under you, and it cannot mint its own
+  replacement.
+</Callout>
+
 ## Cognito ID tokens
 
 ```ts
@@ -109,11 +151,15 @@ do, and they are easy to confuse.
 | System          | Where it lives                                                     | Values                               | Gates                                                                                                                                                                                                       |
 | --------------- | ------------------------------------------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Membership role | `memberships.role`, per organization, or `api_keys.role` for a key | `owner`, `admin`, `member`, `viewer` | Every read is open to all four. `viewer` can write nothing. Provisioning, API keys, memberships, organization writes, session deletes and the reboot / power-off / update commands need `owner` or `admin`. |
-| Platform role   | `users.role`, global                                               | `user`, `admin`                      | Device-model catalog writes only. An API key is always `user`, so a key can never write the catalog.                                                                                                        |
+| Platform role   | `users.role`, global                                               | `user`, `admin`                      | Device-model catalog writes only. An API key and a session token are always `user`, so neither can ever write the catalog.                                                                                  |
 
 A failure on either is `403`, distinguished by code: `INSUFFICIENT_ROLE` when you
 are a member without enough role, `FORBIDDEN` when you are not a member of the
 requested organization at all, `NO_ORGANIZATION` when you are a member of none.
+
+A workspace-scoped session token adds a third dimension that no role satisfies:
+`WORKSPACE_SCOPED` on an organization-wide operation, and `WORKSPACE_MISMATCH`
+for an `X-Workspace-Id` that contradicts the token. Both are `403`.
 
 The SDK marks role requirements in each method's documentation. It does not
 check them client-side, because it cannot know your role without a `me()` call
@@ -128,7 +174,9 @@ The usual rules, listed because SDK examples get copied.
 - A plaintext key is shown once, at creation. Only its SHA-256 is stored, so a
   lost key is replaced, never recovered.
 - An API key grants access to a whole organization at its role. There is no
-  per-workspace or per-device key. Rotation is manual and overlapping: mint the
+  per-workspace or per-device key: **a session token is how you narrow to one
+  workspace**, and it is the only xorgate credential that belongs in a browser
+  or a mobile binary. Rotation is manual and overlapping: mint the
   new key, deploy it, then delete the old one with
   [`DELETE /api-keys/{id}`](/docs/api-reference/api-keys/delete-api-key).
   Expiry is opt-in per key, so set one on anything long-lived.
@@ -138,6 +186,8 @@ The usual rules, listed because SDK examples get copied.
 
 Live telemetry (MQTT over WebSocket) and live video (KVS WebRTC) do not use this
 API's credential at all. They need temporary AWS credentials from a Cognito
-identity pool, which requires a Cognito identity that an API key does not have.
-See
+identity pool, which requires a Cognito identity that neither an API key nor a
+session token has. The `live` block on a minted token carries the coordinates
+(region and realtime endpoint) so a client never hardcodes them, but the
+credential that opens a stream is separate work. See
 [What this SDK does not cover](/docs/backend-sdk/not-covered).

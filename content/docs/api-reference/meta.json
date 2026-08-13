@@ -5,6 +5,7 @@
     "organizations",
     "memberships",
     "api-keys",
+    "auth",
     "workspaces",
     "device-models",
     "devices",

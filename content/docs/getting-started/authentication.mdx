@@ -1,28 +1,27 @@
 ---
 title: "Authentication"
-description: "How requests are authenticated today, where API keys stand, and how the live planes get their credentials."
+description: "The three bearer credentials, when to reach for each, and how the live planes get their own."
 ---
 
 There is **no API Gateway authorizer** in front of xorgate-core-service. Every
 route is reachable at the gateway and each handler enforces its own auth. A route
 described as unauthenticated is simply one whose handler does not check.
 
-## Two credentials, one header
+## Three credentials, one header
 
-The API accepts two kinds of bearer credential, and tells them apart by the
+The API accepts three kinds of bearer credential, and tells them apart by the
 credential itself rather than by a separate header:
 
 | Credential           | Prefix | Who sends it                          | Carries a user |
 | -------------------- | ------ | ------------------------------------- | -------------- |
 | Cognito **ID** token | a JWT  | a signed-in browser or mobile session | yes            |
 | API key              | `xg_`  | a server-to-server integration        | no             |
+| Session token        | `xgs_` | a third party's browser or mobile app | no             |
 
-A third prefix, `xgs_`, is reserved for short-lived session tokens. Nothing
-mints one yet and sending one returns `401 SESSION_TOKEN_UNSUPPORTED`.
-
-There is **no API Gateway authorizer** in front of xorgate-core-service. Every
-route is reachable at the gateway and each handler enforces its own auth. A route
-described as unauthenticated is simply one whose handler does not check.
+Which one you want follows from where the credential will live. Code you
+control on a server holds a key. Code you ship to someone else's device holds a
+session token, because it is short-lived, narrower than the key, and revocable.
+A person signing in to xorgate's own dashboard holds an ID token.
 
 ## Cognito ID tokens
 
@@ -98,9 +97,17 @@ writes are closed to every key regardless of its role. See the
 You cannot mint a key more privileged than you are: an `admin` minting an
 `owner` key gets a `403`.
 
-**Four operations refuse it**, because they describe or act on a person, and
+**Five operations refuse it**, because they describe or act on a person, and
 answer `401 USER_CREDENTIAL_REQUIRED`: `GET /me`, `GET /organizations`,
 `POST /organizations`, and the two live-access operations.
+
+<Callout type="warn" title="A key must never reach a browser">
+
+A key is organization-wide and does not expire unless you gave it an
+`expiresAt`, so a copy in a JavaScript bundle or a mobile binary is a published
+key. Ship a session token instead; the next section is how.
+
+</Callout>
 
 ### Rotation, expiry and revocation
 
@@ -133,6 +140,95 @@ consumer onboarding its own customers maps them onto **workspaces** inside its
 one organization, which a default `member` key can create. Organizations for a
 new consumer are provisioned out of band.
 
+## Session tokens
+
+A session token is what your application hands to code running on someone
+else's device. Your server exchanges its key for one, per end user, after making
+its own authorization decision:
+
+```http
+POST /auth/session-tokens
+Content-Type: application/json
+Authorization: Bearer xg_9c1f....
+
+{ "workspaceId": "3f9a...", "ttlSeconds": 900 }
+```
+
+```json
+{
+  "id": "0f2c....",
+  "token": "xgs_7d3b....",
+  "expiresAt": "2026-08-13T12:15:00Z",
+  "workspaceId": "3f9a....",
+  "role": "member",
+  "live": {
+    "region": "us-east-1",
+    "realtimeEndpoint": "a1b2c3d4e5f6g7-ats.iot.us-east-1.amazonaws.com"
+  }
+}
+```
+
+Then the client sends it in the same header everything else uses:
+
+```http
+GET /devices HTTP/1.1
+Authorization: Bearer xgs_7d3b....
+```
+
+Both fields in the body are optional. Omit `workspaceId` and the token sees the
+whole organization, exactly as the key does; omit `ttlSeconds` and it lives 15
+minutes, with an hour the maximum. An out-of-range TTL is rejected rather than
+clamped, because a lifetime you believe you got and did not shows up as
+mysterious 401s much later.
+
+xorgate never learns who your end user is. You authorize the person, xorgate
+authorizes the key, and `workspaceId` is how you state the first decision in
+terms the second can enforce.
+
+**Only a key can mint one.** An ID token gets `401 API_KEY_REQUIRED` (a
+signed-in session already authenticates this API directly), and a session token
+cannot mint another one, or a leaked token would renew itself forever and the
+expiry would mean nothing.
+
+**A token is never more privileged than its key.** It inherits the key's `role`,
+and the role in force on any request is the _lower_ of the token's and the key's
+current role. Downgrading a key downgrades its live tokens rather than leaving
+them privileged until they expire.
+
+**It has no user either**, so the same operations that refuse a key refuse a
+token, with the same `401 USER_CREDENTIAL_REQUIRED`.
+
+### Workspace scoping is an enforced boundary
+
+For a person or a key, every workspace in the organization is visible and
+`X-Workspace-Id` merely narrows a list. For a session token minted with a
+`workspaceId` it is a boundary:
+
+- Devices, and everything reached through a device id, are confined to that
+  workspace. Another workspace's device reads as `404`.
+- `GET /workspaces` returns exactly one row, its own.
+- An `X-Workspace-Id` naming a different workspace is `403 WORKSPACE_MISMATCH`,
+  not a silently empty result.
+- `POST /device-registrations` needs no `X-Workspace-Id`: the token supplies it.
+- Organization-wide operations, meaning memberships, API keys, organization
+  settings and workspace writes, are `403 WORKSPACE_SCOPED` **whatever role the
+  token carries**. The limit is tenancy, not privilege.
+- `GET /device-models` is still allowed. The hardware catalog is platform-wide
+  and has no tenant to separate.
+
+That is what lets a consumer running its own multi-tenancy give each of its
+customers a credential that provably cannot reach another's.
+
+### Revoking a session token
+
+There is no per-token revoke endpoint. The maximum lifetime is an hour, and
+tracking token ids in order to revoke them would be more machinery than that
+window justifies.
+
+The emergency stop is one level up: `DELETE /api-keys/{id}` destroys every
+session token minted from that key, immediately. Mint the replacement key first
+if the integration also has to keep working.
+
 ## The live planes
 
 Live telemetry and live video do not go through the REST API, and so they do not
@@ -161,13 +257,22 @@ that call granted.
 
 </Callout>
 
-An API key has no live-plane path. Both live planes are entered with AWS
-credentials from the Cognito Identity Pool, which needs a Cognito identity, and
-a key does not have one: the two live-access operations refuse keys with
-`401 USER_CREDENTIAL_REQUIRED`. So an application that authenticates its own
-users, rather than federating them into xorgate's Cognito, can use the whole
-REST surface with a key but cannot yet open a live stream. Telemetry history and
-recorded media go through REST and work regardless.
+Neither an API key nor a session token has a live-plane path yet. Both live
+planes are entered with AWS credentials from the Cognito Identity Pool, which
+needs a Cognito identity, and neither credential has one: the two live-access
+operations refuse both with `401 USER_CREDENTIAL_REQUIRED`. So an application
+that authenticates its own users, rather than federating them into xorgate's
+Cognito, can use the whole REST surface but cannot yet open a live stream.
+Telemetry history and recorded media go through REST and work regardless.
+
+<Callout type="warn" title="The token's `live` block is coordinates, not access">
+
+`POST /auth/session-tokens` returns `live: { region, realtimeEndpoint }` so that
+a client never has to hardcode where the live plane is. Those are addresses. The
+credential that opens a stream is separate work, and until it ships a session
+token cannot subscribe to live telemetry or join a video channel.
+
+</Callout>
 
 ## CORS
 

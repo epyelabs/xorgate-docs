@@ -17,10 +17,11 @@ registrations, but not memberships, keys or organization settings. A key is
 never a _platform_ admin, so device-model writes are closed to every key. You
 cannot mint a key more privileged than you are.
 
-<Callout type="info" title="Four operations refuse a key">
+<Callout type="info" title="Five operations refuse a key">
   `GET /me`, `GET /organizations`, `POST /organizations` and the two live-access
   operations describe or act on a person. For a key they answer
-  `USER_CREDENTIAL_REQUIRED` with a 401. In particular a key cannot create an
+  `USER_CREDENTIAL_REQUIRED` with a 401, and so they do for a session token,
+  which has no person behind it either. In particular a key cannot create an
   organization, so a consumer onboarding its own customers maps them onto
   workspaces inside its one organization.
 </Callout>
@@ -52,3 +53,7 @@ The envelope keys here are snake_case: `api_keys` for the list and
 them are camelCase. They mirror the Postgres table name, and the inconsistency
 stays on the wire rather than breaking existing clients. Both SDKs normalize it
 to `apiKeys` and `plaintextKey`.
+
+A key is also what mints a **session token**, the short-lived credential your
+browser or mobile app holds instead of the key itself. Deleting a key destroys
+every token minted from it. See [Auth](/docs/api-reference/auth).

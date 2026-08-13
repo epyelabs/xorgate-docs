@@ -1,0 +1,96 @@
+---
+title: "Overview"
+description: "Exchanging an API key for a short-lived session token your browser or mobile app can hold."
+---
+
+An API key is a server-side credential. It does not expire on its own, it covers
+your whole organization, and a copy of it in a JavaScript bundle or a mobile
+binary is a published key. So there is a second credential for the client side:
+a **session token**, minted by `POST /auth/session-tokens`, sent as
+`Authorization: Bearer xgs_...` on the same header everything else uses.
+
+Your server does the exchange, once per end user, after making its own
+authorization decision:
+
+```ts
+// Your server. Your users, your auth, your rules.
+app.post("/api/xorgate-token", requireMyOwnLogin, async (req, res) => {
+  const workspaceId = await myDb.workspaceForUser(req.user.id)
+
+  const r = await fetch(`${XORGATE_API_URL}/auth/session-tokens`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.XORGATE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ workspaceId, ttlSeconds: 900 }),
+  })
+
+  res.json(await r.json())
+})
+```
+
+xorgate never learns who `req.user` is. You authorize the person; xorgate
+authorizes the key. `workspaceId` is how you state the first decision in terms
+the second one can enforce.
+
+## What a token can do
+
+Everything the minting key can, minus what you narrowed:
+
+- **Organization** comes from the key and cannot be changed. `X-Organization-Id`
+  is redundant, and a different one is a `403 FORBIDDEN`.
+- **Role** is the key's role, and the role in force on a request is the _lower_
+  of the token's and the key's current role. Downgrading a key downgrades its
+  live tokens rather than leaving them privileged until they expire.
+- **Lifetime** is 15 minutes by default and an hour at most. Refresh before
+  `expiresAt`, not after; the failure mode after it is
+  `401 SESSION_TOKEN_EXPIRED`.
+- **No user.** Like a key, a token has no person behind it, so `GET /me`,
+  the `/organizations` collection operations and the two live-access operations
+  refuse it with `401 USER_CREDENTIAL_REQUIRED`.
+- **No self-renewal.** A token cannot mint another token. Only a key can.
+
+## Workspace scoping is the tenancy tool
+
+This is the one place in the API where a workspace is a **boundary** rather than
+a filter. Pass `workspaceId` and the token is confined to it:
+
+|                                                                | Workspace-scoped token                                            |
+| -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Devices and everything reached through one                     | Only that workspace's. Others read as `404`.                      |
+| `GET /workspaces`                                              | Exactly one row: its own.                                         |
+| `X-Workspace-Id` naming another workspace                      | `403 WORKSPACE_MISMATCH`                                          |
+| `POST /device-registrations` without the header                | Fine. The token supplies the workspace.                           |
+| Memberships, API keys, organization settings, workspace writes | `403 WORKSPACE_SCOPED`                                            |
+| `GET /device-models`                                           | Allowed. The hardware catalog is platform-wide and has no tenant. |
+
+The refusals are independent of role: an `owner` token scoped to a workspace is
+refused on organization-wide operations exactly as a `viewer` one is, because
+the limit is tenancy rather than privilege.
+
+<Callout type="info" title="Mapping your customers onto workspaces">
+  If you run your own multi-tenancy inside one xorgate organization, create one
+  workspace per customer (`POST /workspaces` is open to the default `member`
+  role, so your key can do it) and store the pairing in your own database. Then
+  each end user gets a token scoped to their customer's workspace and provably
+  cannot reach another's.
+</Callout>
+
+## Revoking
+
+There is no per-token revoke endpoint, because the maximum lifetime is an hour
+and tracking token ids to revoke them would be more machinery than the window
+justifies.
+
+The emergency stop is one level up: `DELETE /api-keys/{id}` destroys every
+session token minted from that key, immediately. Mint the replacement key first
+if the integration also has to keep working.
+
+## The `live` block
+
+The response carries `live: { region, realtimeEndpoint }` alongside the token.
+Live telemetry and live video do not flow through this API, and those are the
+coordinates a client needs to reach them. They ride along with the credential
+that authorizes them so a client's whole configuration is the API base URL, and
+so that moving them needs no redeploy on your side.
