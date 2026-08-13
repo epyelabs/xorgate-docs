@@ -43,16 +43,18 @@ Two consequences that matter more than they first appear:
    API key can read history and cannot watch live at all. Closing that gap is
    known platform work.
 
-<Callout type="warn" title="The browser-side policies are org-blind">
-  The **device** IoT policy is properly scoped to its own topic subtree. The
-  policy attached to browser identities, and the KVS access a browser mints for
+<Callout type="warn" title="Browser SUBSCRIBE is still org-blind">
+  The **device** IoT policy is properly scoped to its own topic subtree. What a
+  browser identity may subscribe to, and the KVS access a browser mints for
   itself, are not: any authenticated user can subscribe to any device's telemetry
-  topic, across organizations.
+  topic, across organizations. That is a tracked platform gap and must be fixed
+  before third parties touch the live plane.
 
-There is also no counterpart that detaches, so a user removed from an
-organization keeps the policy attached to their identity indefinitely. Both
-are tracked platform gaps and both must be fixed before third parties touch the
-live plane.
+What a browser may CONNECT as is scoped, and revocation exists. Connect is
+limited to the caller's own Cognito identity, so a browser can neither
+impersonate a device on the broker nor collide with another user, and
+[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) plus the
+membership-removal path detach the policy.
 
 </Callout>
 

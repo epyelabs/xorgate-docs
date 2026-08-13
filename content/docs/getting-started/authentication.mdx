@@ -84,12 +84,18 @@ use the same credential.
   metadata only. The browser mints its own credentials the same way and joins the
   channel as a viewer, with media flowing peer to peer from the device.
 
-<Callout type="warn" title="Live-plane policies are not organization-scoped">
+<Callout type="warn" title="Live-plane READ scope is not organization-scoped">
 
-The IoT and KVS browser policies are currently broad but authenticated: any
-authenticated user can subscribe to any device's telemetry topic. This is a known
-cross-tenant gap and has to be closed before third parties touch the live plane.
-It is tracked on the platform-readiness backlog.
+What the IoT and KVS browser policies let you read is currently broad but
+authenticated: any authenticated user can subscribe to any device's telemetry
+topic. This is a known cross-tenant gap and has to be closed before third
+parties touch the live plane. It is tracked on the platform-readiness backlog.
+
+Connecting to the broker is organization-blind but not identity-blind: it is
+scoped to the caller's own Cognito identity, so the MQTT client id must start
+with the `identityId` that `POST /iot/attach-policy` returns.
+[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) revokes what
+that call granted.
 
 </Callout>
 

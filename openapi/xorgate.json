@@ -2632,7 +2632,7 @@
       "delete": {
         "operationId": "removeMembership",
         "summary": "Remove a member (owner/admin only)",
-        "description": "Removing the last remaining owner is refused with a 403, so an organization can never be left ownerless.",
+        "description": "Removing the last remaining owner is refused with a 403, so an organization can never be left ownerless.\n\nSide effect: if this removal takes away the member's LAST organization membership, their live-plane access is revoked too (see `DELETE /live/access`), and any live subscription they hold dies on its next reconnect. Members who still belong to another organization keep live access.",
         "tags": [
           "Memberships"
         ],
@@ -5333,7 +5333,7 @@
       "post": {
         "operationId": "attachIotPolicy",
         "summary": "Authorize the caller to subscribe to live telemetry over MQTT",
-        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\nNote the current policy is org-blind: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing it is tracked as platform-readiness work.",
+        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\n**Use the returned `identityId` as the prefix of your MQTT client id.** The policy scopes `iot:Connect` to `client/<identityId>*`, so a CONNECT presenting any other client id is refused. Append something random after the identity id (xorgate-web uses `<identityId>-<role>-<uuid>`): one identity legitimately holds several concurrent connections, and two browser tabs of the same user resolve to the SAME identity id, so a bare identity id would make your own connections displace each other.\n\nRequires membership of at least one organization, not merely a valid token. Losing your last membership therefore ends live access rather than merely un-attaching a policy you could immediately re-attach.\n\nNote the current policy is org-blind in what it lets you SUBSCRIBE to: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing the subscribe scope is tracked as platform-readiness work. Connect scoping and revocation are done.",
         "tags": [
           "Live"
         ],
@@ -5355,7 +5355,59 @@
                     },
                     "identityId": {
                       "type": "string",
-                      "description": "The Cognito identity id the policy was attached to.",
+                      "description": "The Cognito identity id the policy was attached to, and the required prefix of the MQTT client id you connect with.",
+                      "example": "us-east-1:00000000-0000-0000-0000-000000000000"
+                    },
+                    "policyName": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/live/access": {
+      "delete": {
+        "operationId": "revokeLiveAccess",
+        "summary": "Revoke your own access to the live plane",
+        "description": "The counterpart to `POST /iot/attach-policy`: detaches the browser policy from the Cognito identity behind your bearer token, after which the broker refuses that identity's next CONNECT and any live subscription dies on its next reconnect. Idempotent — revoking access you do not have returns the same 200.\n\nSelf-service only. Revoking someone else's live access is a consequence of removing their membership: `DELETE /memberships/{id}` detaches automatically when the removal takes away their LAST organization membership. It deliberately does not fire while the user still belongs to another organization, because the browser policy is one shared org-blind policy and they remain entitled to it.\n\nUnlike the grant, this needs only a valid token and no organization membership: someone who has just lost their last membership must still be able to clean up after themselves.",
+        "tags": [
+          "Live"
+        ],
+        "responses": {
+          "200": {
+            "description": "Policy detached from the caller identity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "detached",
+                    "identityId",
+                    "policyName"
+                  ],
+                  "properties": {
+                    "detached": {
+                      "type": "boolean"
+                    },
+                    "identityId": {
+                      "type": "string",
+                      "description": "The Cognito identity id the policy was detached from.",
                       "example": "us-east-1:00000000-0000-0000-0000-000000000000"
                     },
                     "policyName": {
