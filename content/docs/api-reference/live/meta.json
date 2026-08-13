@@ -4,6 +4,7 @@
   "pages": [
     "index",
     "get-device-kvs-channels",
-    "attach-iot-policy"
+    "attach-iot-policy",
+    "revoke-live-access"
   ]
 }

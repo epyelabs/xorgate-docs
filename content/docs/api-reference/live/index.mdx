@@ -35,15 +35,32 @@ the client can connect over MQTT-over-WSS and subscribe to
 `xorgate/devices/{deviceId}/telemetry`. It is idempotent, so calling it on every
 page load is fine and is the normal pattern.
 
+Use the `identityId` it returns as the prefix of your MQTT client id. Connect is
+scoped to `client/<identityId>*`, so any other client id is refused. Append
+something random after the identity id: one identity holds several concurrent
+connections, and two browser tabs of the same user resolve to the same identity
+id.
+
+[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) is the
+counterpart. It detaches the policy from the caller's identity, and removing
+someone's last organization membership does the same thing automatically.
+
 The payload on that topic uses the same `group.field` metric names as the
 [stored telemetry](/docs/api-reference/telemetry) endpoints, which is what lets
 a chart seeded from `/telemetry/recent` append live samples without translating
 anything.
 
-<Callout type="warn" title="The browser IoT policy is org-blind today">
-  The policy attached here authorizes the telemetry topic space broadly rather
-  than per organization, so any authenticated caller can subscribe to any
-  device's topic. That is acceptable for first-party use and is NOT safe to hand
-  to a third party. Narrowing it, and vending credentials from an API key rather
-  than a xorgate Cognito session, are both tracked as platform-readiness work.
+<Callout type="warn" title="What the browser IoT policy still allows">
+  Subscribing is org-blind: the policy authorizes the telemetry topic space
+  broadly rather than per organization, so any authenticated caller can
+  subscribe to any device's topic. That is acceptable for first-party use and is
+  NOT safe to hand to a third party. Narrowing the subscribe scope, and vending
+  credentials from an API key rather than a xorgate Cognito session, are both
+  tracked as platform-readiness work.
+
+Connecting is not org-blind. It is scoped to the caller's own Cognito identity,
+so a browser can neither connect as a device nor as another user. Publishing
+was already narrow: browsers may publish only to the workflow-simulator ingest
+topics.
+
 </Callout>

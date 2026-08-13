@@ -233,6 +233,11 @@ endpoint that acts on the identity of whoever calls it is meaningless from a
 server. It is idempotent, so calling it on every page load is fine, and the SDK
 does exactly that rather than trying to remember.
 
+Its response carries the `identityId`, which the SDK then uses as the prefix of
+the MQTT client id: connect is scoped to `client/<identityId>*`, so any other
+client id is refused. The SDK appends a random suffix, because a single page
+opens several connections and two tabs of the same user share one identity id.
+
 Then it mints Identity Pool credentials and builds a presigned WSS URL by hand.
 Two quirks make that hand-rolled rather than a call into
 `@aws-sdk/signature-v4`, and both survive into the SDK:
@@ -262,12 +267,13 @@ ICE server configuration, and runs a WebRTC VIEWER session.
 
 ## The live plane is not a tenant boundary yet
 
-<Callout type="warn" title="Live IoT and KVS policies are org-blind">
+<Callout type="warn" title="Live READ scope is org-blind">
 
-The browser IoT policy attached by `POST /iot/attach-policy` and the browser KVS
-policy are both scoped to "any authenticated user", not to the devices in your
-organization. **Any signed-in user of this platform can subscribe to any
-device's live telemetry topic and open a viewer on any device's video channel.**
+What the browser IoT policy lets you subscribe to, and what the browser KVS
+policy lets you view, are both scoped to "any authenticated user", not to the
+devices in your organization. **Any signed-in user of this platform can
+subscribe to any device's live telemetry topic and open a viewer on any device's
+video channel.**
 
 The REST API is not affected. Every REST endpoint enforces organization
 membership; this is specific to the two live planes, which bypass the API
@@ -278,6 +284,13 @@ trusted organization, which is what xorgate-web is, and are **not** ready for
 third parties. Fixing it is Phase 6 P2 of the platform-readiness work, and it is
 the same work item as credential vending, because both need per-identity policy
 scoping.
+
+Two things that used to be listed here are done. MQTT **connect** is scoped to
+the caller's own Cognito identity, so a browser can no longer connect as a
+device and displace it on the broker, nor collide with another user. And live
+access can be taken away: [`DELETE /live/access`](/docs/api-reference/live/revoke-live-access)
+detaches the policy, and losing your last organization membership detaches it
+automatically.
 
 </Callout>
 

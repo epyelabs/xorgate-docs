@@ -126,9 +126,10 @@ device's KVS channels.
 
 ## Not modelled
 
-`POST /iot/attach-policy` has no SDK method. It attaches an IoT policy to the
-**caller's own** Cognito identity so a browser can subscribe to live telemetry,
-which makes it meaningless from a server. It belongs to the frontend SDK. See
+`POST /iot/attach-policy` and `DELETE /live/access` have no SDK method. Both act
+on the **caller's own** Cognito identity, granting and revoking a browser's
+ability to subscribe to live telemetry, which makes them meaningless from a
+server. They belong to the frontend SDK. See
 [What this SDK does not cover](/docs/backend-sdk/not-covered).
 
 `POST /device-registrations/{code}/claim` and `GET /get/{code}` have no SDK

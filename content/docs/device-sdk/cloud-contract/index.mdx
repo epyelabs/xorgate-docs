@@ -70,13 +70,19 @@ The chain extends into video. KVS signaling channels are named
 `${deviceId}-${streamKey}`, so `cam0` on device `a73f7a36-…` is channel
 `a73f7a36-…-cam0`.
 
-<Callout type="warn" title="The browser-side policies are org-blind today">
-  The **device** policy above is properly scoped. The policy attached to browser
-  identities by `POST /iot/attach-policy`, and the KVS access a browser mints
-  for itself, are not: any authenticated user can subscribe to any device's
+<Callout type="warn" title="Browser-side READ scope is org-blind today">
+  The **device** policy above is properly scoped. What a browser identity may
+  subscribe to after `POST /iot/attach-policy`, and the KVS access a browser
+  mints for itself, are not: any authenticated user can subscribe to any device's
   telemetry topic. That is a known platform gap, tracked for the
   platform-readiness work, and it is why the live plane is not yet safe for
   third-party consumers.
+
+One thing operators used to have to worry about is fixed. A browser can no
+longer CONNECT to the broker with an arbitrary client id, so it cannot present
+a device's thing name and displace that device's MQTT session. Browser connect
+is scoped to the caller's own Cognito identity id.
+
 </Callout>
 
 ## Clocks
