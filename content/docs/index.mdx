@@ -49,6 +49,6 @@ rather than implying it exists. In particular:
 - The **Backend SDK** and **Frontend SDK** sections are design documents first.
   The packages follow the docs, not the other way around.
 - API-key authentication **works**: a minted `xg_` key authenticates the REST
-  surface at its own role. It has no live-plane path, because that needs a
-  Cognito identity. See
+  surface at its own role, and can vend credentials for the live plane on
+  behalf of one workspace. See
   [Authentication](/docs/getting-started/authentication).

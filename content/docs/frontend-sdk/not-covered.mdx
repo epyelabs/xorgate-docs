@@ -90,43 +90,25 @@ surfaces are out of scope for the whole SDK effort, in both packages.
 These are limits of the platform, not of the SDK. They are recorded on the
 plan's backlog; they are listed here so you can design around them today.
 
-### The live plane is not a tenant boundary
+### The live plane is a tenant boundary for vended credentials, and not for the dashboard
 
-<Callout type="warn" title="Any authenticated user can watch any device">
+<Callout type="info" title="What a vended credential can watch">
 
-The browser IoT policy and the browser KVS policy are both scoped to "any
-authenticated user", not to the devices in your organization. Any signed-in user
-of the platform can subscribe to any device's telemetry topic and open a viewer
-on any device's video channel.
+Credentials from
+[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+reach exactly one scope. Vended for a workspace, they receive that workspace's
+devices' telemetry and can view that workspace's devices' video, and a sibling
+workspace's device is refused rather than filtered. That is the boundary a
+consumer running its own multi-tenancy needs, and the SDK obtains and refreshes
+those credentials for you.
 
-The REST API is not affected; every endpoint there enforces membership.
-
-The consequence: live video and live telemetry are safe inside a single trusted
-organization, and are **not** ready for third parties. This is the single
-biggest reason third-party live access is not generally available.
+The exception is the xorgate dashboard's own path, which signs a **person** into
+an identity pool and is still broad-but-authenticated: a signed-in xorgate user
+can watch any device. It does not affect a consumer integration, which never
+uses that path, and the REST API was never affected — every endpoint there
+enforces membership.
 
 </Callout>
-
-### A consumer with its own auth has no live plane
-
-An application that runs its own authentication cannot federate into xorgate's
-Cognito Identity Pool, so its browser cannot mint the AWS credentials the live
-plane needs. Until credential vending exists, such a consumer has two options:
-
-- Poll `useTelemetryLatest` with `refetchIntervalMs` for current state.
-- Use recorded [replay](/docs/frontend-sdk/replay) instead of live video.
-
-Both work today with an API key. The provider's `auth` slot already has the
-shape the fix will use, so nothing you write now has to change.
-
-### An API key has no live plane
-
-Keys authenticate the REST surface, but not the live one: both live planes are
-entered with AWS credentials from the Cognito identity pool, and a key has no
-Cognito identity. An API-key provider gets working data hooks and live hooks
-that report `unavailableReason: "no-aws-credentials"`. The
-`{ getAwsCredentials }` slot is the escape hatch for an application whose own
-backend vends credentials.
 
 ### No webhooks, so polling is the only option
 

@@ -111,8 +111,9 @@ Types that exist because the live and replay planes are not REST.
 `LiveStatus`, `UseLiveTelemetry`, `TelemetryPoint`,
 `TelemetryRecordingStatus`, `TelemetryMediaStatus`, `TelemetryStreamStatus`.
 
-These model the device's payload v1, which the backend SDK does not describe
-because it has no live plane.
+These model the device's payload v1, which the backend SDK does not describe:
+live streams are consumed in a client, and a Node server's part in them is
+vending the credentials rather than reading the frames.
 
 <Callout title="The payload shape lives in three repositories">
   `TelemetryRecordingStatus` and friends mirror the device agent's own types and

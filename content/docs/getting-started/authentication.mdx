@@ -242,35 +242,47 @@ use the same credential.
   metadata only. The browser mints its own credentials the same way and joins the
   channel as a viewer, with media flowing peer to peer from the device.
 
-<Callout type="warn" title="Live-plane READ scope is not organization-scoped">
+<Callout type="info" title="Live-plane read scope is per-tenant">
 
-What the IoT and KVS browser policies let you read is currently broad but
-authenticated: any authenticated user can subscribe to any device's telemetry
-topic. This is a known cross-tenant gap and has to be closed before third
-parties touch the live plane. It is tracked on the platform-readiness backlog.
+A credential from
+[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+reaches its own scope's live plane and nothing else. Vended for a workspace, it
+receives that workspace's devices' telemetry and can view that workspace's
+devices' video; a sibling workspace's device is refused rather than filtered,
+by the credential itself.
 
-Connecting to the broker is organization-blind but not identity-blind: it is
-scoped to the caller's own Cognito identity, so the MQTT client id must start
-with the `identityId` that `POST /iot/attach-policy` returns.
+The xorgate dashboard is the exception, and deliberately so: it signs in as a
+person, federates that person into an identity pool, and what it may read there
+is still broad-but-authenticated. Narrowing the first-party path onto the same
+per-tenant mechanism is a separate change and is not done yet. Connecting is
+identity-scoped either way, so an MQTT client id must start with the
+`identityId` that `POST /iot/attach-policy` returns.
 [`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) revokes what
 that call granted.
 
 </Callout>
 
-Neither an API key nor a session token has a live-plane path yet. Both live
-planes are entered with AWS credentials from the Cognito Identity Pool, which
-needs a Cognito identity, and neither credential has one: the two live-access
-operations refuse both with `401 USER_CREDENTIAL_REQUIRED`. So an application
-that authenticates its own users, rather than federating them into xorgate's
-Cognito, can use the whole REST surface but cannot yet open a live stream.
-Telemetry history and recorded media go through REST and work regardless.
+An API key and a session token both have a live plane, and it is the same one.
+Call
+[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+with either, and hand what comes back to the SDK. This is the endpoint that lets
+an application authenticating its OWN users open a live stream, which is the
+thing that used to be impossible: the browser holds a session token and vends
+for itself, or your server holds the API key, vends per customer, and the
+browser never touches xorgate at all.
 
-<Callout type="warn" title="The token's `live` block is coordinates, not access">
+The two live-access operations still refuse both credentials with
+`401 USER_CREDENTIAL_REQUIRED`, and that is correct rather than a leftover: they
+attach and detach an IoT policy on a **Cognito identity**, which neither
+credential has. They are the dashboard's own path, not part of a third-party
+integration.
 
-`POST /auth/session-tokens` returns `live: { region, realtimeEndpoint }` so that
-a client never has to hardcode where the live plane is. Those are addresses. The
-credential that opens a stream is separate work, and until it ships a session
-token cannot subscribe to live telemetry or join a video channel.
+<Callout type="info" title="Two things arrive with the token, and only one is a credential">
+
+`POST /auth/session-tokens` returns `live: { region, realtimeEndpoint }` so a
+client never has to hardcode where the live plane is. Those are addresses, not
+authorization. What opens a stream is the separate exchange above — which the
+SDK performs for you, so in practice you supply the token and nothing else.
 
 </Callout>
 
