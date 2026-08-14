@@ -72,13 +72,6 @@ onboard a customer as its own xorgate organization. Map customers onto
 create. Organizations are provisioned out of band. See
 [Authentication](/docs/backend-sdk/authentication).
 
-### An API key has no live-plane path
-
-Both live planes need AWS credentials from the Cognito identity pool, which
-needs a Cognito identity a key does not have. A key-only backend has the whole
-REST surface, including telemetry history and recorded media, but cannot open a
-live stream.
-
 ### There are no webhooks
 
 Nothing is pushed. Every "tell me when" is a poll, and the events you would want

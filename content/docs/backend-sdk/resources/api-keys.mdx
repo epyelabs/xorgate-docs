@@ -13,9 +13,9 @@ delete(id: string): Promise<void>
 
 <Callout title="What a key can and cannot do">
   A key authenticates the organization-scoped REST surface at its own `role`
-  (default `member`). It cannot reach the four person-scoped operations, cannot
-  write the device-model catalog, and has no live-plane path. `scope` is
-  validated on write and still never enforced. See
+  (default `member`). It cannot reach the four person-scoped operations and
+  cannot write the device-model catalog, but it CAN vend live-plane credentials
+  for a workspace. `scope` is validated on write and still never enforced. See
   [Authentication](/docs/backend-sdk/authentication).
 </Callout>
 

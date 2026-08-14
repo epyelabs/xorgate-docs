@@ -126,50 +126,79 @@ Sent as `Authorization: Bearer xg_…`, matching
   full-organization credential.
 </Callout>
 
-<Callout type="warn" title="A key cannot reach the live plane">
-  Live telemetry and live video need AWS credentials from the Cognito identity
-  pool, and an API key has no Cognito identity to get them with. Live hooks in
-  this mode report `unavailableReason: "no-aws-credentials"`. REST works fully.
+<Callout
+  type="warn"
+  title="Reach the live plane from your server, not from this mode"
+>
+  An API key can obtain live credentials — that is what the [live-credentials
+  endpoint](/docs/api-reference/auth/create-live-credentials) is for — but doing
+  it from a browser means the key was in the browser, which is the problem above
+  rather than a solution to it. Vend on your server and pass the result in
+  through `getLiveCredentials`, or use `getSessionToken` and let the SDK vend
+  for itself.
 </Callout>
 
 A key also cannot reach the four person-scoped operations (`GET /me`,
 `GET`/`POST /organizations`, and the two live-access operations), which answer
 `401 USER_CREDENTIAL_REQUIRED`.
 
-### `{ getAwsCredentials }`, the forward slot
+### `{ getSessionToken }`, the third-party mode
+
+```tsx
+auth={{ getSessionToken: () => myBackend.getXorgateSessionToken() }}
+```
+
+**The mode to reach for by default in a third-party application.** Your server
+exchanges its API key for a short-lived `xgs_` token and hands it to your client;
+the client supplies it here, and the SDK does everything else. REST is
+authenticated with it directly, the live-plane coordinates arrive with it, and
+the SDK exchanges it for live credentials on your behalf. Your `config` collapses
+to `{ baseUrl }`.
+
+What the token may see is decided when your server mints it: the key's
+organization, never more than the key's role, an expiry of at most an hour, and
+optionally **one workspace**. A workspace-scoped token is confined to that
+workspace as a boundary rather than a filter, on the REST plane and on both live
+planes alike. That is how a consumer running its own multi-tenancy gives each of
+its customers a credential that cannot reach the others.
+
+It is called on every REST request and before every live reconnect, exactly like
+`getIdToken`, and the SDK does not cache it: hold the token until shortly before
+`expiresAt` and then fetch another from your own endpoint. Returning `null`
+behaves like a signed-out first-party session.
+
+### `{ getLiveCredentials }`, the escape hatch
 
 ```tsx
 auth={{
-  apiKey: undefined,
-  getAwsCredentials: () => myBackend.mintXorgateCredentials(),
+  getSessionToken: undefined,
+  getLiveCredentials: () => myBackend.mintXorgateLiveCredentials(),
 }}
 ```
 
-Not implementable today, and it is in the type anyway. Here is why that is the
-right call rather than speculative design.
+For a consumer whose own backend vends live credentials and whose browser
+therefore touches no xorgate endpoint at all. This is Project Alocate's shape:
+it manages its own users, talks to xorgate server-to-server with an API key, and
+its server calls
+[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+with the workspace that end user is allowed to see.
 
-A consumer that runs its own authentication cannot federate into xorgate's
-Cognito Identity Pool. Project Alocate is exactly that: it manages its own users
-and talks to xorgate server-to-server with an API key, so its browser has no
-route to AWS credentials and therefore no live video and no live telemetry. The
-planned fix is credential vending, where the consumer's backend exchanges its
-API key for scoped temporary AWS credentials through a Cognito
-developer-authenticated identity.
+Almost nobody needs it — `{ getSessionToken }` is the supported path and does the
+vending for you — and it earns its place because a fully proxied consumer wants
+one fewer endpoint reachable from its browser, not because the SDK cannot do the
+exchange.
 
-When that lands, an affected consumer supplies this one function and every live
-hook starts working **with no change to its contract**. Nothing in
-`useLiveTelemetry`, `useKvsViewer` or `useReplayPlayer` mentions an auth mode;
-they ask an internal resolver for credentials. That is the entire point of
-shaping the slot now.
+Whatever `POST /auth/live-credentials` returned is what this function should
+return, unread: the fields are dictated by the signing algorithm rather than
+chosen, which is exactly why they are not something to build against.
 
-`getAwsCredentials` is called on connect and again on the roughly 50 minute
+Nothing in `useLiveTelemetry`, `useLiveVideo` or `useReplayPlayer` mentions an
+auth mode; they ask an internal resolver for credentials. That is what lets this
+slot exist without touching a single hook contract.
+
+`getLiveCredentials` is called on connect and again on the roughly 50 minute
 refresh cycle, so an implementation should cache and only mint when its own copy
 is near expiry.
-
-Until it exists, an Alocate-shaped consumer has two options for showing an
-asset's current state: poll `useTelemetryLatest` with `refetchIntervalMs`, and
-use recorded [replay](/docs/frontend-sdk/replay) instead of live video. Both
-work today with an API key.
 
 ## Tenancy
 
@@ -309,7 +338,7 @@ function LiveBanner() {
 }
 ```
 
-`reason` is one of `"no-aws-credentials"` (the auth mode cannot produce AWS
+`reason` is one of `"no-live-credentials"` (the auth mode cannot produce AWS
 credentials), `"not-configured"` (the provider is missing one of the four AWS
 fields), or `"not-provisioned"` (reported per device, not by this hook, when the
 device has no IoT identity or no KVS channels).

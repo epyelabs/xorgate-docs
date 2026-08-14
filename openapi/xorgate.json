@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.4.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**What is not here.** Live telemetry and live video bypass this API entirely: the client\nsubscribes to AWS IoT Core over MQTT-over-WSS and connects to Kinesis Video Streams WebRTC\nwith its own credentials. See the Live section for the two endpoints that bootstrap that. The\nWorkflows and AI surface is deliberately undocumented while it is still moving."
+    "version": "0.5.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
   },
   "servers": [
     {
@@ -613,6 +613,87 @@
               "realtimeEndpoint"
             ],
             "description": "Coordinates for the live plane, which does not flow through this API. They ride along with the token so a client's configuration is just the API base URL, and so that moving them needs no consumer redeploy.",
+            "properties": {
+              "region": {
+                "type": "string",
+                "example": "us-east-1"
+              },
+              "realtimeEndpoint": {
+                "type": "string",
+                "example": "a1b2c3d4e5f6g7-ats.iot.us-east-1.amazonaws.com",
+                "description": "Host for the live telemetry stream (MQTT over WebSockets)."
+              }
+            }
+          }
+        }
+      },
+      "CreateLiveCredentialsInput": {
+        "type": "object",
+        "description": "Every field is optional. An empty body vends for whatever the calling credential already reaches: one workspace if it is a workspace-scoped session token, the whole organization otherwise.",
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Narrow the credentials to one workspace. This is how the PROXIED shape works: your server holds one API key for your whole organization and vends per customer. It can only ever narrow — a workspace outside the calling credential's scope is `403 WORKSPACE_NOT_IN_SCOPE`."
+          },
+          "ttlSeconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 3600,
+            "default": 3600,
+            "description": "Lifetime in seconds. Out-of-range values are REJECTED rather than clamped, same as for session tokens. The floor is higher than a session token's because a live connection that outlives its credentials has to be torn down and re-established."
+          }
+        }
+      },
+      "LiveCredentials": {
+        "type": "object",
+        "required": [
+          "accessKeyId",
+          "secretAccessKey",
+          "sessionToken",
+          "expiration",
+          "organizationId",
+          "workspaceId",
+          "live"
+        ],
+        "description": "Credentials for the live plane. **Opaque**: pass the object to the SDK and do not read or persist individual fields. Flat rather than wrapped, because it is a credential rather than a resource and there is nothing to read back later.",
+        "properties": {
+          "accessKeyId": {
+            "type": "string",
+            "description": "Part of the signature. Do not interpret."
+          },
+          "secretAccessKey": {
+            "type": "string",
+            "description": "Part of the signature. Do not interpret, do not log, and do not store beyond the lifetime below."
+          },
+          "sessionToken": {
+            "type": "string",
+            "description": "Part of the signature. Do not interpret."
+          },
+          "expiration": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When these stop working. Mint again shortly before it; a live connection is not renewed in place, it is re-established."
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Echo of the scope these credentials were vended for."
+          },
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Echo of the requested scope. Null means the whole organization. Worth asserting on in the proxied shape: it is the confirmation that you vended for the customer you meant to."
+          },
+          "live": {
+            "type": "object",
+            "required": [
+              "region",
+              "realtimeEndpoint"
+            ],
+            "description": "The same coordinates `POST /auth/session-tokens` returns, repeated here because the proxied shape never calls that endpoint and would otherwise have nowhere to learn them.",
             "properties": {
               "region": {
                 "type": "string",
@@ -3001,6 +3082,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/auth/live-credentials": {
+      "post": {
+        "operationId": "createLiveCredentials",
+        "summary": "Vend credentials for the live plane, scoped to one tenant",
+        "description": "Returns the short-lived credentials the **live plane** is entered with. Live telemetry and live video are streaming protocols that this API does not carry, so they are not authorized by a bearer token the way the endpoints above are; they are entered with a signed connection, and this is what signs it.\n\n**Treat the response as opaque.** Hand the object to the SDK and never read a field. The field names are dictated by the signing algorithm rather than chosen, which is exactly why they are not something to build against.\n\n**Any credential may call this**, and which one you use is the difference between the two integration shapes. A session token is the DIRECT shape: your client holds the token and calls this itself. An API key is the PROXIED shape: your server calls this with the target `workspaceId` and hands the result to your client, which then touches no xorgate endpoint at all. A signed-in user session works too, and gets its organization.\n\n**The scope is the boundary, on both planes.** Credentials vended for a workspace receive that workspace's devices' telemetry and can view that workspace's devices' video, and are refused a sibling workspace's — not filtered, refused, by the credential itself rather than by anything you have to remember to do. A workspace-scoped session token can only ever vend for its own workspace; anything else is `403 WORKSPACE_NOT_IN_SCOPE`.\n\n**Lifetime is at most an hour and there is no refresh.** Cache what you get and mint again shortly before `expiration`; the SDK does this for you. There is no revoke endpoint, for the same reason session tokens have none — deleting the API key behind the credential is the emergency stop, and nothing vended survives an hour anyway.\n\n**A device whose video has never been viewed under this scheme may need one extra call to become viewable**: the video plane is scoped by labels written onto the signalling channels, and vending is what reconciles them. If a channel comes back unviewable, vend again.",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLiveCredentialsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credentials minted. Opaque; pass them to the SDK unread.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveCredentials"
                 }
               }
             }

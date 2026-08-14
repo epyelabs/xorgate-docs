@@ -58,13 +58,26 @@ redundant but harmless: the server takes the organization from the key row and
 `403`s a header naming a different one, so a mismatch is loud rather than
 silent.
 
-<Callout type="warn" title="A key has no live-plane path">
+<Callout title="Vending live access for your own clients">
 
-Live telemetry and live video are entered with AWS credentials from the Cognito
-Identity Pool, which needs a Cognito identity. A key does not have one, so the
-two live-access operations answer `401 USER_CREDENTIAL_REQUIRED`. A key-only
-backend can use the whole REST surface, including telemetry history and recorded
-media, but cannot open a live stream.
+Live telemetry and live video are streaming protocols the client speaks
+directly, so they are entered with a signed connection rather than with a bearer
+token.
+[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+is what signs it, and your key may call it. Pass the target `workspaceId` and
+you get credentials confined to that one customer: they receive its devices'
+telemetry, they can view its devices' video, and a sibling workspace's device is
+refused. Hand the response to your frontend unread and give it to the SDK's
+`getLiveCredentials` slot.
+
+That is the PROXIED shape, and its point is that your browser touches no xorgate
+endpoint at all. If you would rather your client called xorgate directly, mint a
+session token instead (below) and let the SDK do the vending.
+
+The two live-ACCESS operations still answer `401 USER_CREDENTIAL_REQUIRED` to a
+key, and always will: they attach and detach an IoT policy on a Cognito
+identity, which is the xorgate dashboard's own mechanism and not part of an
+integration.
 
 </Callout>
 

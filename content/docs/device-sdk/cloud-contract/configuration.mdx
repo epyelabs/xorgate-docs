@@ -60,6 +60,24 @@ unnecessary.
 fielded before provisioning wrote it, and it is persisted into `kvs.json` rather
 than `settings.json`, so it is not a settings namespace.
 
+`scope` may also appear at the top level, as
+`{ "organizationId": "...", "workspaceId": "..." }`. It is the device's tenant,
+and the agent uses it to choose which
+[telemetry topic](/docs/device-sdk/cloud-contract/telemetry) to publish to. Like
+`uploadBucket` it is not a settings namespace and nothing on the device changes
+it — this channel is simply the only one that reaches a device already in the
+field.
+
+It is also the one field deliberately handled OUTSIDE the `rev` guard below.
+The guard exists so a redelivered document cannot revert a setting the device
+has since changed locally, and the topic a device reports on is not a setting
+anyone can change locally. Behind the guard, a device that had already applied
+this `rev` — which, after any restart, is every device — would never learn where
+to publish. Both halves must be present and non-empty or the field is ignored:
+half a scope builds a topic with an empty segment, which the broker refuses, and
+a device that silently stopped reporting would be a far worse failure than one
+that kept using the older topic.
+
 ## Three semantics that are easy to get wrong
 
 ### REPLACE, never merge

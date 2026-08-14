@@ -3,11 +3,32 @@ title: "Telemetry payload v1"
 description: "The payload published to the telemetry topic: envelope, the full group.field metric catalog, the media block, and the recording block including the open live-block reason set."
 ---
 
-`xorgate/devices/{deviceId}/telemetry`, device to cloud, QoS 0, not retained,
-1 Hz by default (`RATE_HZ`).
+Device to cloud, QoS 0, not retained, 1 Hz by default (`RATE_HZ`).
 
-This page is the canonical description of the payload. It was derived from the
-agent's publisher and checked against a live device.
+**Two topics carry this payload, and which one a device uses is decided by the
+cloud, not by the device.**
+
+| Topic                                                                         | When                                                     |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `xorgate/orgs/{organizationId}/ws/{workspaceId}/devices/{deviceId}/telemetry` | once the device has been told which tenant it belongs to |
+| `xorgate/devices/{deviceId}/telemetry`                                        | before that, and if the tenant is ever unknown           |
+
+The tenant arrives in the `scope` field of the retained configuration message
+(see [Configuration](/docs/device-sdk/cloud-contract/configuration)), so a
+device already in the field moves across without being re-provisioned: it
+switches on the next delivery, which is within a second of any reconnect.
+
+The reason for the second topic is that the first one has an organization and a
+workspace in it and the older one does not, and a topic with no tenant in it
+cannot be the subject of a per-tenant authorization rule. Everything else is
+identical — same payload, same QoS, same rate — and the cloud ingests both, so
+the two are interchangeable from a device's point of view. A device whose tenant
+has not been set is REFUSED on the scoped topic rather than allowed onto a
+guessed one, which is why it falls back rather than failing.
+
+The payload itself is unchanged and unaffected. This page is its canonical
+description; it was derived from the agent's publisher and checked against a
+live device.
 
 ## Envelope
 

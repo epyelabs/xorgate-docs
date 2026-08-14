@@ -3,6 +3,7 @@
   "description": "Exchanging an API key for a short-lived token your client can hold. The one endpoint a third-party integration is built on.",
   "pages": [
     "index",
-    "create-session-token"
+    "create-session-token",
+    "create-live-credentials"
   ]
 }
