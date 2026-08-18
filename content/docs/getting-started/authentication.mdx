@@ -288,11 +288,38 @@ SDK performs for you, so in practice you supply the token and nothing else.
 
 ## CORS
 
-Browser callers are gated by a **fixed origin allowlist** in the API stack, not by
-a wildcard. Allowed request headers are exactly `Authorization`, `Content-Type`,
-`X-Request-ID`, `X-Organization-Id` and `X-Workspace-Id`. A new browser origin
-(including this documentation site, whose API playground calls the API directly)
-has to be added to that allowlist before it can call the API.
+**Any browser origin may call this API**, and there is nothing to register. A new
+application works cross-origin the moment you point it at the base URL: no
+request to us, no approval step, and no deploy on our side.
+`Access-Control-Allow-Origin` is `*`.
+
+Request headers are the one part that is still fixed. Exactly `Authorization`,
+`Content-Type`, `X-Request-ID`, `X-Organization-Id` and `X-Workspace-Id` are
+allowed, so a custom header outside that list still needs a change here. Nothing
+in the documented API asks you to send one.
+
+<Callout type="warn" title="CORS is not a security boundary here. Auth is.">
+
+A wildcard looks alarming, so here is the reasoning rather than the assurance.
+
+CORS exists to stop a hostile page from spending a credential the browser
+attaches **automatically**: a cookie, HTTP Basic, a client certificate. This API
+has none of those. Every request is authorized by an `Authorization` header the
+calling code puts there deliberately, no cookie is read or written by this API,
+and `Access-Control-Allow-Credentials` is never sent.
+
+So a hostile page gains nothing from the wildcard. It cannot obtain your token,
+and anything that already holds your token can call this API from a server,
+where CORS does not apply at all. An origin allowlist would have been a check
+that only ever ran in the one place an attacker does not need to be.
+
+What protects your data is the credential itself. API keys are verified and
+bound to one organization, session tokens are short-lived and optionally
+workspace-scoped, and live-plane credentials expire within the hour. Those are
+the boundary. Scope them tightly and rotate them, and do not treat the origin
+your code runs on as a control.
+
+</Callout>
 
 ## Unauthenticated routes
 
