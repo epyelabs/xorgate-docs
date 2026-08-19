@@ -16,7 +16,7 @@ import { XorgateProvider } from "@xorgate/react"
     region: import.meta.env.VITE_AWS_REGION,
     identityPoolId: import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID,
     userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,
-    iotEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
+    realtimeEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
   }}
   auth={{ getIdToken }}
   organizationId={organizationId}
@@ -44,7 +44,7 @@ point a hook at a fake without a bundler.
     region: {
       type: "string",
       description:
-        "AWS region for the live plane. Also the fallback for a KVS channel that reports no region of its own.",
+        "Region for the live plane. Also the fallback for a video channel that reports no region of its own.",
     },
     identityPoolId: {
       type: "string",
@@ -56,7 +56,7 @@ point a hook at a fake without a bundler.
       description:
         "Cognito User Pool. Used to build the Identity Pool logins key from an ID token.",
     },
-    iotEndpoint: {
+    realtimeEndpoint: {
       type: "string",
       description:
         "The account's iot:Data-ATS endpoint host, no scheme. Live telemetry only.",
@@ -86,7 +86,7 @@ replay work without any of them.
 
 Today's development API base is <ApiBaseUrl /> in <AwsRegion />.
 
-`iotEndpoint` is the one value that is not in any console page you would think
+`realtimeEndpoint` is the one value that is not in any console page you would think
 to look at. Get it with `aws iot describe-endpoint --endpoint-type iot:Data-ATS`,
 or read it off `iot.dataEndpoint` in a `POST /devices/{id}/provision` response.
 
@@ -235,11 +235,11 @@ sockets, which are keyed by device.
 This is the part worth reading twice. The three planes authenticate in three
 different ways, and they fail independently.
 
-| Plane          | Credential                                    | How                                                                                                           |
-| -------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| REST           | `Authorization: Bearer <id token or xg_ key>` | Sent by `@xorgate/sdk` on every request, plus the tenancy headers.                                            |
-| Live telemetry | SigV4 over WebSocket                          | ID token to Identity Pool credentials, then a hand-rolled presigned WSS URL, after `POST /iot/attach-policy`. |
-| Live video     | SigV4                                         | ID token to Identity Pool credentials, then the KVS signaling client and a WebRTC VIEWER session.             |
+| Plane          | Credential                                    | How                                                                                                     |
+| -------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| REST           | `Authorization: Bearer <id token or xg_ key>` | Sent by `@xorgate/sdk` on every request, plus the tenancy headers.                                      |
+| Live telemetry | SigV4 over WebSocket                          | ID token to Identity Pool credentials, then a hand-rolled presigned WSS URL, after `POST /live/access`. |
+| Live video     | SigV4                                         | ID token to Identity Pool credentials, then the signaling client and a WebRTC viewer session.           |
 
 <Steps>
 
@@ -256,7 +256,7 @@ places it means something.
 **Live telemetry** needs an extra step nothing else does. AWS IoT authorizes
 Cognito identities through an **attached IoT policy**, not through the IAM role
 on the credentials. So before the first connect, the SDK calls
-`POST /iot/attach-policy`, which attaches the browser policy to the **caller's
+`POST /live/access`, which attaches the browser policy to the **caller's
 own** Cognito identity.
 
 That is why `@xorgate/sdk` has no method for it and this package does: an
@@ -287,10 +287,10 @@ Two quirks make that hand-rolled rather than a call into
 
 <Step>
 
-**Live video** is the easy one by comparison. KVS authorizes with plain
-IAM and SigV4, so there is no attach-policy step. The SDK mints the same
-Identity Pool credentials, resolves the channel's VIEWER endpoints, fetches the
-ICE server configuration, and runs a WebRTC VIEWER session.
+**Live video** is the easy one by comparison. The video plane authorizes with
+plain IAM and SigV4, so there is no separate grant step. The SDK mints the same
+Identity Pool credentials, resolves the channel's viewer endpoints, fetches the
+ICE server configuration, and runs a WebRTC viewer session.
 
 </Step>
 
@@ -300,9 +300,9 @@ ICE server configuration, and runs a WebRTC VIEWER session.
 
 <Callout type="warn" title="Live READ scope is org-blind">
 
-What the browser IoT policy lets you subscribe to, and what the browser KVS
-policy lets you view, are both scoped to "any authenticated user", not to the
-devices in your organization. **Any signed-in user of this platform can
+In FIRST-PARTY mode, what the browser may subscribe to and what it may view are
+both scoped to "any authenticated user", not to the devices in your
+organization. **Any signed-in user of this platform can
 subscribe to any device's live telemetry topic and open a viewer on any device's
 video channel.**
 
@@ -341,7 +341,7 @@ function LiveBanner() {
 `reason` is one of `"no-live-credentials"` (the auth mode cannot produce AWS
 credentials), `"not-configured"` (the provider is missing one of the four AWS
 fields), or `"not-provisioned"` (reported per device, not by this hook, when the
-device has no IoT identity or no KVS channels).
+device has no realtime identity or no video channels).
 
 ## Escape hatches
 
@@ -358,6 +358,6 @@ function RebootButton({ deviceId }: { deviceId: string }) {
 }
 ```
 
-`useAwsCredentials()` returns the credentials the live hooks resolved, so a
+`useLiveCredentials()` returns the credentials the live hooks resolved, so a
 consumer can drive an AWS client of its own with the same session instead of
 building a parallel credential path.

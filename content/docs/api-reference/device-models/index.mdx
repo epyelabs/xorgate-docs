@@ -14,7 +14,7 @@ membership role.
 `ioCapabilities` is the field that matters. It is a structured JSON document
 (`{ schemaVersion, media: { video[], audio[] }, sensors, comm, system }`) and it
 drives two things elsewhere in the platform. Its declared video and audio stream
-keys (`cam0`, `cam1`, `audio0`) become the KVS signaling channels created when a
+keys (`cam0`, `cam1`, `audio0`) become the video channels created when a
 device is provisioned, and its declared sensors become the default column set of
 the [telemetry history table](/docs/api-reference/telemetry/get-device-telemetry-readings).
 A model that declares nothing usable is not an error, but devices built from it
@@ -26,7 +26,7 @@ fall back to discovering columns from whatever data a page happens to contain.
   that parse happens later, when the device is
   [provisioned](/docs/api-reference/devices/provision-device), and it is
   forgiving in the worst way: a document that fails it yields no video stream
-  keys, so the device is provisioned with ZERO KVS channels and live video
+  keys, so the device is provisioned with ZERO video channels and live video
   simply never works, with no error anywhere along the way. Validate the
   document against the schema yourself before writing it.
 </Callout>

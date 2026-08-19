@@ -19,7 +19,7 @@ That is also why `@xorgate/sdk` is a hard dependency rather than a peer. Two
 resolved copies would give you two structurally identical but nominally
 unrelated error classes.
 
-Re-exported: `Device`, `DeviceModel`, `KvsChannel`, `LatestByMetric`,
+Re-exported: `Device`, `DeviceModel`, `VideoChannel`, `LatestByMetric`,
 `LatestReading`, `Me`, `MediaSession`, `MetricName`, `Organization`, `PageMeta`,
 `RecordingRun`, `ReplayGap`, `ReplayManifest`, `ReplaySegment`,
 `ReplaySession`, `StreamKey`, `TelemetryHistory`, `TelemetryReading`,
@@ -97,8 +97,8 @@ Types that exist because the live and replay planes are not REST.
 
 ### Provider
 
-`XorgateConfig`, `XorgateAuth` (the union of `CognitoAuth`, `ApiKeyAuth` and
-`VendedCredentialsAuth`), `AwsCredentials`, `XorgateProviderProps`,
+`XorgateConfig`, `XorgateAuth` (the union of `FirstPartyAuth`, `ApiKeyAuth` and
+`LiveCredentialsAuth`), `LiveCredentials`, `XorgateProviderProps`,
 `LiveUnavailableReason`.
 
 ### Queries
@@ -137,8 +137,8 @@ discarded.
 
 ### Live video
 
-`KvsStatus`, `KvsStreamStats`, `UseKvsViewer`, `UseKvsViewerOptions`,
-`KvsVideoProps`.
+`LiveVideoStatus`, `LiveVideoStats`, `UseLiveVideo`, `UseLiveVideoOptions`,
+`LiveVideoProps`.
 
 ### Replay
 

@@ -72,7 +72,7 @@ The chain extends into video. KVS signaling channels are named
 
 <Callout type="warn" title="Browser-side READ scope is org-blind today">
   The **device** policy above is properly scoped. What a browser identity may
-  subscribe to after `POST /iot/attach-policy`, and the KVS access a browser
+  subscribe to after `POST /live/access`, and the KVS access a browser
   mints for itself, are not: any authenticated user can subscribe to any device's
   telemetry topic. That is a known platform gap, tracked for the
   platform-readiness work, and it is why the live plane is not yet safe for

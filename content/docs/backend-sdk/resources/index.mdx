@@ -97,7 +97,7 @@ state most of these:
 | `xg.devices.patchUiPrefs(id, patch)`        | `PATCH /devices/{id}/ui-prefs`                    | write          |
 | `xg.devices.identity(id)`                   | `GET /devices/{id}/identity`                      | read           |
 | `xg.devices.provision(id)`                  | `POST /devices/{id}/provision`                    | owner/admin    |
-| `xg.devices.kvsChannels(id)`                | `GET /devices/{id}/kvs-channels`                  | read           |
+| `xg.devices.videoChannels(id)`              | `GET /devices/{id}/video-channels`                | read           |
 | `xg.devices.reboot(id)`                     | `POST /devices/{id}/reboot`                       | owner/admin    |
 | `xg.devices.powerOff(id)`                   | `POST /devices/{id}/power-off`                    | owner/admin    |
 | `xg.devices.refreshState(id)`               | `POST /devices/{id}/refresh-state`                | read           |
@@ -122,11 +122,11 @@ state most of these:
 Collections additionally carry `iterate()` and `listAll()`; see
 [Pagination](/docs/backend-sdk/pagination). Two collections deliberately do not,
 because the platform commits to returning them whole: a session's segments and a
-device's KVS channels.
+device's video channels.
 
 ## Not modelled
 
-`POST /iot/attach-policy` and `DELETE /live/access` have no SDK method. Both act
+`POST /live/access` and `DELETE /live/access` have no SDK method. Both act
 on the **caller's own** Cognito identity, granting and revoking a browser's
 ability to subscribe to live telemetry, which makes them meaningless from a
 server. They belong to the frontend SDK. See

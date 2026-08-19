@@ -92,7 +92,7 @@ either.
 
 ### `delete(id)`
 
-Cascades to the device's identity, KVS channel rows, media sessions and
+Cascades to the device's identity, video channel rows, media sessions and
 telemetry.
 
 <Callout type="warn" title="The AWS IoT thing is not torn down">
@@ -281,7 +281,7 @@ const upToDate = latest !== null && device.agentVersion === latest.version
 ```ts
 identity(id: string): Promise<DeviceIdentity | null>
 provision(id: string): Promise<DeviceProvisioning>
-kvsChannels(id: string): Promise<KvsChannel[]>
+videoChannels(id: string): Promise<VideoChannel[]>
 ```
 
 ### `identity(id)`
@@ -303,7 +303,7 @@ band still reads `active` here.
 ### `provision(id)`
 
 Mints an AWS IoT thing and X.509 certificate, attaches the device policy, and
-creates one KVS signaling channel per declared video stream.
+creates one video channel per declared video stream.
 
 <Callout type="warn" title="The credential bundle is returned exactly once">
 
@@ -333,7 +333,7 @@ prevent, and this response is the first place it becomes visible.
 
 Owner or admin.
 
-### `kvsChannels(id)`
+### `videoChannels(id)`
 
 Channel metadata only, one entry per provisioned video stream, no credentials.
 An empty array means the device is not provisioned, which is a `200` rather than

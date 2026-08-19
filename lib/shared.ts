@@ -21,8 +21,7 @@ export const siteUrl =
  * to be in the core-service CORS allowlist (`lib/stacks/api-stack.ts`).
  */
 export const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://api-dev.xorgate.io"
 
 /** AWS region the platform runs in. Used in examples (IoT/KVS endpoints). */
 export const awsRegion = process.env.NEXT_PUBLIC_AWS_REGION ?? "us-east-1"

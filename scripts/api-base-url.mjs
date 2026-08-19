@@ -31,7 +31,5 @@ export async function resolveApiBaseUrl() {
       }
     }
   }
-  return (
-    value ?? "https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
-  ).replace(/\/$/, "")
+  return (value ?? "https://api-dev.xorgate.io").replace(/\/$/, "")
 }

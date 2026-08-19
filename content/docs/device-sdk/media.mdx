@@ -43,14 +43,14 @@ works from:
 ```
 
 A device with two cameras gets two masters automatically. The browser connects to
-the same channel as VIEWER after reading `GET /devices/{id}/kvs-channels`.
+the same channel as VIEWER after reading `GET /devices/{id}/video-channels`.
 
 <Callout
   type="warn"
   title="An empty channel list has two very different causes"
 >
-  `GET /devices/{id}/kvs-channels` returns `[]` both for a device that was never
-  provisioned and for one provisioned from a model whose `io_capabilities`
+  `GET /devices/{id}/video-channels` returns `[]` both for a device that was
+  never provisioned and for one provisioned from a model whose `io_capabilities`
   declared no video. That second case includes a silent failure: the
   capabilities document is not validated on write but *is* strictly parsed at
   provisioning time, so a malformed document yields **zero KVS channels with no

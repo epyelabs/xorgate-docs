@@ -40,7 +40,7 @@ function Speed({ deviceId }: { deviceId: string }) {
     media: {
       type: "TelemetryMediaStatus | null",
       description:
-        "KVS and on-device video recording flags, plus per-stream state.",
+        "Video channel and on-device recording flags, plus per-stream state.",
     },
     receivedAt: {
       type: "number | null",
@@ -198,7 +198,7 @@ library-level reconnect would replay a stale signature.
 - The connection is proactively cycled at 50 minutes, comfortably inside the
   roughly one hour credential and URL lifetime. You will see a brief `closed`
   followed by `connected` on a long-lived page. That is healthy.
-- `POST /iot/attach-policy` runs before every connect attempt, not once. It is
+- `POST /live/access` runs before every connect attempt, not once. It is
   idempotent and cheap, and doing it every time removes a whole class of "worked
   yesterday, 403 today" bugs. It also returns the `identityId` the connection
   needs: the MQTT client id must start with it, or the broker refuses the
@@ -324,8 +324,8 @@ not track live numbers, so a thermal block that fired at 66.1 C keeps saying
 
 `status: "unavailable"` is a terminal state, not an error. It means the live
 plane cannot be reached at all, and `unavailableReason` says why:
-`"no-aws-credentials"` for an API-key-only provider, `"not-configured"` when the
-provider has no `iotEndpoint` or `identityPoolId`, `"not-provisioned"` when the
+`"no-live-credentials"` for an API-key-only provider, `"not-configured"` when the
+provider has no `realtimeEndpoint` or `identityPoolId`, `"not-provisioned"` when the
 device has no IoT identity.
 
 <Callout type="warn" title="Subscribing is org-blind">

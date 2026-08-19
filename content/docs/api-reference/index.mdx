@@ -9,8 +9,48 @@ parameters, schemas, response codes, code samples, and a playground that calls
 the API from your browser. Each resource also has an overview page covering the
 things a schema cannot say.
 
-The base URL for the development deployment is <ApiBaseUrl />. There is no
-version prefix yet; `/v1` arrives with the custom domain.
+The base URL for the development deployment is <ApiBaseUrl />.
+
+## Versioning
+
+Every endpoint is served under **`/v1`**, so the full URL for
+`POST /auth/session-tokens` on the development deployment is:
+
+```
+https://api-dev.xorgate.io/v1/auth/session-tokens
+```
+
+The version is part of the PATH, not of the host. Keep your base URL a bare
+origin and let the version live with the route, so that pointing a client at a
+different deployment cannot silently drop it. The SDKs do the same: you pass
+`baseUrl` as an origin and the SDK appends `/v1` itself.
+
+Reference pages below show the full path including `/v1`, because they are
+generated from the OpenAPI document. Prose elsewhere on this site writes paths
+without it (`POST /auth/session-tokens`), relative to the versioned base URL.
+Both mean the same URL.
+
+### Deprecated paths
+
+Every path also answers **without** the `/v1` prefix, and two of them answer
+under an older name as well. These exist only so the first-party dashboard did
+not have to move in the same release. They are deprecated from the day `/v1`
+shipped (2026-08-19), they are not operations in the OpenAPI document, and they
+will be removed.
+
+| Deprecated                                                        | Use instead                                                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| any path without `/v1`, e.g. `GET /devices`                       | `GET /v1/devices`                                                                           |
+| `GET /devices/{id}/kvs-channels`                                  | [`GET /v1/devices/{id}/video-channels`](/docs/api-reference/live/get-device-video-channels) |
+| `POST /iot/attach-policy`                                         | [`POST /v1/live/access`](/docs/api-reference/live/grant-live-access)                        |
+| `channelRef`'s old spelling `channelArn`, still sent alongside it | `channelRef`                                                                                |
+
+<Callout type="warn" title="Do not build on the deprecated paths">
+  They are not versioned, so nothing protects you when they change. The two
+  renamed ones are also NOT served under `/v1`, deliberately: asking for the old
+  name with the prefix is a `404`, so the versioned surface carries new names
+  only.
+</Callout>
 
 ## Things that are true everywhere
 
@@ -56,8 +96,8 @@ list endpoint returns its whole collection with no `page` block at all.
 ## What is not in here
 
 Live telemetry and live video do not flow through this API. The client
-subscribes to AWS IoT Core over MQTT-over-WSS for the 1 Hz telemetry feed, and
-connects to Kinesis Video Streams WebRTC for live video, using credentials it
+subscribes over MQTT-over-WebSocket for the 1 Hz telemetry feed, and connects
+over WebRTC for live video, using credentials it
 mints itself. This API only hands out the metadata and the authorization needed
 to do that; see [Live](/docs/api-reference/live).
 

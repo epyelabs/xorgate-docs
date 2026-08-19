@@ -12,8 +12,8 @@ history and the live feed.
   These endpoints read what has been STORED. The device publishes at 1 Hz to
   `xorgate/devices/{deviceId}/telemetry` over MQTT, and a client that wants live
   values subscribes to that topic directly over MQTT-over-WSS after calling
-  [`POST /iot/attach-policy`](/docs/api-reference/live/attach-iot-policy). No
-  endpoint in this API streams. The usual pattern is to seed a chart from
+  [`POST /live/access`](/docs/api-reference/live/grant-live-access). No endpoint
+  in this API streams. The usual pattern is to seed a chart from
   `/telemetry/recent` and append live samples on top.
 </Callout>
 

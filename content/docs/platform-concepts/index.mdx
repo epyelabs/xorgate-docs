@@ -40,7 +40,7 @@ telemetry locally and upload it as **segments**, which the platform indexes into
 **sessions** for replay.
 
 Everything a device does splits cleanly in two. The **live** planes (MQTT
-telemetry and KVS WebRTC video) are reached directly rather than through the REST
+telemetry and WebRTC video) are reached directly rather than through the REST
 API and offer no history. The **recorded** plane goes through object storage and
 the API, and offers no immediacy. Most of the confusion people have with this
 platform comes from expecting one to behave like the other.

@@ -11,19 +11,19 @@ _openapi:
     headings: []
     contents:
       - content: >-
-          The counterpart to `POST /iot/attach-policy`: detaches the browser
-          policy from the Cognito identity behind your bearer token, after which
-          the broker refuses that identity's next CONNECT and any live
+          The counterpart to `POST /live/access`: withdraws the authorization
+          from the Cognito identity behind your bearer token, after which the
+          broker refuses that identity's next connection and any live
           subscription dies on its next reconnect. Idempotent — revoking access
           you do not have returns the same 200.
 
 
           Self-service only. Revoking someone else's live access is a
           consequence of removing their membership: `DELETE /memberships/{id}`
-          detaches automatically when the removal takes away their LAST
+          revokes automatically when the removal takes away their LAST
           organization membership. It deliberately does not fire while the user
-          still belongs to another organization, because the browser policy is
-          one shared org-blind policy and they remain entitled to it.
+          still belongs to another organization, because the grant is one shared
+          org-blind authorization and they remain entitled to it.
 
 
           Unlike the grant, this needs only a valid token and no organization
@@ -32,7 +32,7 @@ _openapi:
 
 
           **Cognito ID token only**, for the same reason as the grant: there is
-          no Cognito identity behind an API key to detach from (`401
+          no Cognito identity behind an API key to revoke (`401
           USER_CREDENTIAL_REQUIRED`).
 ---
 
@@ -45,7 +45,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/live/access","method":"delete"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/live/access","method":"delete"}]} showDescription />
     </>
   );
 }

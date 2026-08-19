@@ -62,7 +62,7 @@ The canonical media stream keys are `cam0`, `cam1` and `audio0`.
 
 ## The three things it actually controls
 
-1. **KVS signaling channels.** At provisioning time, each `media.video[].key`
+1. **Video channels.** At provisioning time, each `media.video[].key`
    becomes a channel named `${deviceId}-${streamKey}`. This is the load-bearing
    one.
 2. **Object storage paths.** Stream keys appear in segment keys, so they are part
@@ -87,12 +87,12 @@ These are the failure modes worth knowing before you write a model.
 ### It is strictly parsed at provisioning
 
 Provisioning does validate, with a strict parse. And a parse failure does not
-raise an error anywhere: it yields **zero KVS channels**, so the device provisions
+raise an error anywhere: it yields **zero video channels**, so the device provisions
 successfully, appears healthy, and live video simply never works.
 
 <Callout type="warn" title="This is the silent failure to watch for">
   A malformed capabilities document is accepted on write, provisions without
-  complaint, and produces a device whose `GET /devices/{id}/kvs-channels` returns
+  complaint, and produces a device whose `GET /devices/{id}/video-channels` returns
   `[]`. Nothing in the API, the logs the operator can see, or the UI distinguishes
   that from a device whose model legitimately declares no video.
 
@@ -105,7 +105,7 @@ The API reference carries the zod-derived schema for the document, generated fro
 the same source the provisioning parse uses, so it is the accurate description of
 what will pass.
 
-## What `[]` from `kvs-channels` means
+## What `[]` from `video-channels` means
 
 Three different situations, one response:
 

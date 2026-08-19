@@ -33,7 +33,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/me","method":"get"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/me","method":"get"}]} showDescription />
     </>
   );
 }

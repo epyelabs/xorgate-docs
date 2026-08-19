@@ -10,7 +10,7 @@ _openapi:
   structuredData:
     headings: []
     contents:
-      - content: Removes the row and everything cascading off it (identity, KVS
+      - content: Removes the row and everything cascading off it (identity, video
           channels, sessions, telemetry). The AWS IoT thing and certificate are
           NOT torn down by this endpoint.
 ---
@@ -24,7 +24,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/devices/{id}","method":"delete"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/devices/{id}","method":"delete"}]} showDescription />
     </>
   );
 }

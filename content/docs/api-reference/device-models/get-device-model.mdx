@@ -21,7 +21,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/device-models/{id}","method":"get"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/device-models/{id}","method":"get"}]} showDescription />
     </>
   );
 }
