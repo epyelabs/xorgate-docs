@@ -1,35 +1,35 @@
 ---
 title: "Live video"
-description: "useKvsChannels, useKvsViewer and KvsVideo: the WebRTC VIEWER lifecycle, its reconnect machinery, and why you should gate it."
+description: "useVideoChannels, useLiveVideo and LiveVideo: the WebRTC VIEWER lifecycle, its reconnect machinery, and why you should gate it."
 ---
 
-Live video is WebRTC through Amazon Kinesis Video Streams. The device runs a
-KVS **master** per camera; the browser runs a **viewer**. The REST API is barely
-involved: `GET /devices/{id}/kvs-channels` returns channel metadata and nothing
-else, and the browser mints its own AWS credentials from there.
+Live video is WebRTC. The device **publishes** one channel per camera; your app
+**views** it. The REST API is barely involved: `GET /devices/{id}/video-channels`
+returns channel metadata and nothing else, and the client mints its own live
+credentials from there.
 
 ```tsx
-import { useKvsChannels, KvsVideo } from "@xorgate/react"
+import { useVideoChannels, LiveVideo } from "@xorgate/react"
 
 function LiveGrid({ deviceId }: { deviceId: string }) {
-  const { data: channels } = useKvsChannels(deviceId)
+  const { data: channels } = useVideoChannels(deviceId)
   return (
     <div>
       {channels?.map((c) => (
-        <KvsVideo key={c.streamKey} channel={c} width={640} />
+        <LiveVideo key={c.streamKey} channel={c} width={640} />
       ))}
     </div>
   )
 }
 ```
 
-## `useKvsChannels`
+## `useVideoChannels`
 
 ```tsx
-const { data: channels, isLoading } = useKvsChannels(deviceId)
+const { data: channels, isLoading } = useVideoChannels(deviceId)
 ```
 
-Returns `KvsChannel[]`: `streamKey`, `channelName`, `channelArn`, `region`. One
+Returns `VideoChannel[]`: `streamKey`, `channelName`, `channelRef`, `region`. One
 per provisioned video stream. **An empty array means the device is not
 provisioned**, not that it has no cameras, and it is worth distinguishing those
 in your UI.
@@ -40,10 +40,10 @@ channels and no error is raised anywhere, so live video silently never works.
 If a device you expect to have cameras returns an empty array, that is the first
 thing to check.
 
-## `useKvsViewer`
+## `useLiveVideo`
 
 ```tsx
-const { videoRef, status, error, stats } = useKvsViewer(channel)
+const { videoRef, status, error, stats } = useLiveVideo(channel)
 ```
 
 Runs a VIEWER session for one channel and attaches the received `MediaStream` to
@@ -63,7 +63,7 @@ inside a grid.
     unavailableReason: { type: "LiveUnavailableReason | null" },
     error: { type: "XorgateError | null" },
     stats: {
-      type: "KvsStreamStats | null",
+      type: "LiveVideoStats | null",
       description:
         "What you are receiving, sampled from inbound-rtp. Null until the first sample.",
     },
@@ -76,8 +76,8 @@ is not running its master right now. It is not a stalled connection; it is a
 correctly working viewer talking to nobody.
 
 ```tsx
-function Camera({ channel }: { channel: KvsChannel }) {
-  const { videoRef, status, stats } = useKvsViewer(channel)
+function Camera({ channel }: { channel: VideoChannel }) {
+  const { videoRef, status, stats } = useLiveVideo(channel)
   return (
     <figure>
       <video ref={videoRef} playsInline muted />
@@ -130,15 +130,15 @@ newer session.
 which would park the connection forever with no retry scheduled. Each step is
 deadlined so a hang becomes an error, and an error becomes a reconnect.
 
-**Whole-attempt deadline, 15 s.** KVS does not queue SDP offers. If the master is
-offline when the offer goes out, no answer and no event ever arrives, and the
-session sits in `waiting` indefinitely. The deadline tears the attempt down and
-re-offers on a fresh session, so the viewer picks the master up shortly after it
-comes back.
+**Whole-attempt deadline, 15 s.** The signaling plane does not queue SDP offers.
+If the device is offline when the offer goes out, no answer and no event ever
+arrives, and the session sits in `waiting` indefinitely. The deadline tears the
+attempt down and re-offers on a fresh session, so the viewer picks the device up
+shortly after it comes back.
 
 **Disconnect grace, 2.5 s.** A peer connection can dip to `disconnected` on a
-brief ICE blip and recover on its own. But the KVS master frees its side of the
-session the instant ICE drops, so a `disconnected` here will not self-heal. The
+brief ICE blip and recover on its own. But the publishing side frees its half of
+the session the instant ICE drops, so a `disconnected` here will not self-heal. The
 grace window covers a genuine micro-blip; past it, the viewer forces a fresh
 session rather than sitting frozen on the last frame.
 
@@ -152,20 +152,21 @@ network events drop, and the peer connection is usually dead by the time the
 user returns. `online`, `pageshow` and `visibilitychange` all trigger an
 immediate fresh attempt rather than waiting out a stale backoff.
 
-**A fresh client id per connection**, because KVS refuses a duplicate VIEWER
-client id and a stale id from a half-closed session gets rejected.
+**A fresh client id per connection**, because the signaling plane refuses a
+duplicate viewer client id and a stale id from a half-closed session gets
+rejected.
 
 One deliberate omission: a reconnect does **not** clear the `<video>` element.
 The last frame stays on screen instead of flashing to black, which is what makes
 a two-second blip look like a two-second blip rather than an outage.
 
-## `KvsVideo`
+## `LiveVideo`
 
 ```tsx
-<KvsVideo channel={channel} className="camera" onStatusChange={log} />
+<LiveVideo channel={channel} className="camera" onStatusChange={log} />
 ```
 
-`useKvsViewer` plus the `<video>` element, and nothing else. No card, no
+`useLiveVideo` plus the `<video>` element, and nothing else. No card, no
 spinner, no error text, no aspect ratio, no status badge. It exists so the
 common case is one line, not so it can be your player: the moment you want a
 loading state, write the hook version.
@@ -217,7 +218,7 @@ function StreamTile({
   cameraEnables,
 }: {
   deviceId: string
-  channel: KvsChannel
+  channel: VideoChannel
   cameraEnables?: Record<string, boolean>
 }) {
   const feed = useLiveTelemetry(deviceId)
@@ -229,7 +230,7 @@ function StreamTile({
   if (block.blocked) {
     return <p>Live view paused: {block.detail}</p>
   }
-  return <KvsVideo channel={channel} />
+  return <LiveVideo channel={channel} />
 }
 ```
 
@@ -242,10 +243,11 @@ of the page already uses is what carries the verdict, and the socket is shared.
 `unavailableReason` explaining which piece is missing. It is not an error state
 and should not render like one.
 
-<Callout type="warn" title="The KVS browser policy is org-blind">
-  Like the IoT policy's subscribe scope, the browser's KVS permissions are
-  scoped to any authenticated user rather than to your organization. Any
-  signed-in user of the platform can open a viewer on any device's channel if
-  they know its ARN. This is why live video is not ready for third parties. The
-  full caveat is on [the provider page](/docs/frontend-sdk/provider).
+<Callout type="warn" title="The first-party video grant is org-blind">
+  In FIRST-PARTY mode the browser's video permissions are scoped to any
+  authenticated user rather than to your organization, so any signed-in user of
+  the platform can open a viewer on any device's channel if they know its
+  `channelRef`. Credentials vended by `POST /auth/live-credentials` do not have
+  that problem: they are confined to one organization or workspace. The full
+  caveat is on [the provider page](/docs/frontend-sdk/provider).
 </Callout>

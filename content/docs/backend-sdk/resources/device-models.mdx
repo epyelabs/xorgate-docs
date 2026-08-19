@@ -34,7 +34,7 @@ const model = models.find((m) => m.sku === "XG-CM5-DUAL")
 ## `ioCapabilities`
 
 This field is what makes a model useful. It declares the video stream keys that
-become KVS signaling channels at provisioning time, and the telemetry metrics
+become video channels at provisioning time, and the telemetry metrics
 that become the default history columns.
 
 ```ts
@@ -68,7 +68,7 @@ each one produces:
 
 | Declaration                        | Becomes                                             |
 | ---------------------------------- | --------------------------------------------------- |
-| `media.video[].key`                | a KVS signaling channel named `${deviceId}-${key}`  |
+| `media.video[].key`                | a video channel named `${deviceId}-${key}`          |
 | `sensors.imu.accel: ["x","y","z"]` | metrics `imu.accel_x`, `imu.accel_y`, `imu.accel_z` |
 | `comm.gps.fields: ["lat"]`         | metric `gps.lat`                                    |
 | `comm.signal.fields: ["rssi"]`     | metric `signal.rssi`                                |
@@ -92,7 +92,7 @@ as `ioCapabilities`. Nothing is validated on write.
 
 But the document **is** parsed, strictly, at provisioning time. If that parse
 fails, provisioning yields no video stream keys, so the device is provisioned
-with **zero KVS channels** and live video silently never works. No error is
+with **zero video channels** and live video silently never works. No error is
 raised anywhere: not on the write, not on the provision, not on the device. The
 first symptom is a camera that never appears, days later.
 
@@ -143,7 +143,7 @@ Auditing what is already in the catalog is worth doing once:
 for (const model of await xg.deviceModels.list()) {
   const result = validateIoCapabilities(model.ioCapabilities)
   if (!result.valid) {
-    console.warn(`${model.sku} will provision zero KVS channels`, result.issues)
+    console.warn(`${model.sku} will provision zero video channels`, result.issues)
   }
 }
 ```
@@ -156,7 +156,7 @@ await xg.deviceModels.create(input, { validate: false })
 
 The only honest reason to use this is writing a document the SDK's schema
 rejects but the platform accepts, which today means a document that will
-provision zero KVS channels. If you find a document the SDK rejects and the
+provision zero video channels. If you find a document the SDK rejects and the
 platform handles correctly, the SDK's schema has drifted and that is worth
 reporting.
 
@@ -165,10 +165,11 @@ reporting.
 Partial: send only what changes. An empty object is a `400`.
 
 <Callout type="warn" title="Capability changes are not retroactive">
-  Changing `ioCapabilities` does **not** retro-provision KVS channels on devices
-  already created from this model. Adding `cam1` to a model gives new devices
-  two channels and leaves existing ones with one. There is no re-provision
-  endpoint: a provisioned device answers `409` to `devices.provision()`.
+  Changing `ioCapabilities` does **not** retro-provision video channels on
+  devices already created from this model. Adding `cam1` to a model gives new
+  devices two channels and leaves existing ones with one. There is no
+  re-provision endpoint: a provisioned device answers `409` to
+  `devices.provision()`.
 </Callout>
 
 ## `delete(id)`

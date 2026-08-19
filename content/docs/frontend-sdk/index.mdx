@@ -34,7 +34,7 @@ import { XorgateProvider, useDevices, useLiveTelemetry } from "@xorgate/react"
 function App() {
   return (
     <XorgateProvider
-      config={{ baseUrl, region, identityPoolId, userPoolId, iotEndpoint }}
+      config={{ baseUrl, region, identityPoolId, userPoolId, realtimeEndpoint }}
       auth={{ getIdToken: () => session.idToken }}
       organizationId={orgId}
     >
@@ -91,7 +91,7 @@ function Fleet() {
   <Card
     title="Live video"
     href="/docs/frontend-sdk/live-video"
-    description="useKvsViewer, KvsVideo, and the live-block gate."
+    description="useLiveVideo, LiveVideo, and the live-block gate."
   />
   <Card
     title="Replay"
@@ -124,7 +124,7 @@ A library cannot work that way: one build has to serve a consumer's dev and
 production, and a test has to be able to point a hook at a fake. Every extracted
 piece takes its configuration from the provider.
 
-**Headless means headless.** Two components ship, `KvsVideo` and `ReplayVideo`,
+**Headless means headless.** Two components ship, `LiveVideo` and `ReplayVideo`,
 and each is a hook plus a bare `<video>` element. No card, no spinner, no error
 text, no aspect ratio. They exist so the common case is one line, not so they
 can be your player. Everything with an opinion in it, including the copy for
@@ -138,7 +138,7 @@ yourself. Live telemetry is QoS 0 with nothing retained, so frames published
 before your subscription completes are gone, and this page says so rather than
 buffering something that was never received.
 
-**Keep the hardening.** The KVS viewer's reconnect logic looks
+**Keep the hardening.** The video viewer's reconnect logic looks
 over-engineered until you watch a device drive under a bridge. Generation
 counters, per-step and whole-attempt deadlines, a disconnect grace window,
 mobile visibility nudges: all of it survives the lift, because all of it was

@@ -13,7 +13,7 @@ around.
 
 The 1 Hz feed does not go through this API. A client subscribes to AWS IoT Core
 over MQTT-over-WebSocket, signed with SigV4, using temporary AWS credentials from
-a Cognito identity pool, after calling `POST /iot/attach-policy` once to attach
+a Cognito identity pool, after calling `POST /live/access` once to attach
 its IoT policy.
 
 That call attaches the policy to **the caller's own Cognito identity**, which
@@ -27,7 +27,7 @@ per-second updates, and it costs one request rather than a WebSocket.
 
 ### Live video
 
-KVS WebRTC, peer to peer from the device. `devices.kvsChannels()` returns the
+WebRTC, peer to peer from the device. `devices.videoChannels()` returns the
 channel metadata a viewer needs, and that is the extent of this SDK's
 involvement: video frames never traverse the API. The viewer lifecycle,
 reconnection and credential refresh belong to `@xorgate/react`.
@@ -100,7 +100,7 @@ must treat `NOT_FOUND` as "not visible to me" rather than "deleted".
 
 ### Live-plane policies are not organization-scoped
 
-The IoT and KVS browser policies are broad but authenticated: any authenticated
+The first-party browser grants are broad but authenticated: any authenticated
 user can subscribe to any device's telemetry topic. This is a known cross-tenant
 gap that has to close before third parties touch the live plane. It does not
 affect this SDK, which reads only org-scoped REST endpoints, but it does affect

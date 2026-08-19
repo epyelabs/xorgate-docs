@@ -117,7 +117,7 @@ SDK translates.
 **Do work the API cannot.** Two examples. `deviceModels.create()` validates
 `ioCapabilities` client-side, because the API accepts any JSON object there but
 provisioning parses it strictly, and a document that fails that parse gives the
-device **zero KVS channels with no error anywhere**. And
+device **zero video channels with no error anywhere**. And
 `deviceRegistrations.waitForClaim()` exists because there are no webhooks, so
 every "wait for this to finish" is a poll loop somebody would otherwise write
 badly.

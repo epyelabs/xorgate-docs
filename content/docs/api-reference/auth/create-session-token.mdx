@@ -68,7 +68,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/auth/session-tokens","method":"post"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/auth/session-tokens","method":"post"}]} showDescription />
     </>
   );
 }

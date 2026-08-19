@@ -67,7 +67,7 @@ signing behaviour the SDK depends on.
 **Every one of them is behind a dynamic import.** An app that only lists devices
 and reads telemetry history never pulls the AWS SDK clients or `mqtt` into its
 initial bundle: they load the first time a live hook actually connects. This
-matters because the KVS and Cognito clients together are the largest thing in
+matters because the video and Cognito clients together are the largest thing in
 the dependency tree by a wide margin, and most pages never mount a video.
 
 Replay pulls nothing extra. The MSE engine, the MP4 box walker and the timeline

@@ -42,7 +42,7 @@ export function App() {
         region: import.meta.env.VITE_AWS_REGION,
         identityPoolId: import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID,
         userPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,
-        iotEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
+        realtimeEndpoint: import.meta.env.VITE_IOT_ENDPOINT,
       }}
       auth={{ getIdToken: () => idToken }}
       organizationId={organizationId}
@@ -198,12 +198,12 @@ because its device lost signal.
 ## 6. Live video for the selected asset
 
 ```tsx
-import { useKvsChannels, useLiveBlock, KvsVideo } from "@xorgate/react"
+import { useVideoChannels, useLiveBlock, LiveVideo } from "@xorgate/react"
 
 export function AssetLiveView({ deviceId }: { deviceId: string }) {
   const feed = useLiveTelemetry(deviceId)
   const block = useLiveBlock(feed)
-  const { data: channels, isLoading } = useKvsChannels(deviceId)
+  const { data: channels, isLoading } = useVideoChannels(deviceId)
 
   if (block.blocked) {
     return (
@@ -223,7 +223,7 @@ export function AssetLiveView({ deviceId }: { deviceId: string }) {
   return (
     <>
       {channels.map((c) => (
-        <KvsVideo key={c.streamKey} channel={c} />
+        <LiveVideo key={c.streamKey} channel={c} />
       ))}
     </>
   )

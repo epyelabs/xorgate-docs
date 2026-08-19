@@ -197,7 +197,7 @@ The usual rules, listed because SDK examples get copied.
 
 ## The live planes are a separate question
 
-Live telemetry (MQTT over WebSocket) and live video (KVS WebRTC) do not use this
+Live telemetry (MQTT over WebSocket) and live video (WebRTC) do not use this
 API's credential at all. They need temporary AWS credentials from a Cognito
 identity pool, which requires a Cognito identity that neither an API key nor a
 session token has. The `live` block on a minted token carries the coordinates

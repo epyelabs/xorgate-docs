@@ -44,7 +44,7 @@ that is never delivered to the device and never bumps `configRev`.
 ## Identity
 
 `POST /devices/{id}/provision` mints the AWS IoT thing, X.509 certificate and
-KVS signaling channels, and returns the certificate and private key exactly
+video channels, and returns the certificate and private key exactly
 once. Nothing is stored server-side, there is no rotation yet, and a second call
 is a `409`. For onboarding real hardware you usually do not call this directly;
 the [registration code flow](/docs/api-reference/device-registrations) does it

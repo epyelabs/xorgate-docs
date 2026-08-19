@@ -29,8 +29,8 @@ A Cognito ID token (not an access token) on the `Authorization` header, plus the
 tenancy headers from [Tenancy model](/docs/getting-started/tenancy):
 
 ```http
-GET /devices HTTP/1.1
-Host: h357muxy3k.execute-api.us-east-1.amazonaws.com
+GET /v1/devices HTTP/1.1
+Host: api-dev.xorgate.io
 Authorization: Bearer <cognito-id-token>
 X-Organization-Id: 8f1c1e2a-....
 ```
@@ -234,13 +234,21 @@ if the integration also has to keep working.
 Live telemetry and live video do not go through the REST API, and so they do not
 use the same credential.
 
-- **Live telemetry** is MQTT over a SigV4-signed WebSocket to AWS IoT Core. The
-  browser gets temporary AWS credentials from a Cognito Identity Pool (federated
-  from the same user pool), calls `POST /iot/attach-policy` once to attach its IoT
-  policy, then subscribes to `xorgate/devices/<deviceId>/telemetry`.
-- **Live video** is KVS WebRTC. `GET /devices/{id}/kvs-channels` returns channel
-  metadata only. The browser mints its own credentials the same way and joins the
-  channel as a viewer, with media flowing peer to peer from the device.
+- **Live telemetry** is MQTT over a signed WebSocket. Exchange your key or
+  session token at
+  [`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials),
+  hand the result to the SDK, and subscribe to
+  `xorgate/devices/<deviceId>/telemetry`. Treat the credential as opaque.
+- **Live video** is WebRTC. `GET /devices/{id}/video-channels` returns channel
+  metadata only: a `streamKey`, a `channelName`, an opaque `channelRef` and a
+  region. Credentials come from the same vending endpoint, and the client joins
+  the channel as a viewer with media flowing peer to peer from the device.
+
+The **first-party dashboard** takes a different route onto the same planes, and
+this is the one place these docs name the underlying identity system: it signs a
+person in, federates them into a Cognito identity pool, and calls
+`POST /live/access` to authorize that identity. Third-party integrations never
+touch it.
 
 <Callout type="info" title="Live-plane read scope is per-tenant">
 
@@ -256,7 +264,7 @@ person, federates that person into an identity pool, and what it may read there
 is still broad-but-authenticated. Narrowing the first-party path onto the same
 per-tenant mechanism is a separate change and is not done yet. Connecting is
 identity-scoped either way, so an MQTT client id must start with the
-`identityId` that `POST /iot/attach-policy` returns.
+`identityId` that `POST /live/access` returns.
 [`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) revokes what
 that call granted.
 

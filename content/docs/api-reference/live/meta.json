@@ -1,10 +1,10 @@
 {
   "title": "Live",
-  "description": "Bootstrap for the live plane: KVS channel metadata and the IoT policy attachment a browser needs.",
+  "description": "Bootstrap for the live plane: video channel metadata, and the access grant the first-party dashboard needs.",
   "pages": [
     "index",
-    "get-device-kvs-channels",
-    "attach-iot-policy",
+    "get-device-video-channels",
+    "grant-live-access",
     "revoke-live-access"
   ]
 }

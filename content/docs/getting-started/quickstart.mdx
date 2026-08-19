@@ -7,11 +7,11 @@ This walkthrough goes from a fresh device to its first telemetry reading using
 nothing but the REST API and a shell on the device. There is no SDK yet, so every
 step is an HTTP call you can copy.
 
-The dev API base URL is <ApiBaseUrl />, in region <AwsRegion />. Everything below
-assumes two shell variables:
+The dev API base URL is <ApiBaseUrl />, in region <AwsRegion />, and every
+endpoint is served under `/v1`. Everything below assumes two shell variables:
 
 ```bash
-API="https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
+API="https://api-dev.xorgate.io/v1"
 TOKEN="<your cognito id token>"
 ORG="<your organization id>"
 WS="<the workspace the device belongs in>"
@@ -58,7 +58,9 @@ single seeded model, so there is nothing to choose.
 ## 2. Run the installer on the device
 
 `installUrl` serves a ready-to-run install script with the code, the API base and
-the agent download location baked in. On the device:
+the agent download location baked in. Copy the URL out of the response rather
+than building it: it is the installer's own path, not part of the versioned API,
+so it carries no `/v1` and points at the service's raw hostname. On the device:
 
 ```bash
 curl -s https://h357muxy3k.execute-api.us-east-1.amazonaws.com/get/K7QF4M2P -o install.sh
@@ -82,7 +84,7 @@ secret). The service then, in order:
    one concurrent claim can win.
 2. Creates the `devices` row. The serial is unique per workspace, so re-running
    the installer on an already-registered device returns `409`.
-3. Provisions AWS IoT: a thing, an X.509 certificate, and the device's KVS
+3. Provisions AWS IoT: a thing, an X.509 certificate, and the device's video
    signaling channels.
 4. Links the new device back to the registration.
 
@@ -170,7 +172,7 @@ agent is running and has connectivity.
 - **Live telemetry.** Subscribe over MQTT rather than polling. See
   [Authentication](/docs/getting-started/authentication) for how the browser gets
   credentials.
-- **Video.** `GET /devices/{id}/kvs-channels` for the live WebRTC channel, or
+- **Video.** `GET /devices/{id}/video-channels` for the live WebRTC channel, or
   `GET /devices/{id}/sessions` and `/replay-manifest` for what the device
   recorded.
 - **Everything else.** The [API reference](/docs/api-reference).

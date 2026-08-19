@@ -11,9 +11,9 @@ _openapi:
     headings: []
     contents:
       - content: Mints an AWS IoT thing + X.509 certificate, attaches the device policy,
-          and creates a KVS signaling channel per declared video stream. Returns
-          the certificate, private key, and connection endpoints exactly once,
-          so persist them on the device immediately. A second call for an
+          and creates a video channel per declared video stream. Returns the
+          certificate, private key, and connection endpoints exactly once, so
+          persist them on the device immediately. A second call for an
           already-provisioned device returns 409; certificate rotation is not
           supported yet.
 ---
@@ -27,7 +27,7 @@ export default function Layout(props) {
   return (
     <>
       {props.children}
-      <Comp document="xorgate" operations={[{"path":"/devices/{id}/provision","method":"post"}]} showDescription />
+      <Comp document="xorgate" operations={[{"path":"/v1/devices/{id}/provision","method":"post"}]} showDescription />
     </>
   );
 }

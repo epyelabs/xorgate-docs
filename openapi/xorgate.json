@@ -2,12 +2,12 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.5.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, KVS channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
+    "version": "0.6.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operation below appends `/v1/...` to it.\n\nEvery one of these paths ALSO answers without the prefix, and two of them answer under an\nolder name as well (`GET /devices/{id}/kvs-channels` for `GET /devices/{id}/video-channels`,\nand `POST /iot/attach-policy` for `POST /live/access`). Those unversioned and renamed-from\npaths are DEPRECATED, exist only so the first-party dashboard did not have to move in the\nsame release, and are not operations in this document. Do not build on them: they are removed\nonce xorgate-web calls the `/v1` names. New integrations should use `/v1` exclusively.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
   },
   "servers": [
     {
-      "url": "https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
+      "url": "https://api-dev.xorgate.io"
     }
   ],
   "security": [
@@ -80,7 +80,7 @@
     {
       "name": "Live",
       "x-displayName": "Live",
-      "description": "Bootstrap for the live plane: KVS channel metadata and the IoT policy attachment a browser needs."
+      "description": "Bootstrap for the live plane: video channel metadata, and the access grant the first-party dashboard needs."
     },
     {
       "name": "Search",
@@ -931,7 +931,7 @@
           "schemaVersion"
         ],
         "additionalProperties": false,
-        "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a KVS signaling channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces.\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero KVS channels and live video silently never works. Validate against this schema yourself before writing."
+        "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a video channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces.\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero video channels and live video silently never works. Validate against this schema yourself before writing."
       },
       "DeviceModel": {
         "type": "object",
@@ -2181,15 +2181,15 @@
           }
         }
       },
-      "KvsChannel": {
+      "VideoChannel": {
         "type": "object",
         "required": [
           "streamKey",
           "channelName",
-          "channelArn",
+          "channelRef",
           "region"
         ],
-        "description": "A KVS WebRTC signaling channel for the browser viewer.",
+        "description": "One live video channel a viewer can join. Renamed from `KvsChannel` at the `/v1` cut (design note N11): nothing a consumer touches should require knowing which cloud xorgate runs on.",
         "properties": {
           "streamKey": {
             "type": "string",
@@ -2199,12 +2199,18 @@
             "type": "string",
             "description": "`${deviceId}-${streamKey}`"
           },
-          "channelArn": {
-            "type": "string"
+          "channelRef": {
+            "type": "string",
+            "description": "Opaque handle for the channel. Pass it back to the SDK; do not parse it. The value happens to be an ARN today and that is not part of the contract."
           },
           "region": {
             "type": "string",
             "example": "us-east-1"
+          },
+          "channelArn": {
+            "type": "string",
+            "deprecated": true,
+            "description": "The former name of `channelRef`, carrying the identical value. Still sent so the rename is additive and no caller broke; it is removed when the `/v1` aliases are retired. Read `channelRef`."
           }
         }
       },
@@ -2432,7 +2438,7 @@
     }
   },
   "paths": {
-    "/me": {
+    "/v1/me": {
       "get": {
         "operationId": "getMe",
         "summary": "Current user, memberships, and organizations",
@@ -2488,7 +2494,7 @@
         }
       }
     },
-    "/organizations": {
+    "/v1/organizations": {
       "get": {
         "operationId": "listOrganizations",
         "summary": "List organizations the caller is a member of",
@@ -2597,7 +2603,7 @@
         }
       }
     },
-    "/organizations/{id}": {
+    "/v1/organizations/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -2725,7 +2731,7 @@
         }
       }
     },
-    "/memberships": {
+    "/v1/memberships": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -2847,7 +2853,7 @@
         }
       }
     },
-    "/memberships/{id}": {
+    "/v1/memberships/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -2882,7 +2888,7 @@
         }
       }
     },
-    "/api-keys": {
+    "/v1/api-keys": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -3017,7 +3023,7 @@
         }
       }
     },
-    "/api-keys/{id}": {
+    "/v1/api-keys/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -3052,7 +3058,7 @@
         }
       }
     },
-    "/auth/session-tokens": {
+    "/v1/auth/session-tokens": {
       "post": {
         "operationId": "createSessionToken",
         "summary": "Exchange an API key for a short-lived session token",
@@ -3101,7 +3107,7 @@
         }
       }
     },
-    "/auth/live-credentials": {
+    "/v1/auth/live-credentials": {
       "post": {
         "operationId": "createLiveCredentials",
         "summary": "Vend credentials for the live plane, scoped to one tenant",
@@ -3145,7 +3151,7 @@
         }
       }
     },
-    "/workspaces": {
+    "/v1/workspaces": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -3255,7 +3261,7 @@
         }
       }
     },
-    "/workspaces/{id}": {
+    "/v1/workspaces/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -3389,7 +3395,7 @@
         }
       }
     },
-    "/device-models": {
+    "/v1/device-models": {
       "get": {
         "operationId": "listDeviceModels",
         "summary": "List the platform-wide device model catalog",
@@ -3430,7 +3436,7 @@
       "post": {
         "operationId": "createDeviceModel",
         "summary": "Add a device model (platform admin only)",
-        "description": "`ioCapabilities` is what makes a model useful: it declares the video/audio stream keys that become KVS channels at provisioning time, and the telemetry metrics that become the default history columns. It is NOT validated here, but it IS parsed at provisioning time, and a document that fails that parse provisions zero KVS channels. Check it against the schema before you send it.",
+        "description": "`ioCapabilities` is what makes a model useful: it declares the video/audio stream keys that become video channels at provisioning time, and the telemetry metrics that become the default history columns. It is NOT validated here, but it IS parsed at provisioning time, and a document that fails that parse provisions zero video channels. Check it against the schema before you send it.",
         "tags": [
           "Device Models"
         ],
@@ -3499,7 +3505,7 @@
         }
       }
     },
-    "/device-models/{id}": {
+    "/v1/device-models/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -3541,7 +3547,7 @@
       "put": {
         "operationId": "updateDeviceModel",
         "summary": "Update a device model (platform admin only)",
-        "description": "Partial update; an empty body is a 400. Changing `ioCapabilities` does not retro-provision KVS channels on devices already created from this model.",
+        "description": "Partial update; an empty body is a 400. Changing `ioCapabilities` does not retro-provision video channels on devices already created from this model.",
         "tags": [
           "Device Models"
         ],
@@ -3634,7 +3640,7 @@
         }
       }
     },
-    "/devices": {
+    "/v1/devices": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -3815,7 +3821,7 @@
         }
       }
     },
-    "/devices/{id}": {
+    "/v1/devices/{id}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -3999,7 +4005,7 @@
       "delete": {
         "operationId": "deleteDevice",
         "summary": "Delete a device",
-        "description": "Removes the row and everything cascading off it (identity, KVS channels, sessions, telemetry). The AWS IoT thing and certificate are NOT torn down by this endpoint.",
+        "description": "Removes the row and everything cascading off it (identity, video channels, sessions, telemetry). The AWS IoT thing and certificate are NOT torn down by this endpoint.",
         "tags": [
           "Devices"
         ],
@@ -4022,7 +4028,7 @@
         }
       }
     },
-    "/devices/{id}/config": {
+    "/v1/devices/{id}/config": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4154,7 +4160,7 @@
         }
       }
     },
-    "/devices/{id}/ui-prefs": {
+    "/v1/devices/{id}/ui-prefs": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4254,7 +4260,7 @@
         }
       }
     },
-    "/devices/{id}/provision": {
+    "/v1/devices/{id}/provision": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4266,7 +4272,7 @@
       "post": {
         "operationId": "provisionDevice",
         "summary": "Provision device identity (owner/admin only)",
-        "description": "Mints an AWS IoT thing + X.509 certificate, attaches the device policy, and creates a KVS signaling channel per declared video stream. Returns the certificate, private key, and connection endpoints exactly once, so persist them on the device immediately. A second call for an already-provisioned device returns 409; certificate rotation is not supported yet.",
+        "description": "Mints an AWS IoT thing + X.509 certificate, attaches the device policy, and creates a video channel per declared video stream. Returns the certificate, private key, and connection endpoints exactly once, so persist them on the device immediately. A second call for an already-provisioned device returns 409; certificate rotation is not supported yet.",
         "tags": [
           "Devices"
         ],
@@ -4302,7 +4308,7 @@
         }
       }
     },
-    "/devices/{id}/identity": {
+    "/v1/devices/{id}/identity": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4357,7 +4363,7 @@
         }
       }
     },
-    "/devices/{id}/reboot": {
+    "/v1/devices/{id}/reboot": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4398,7 +4404,7 @@
         }
       }
     },
-    "/devices/{id}/power-off": {
+    "/v1/devices/{id}/power-off": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4439,7 +4445,7 @@
         }
       }
     },
-    "/devices/{id}/refresh-state": {
+    "/v1/devices/{id}/refresh-state": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4480,7 +4486,7 @@
         }
       }
     },
-    "/devices/{id}/update": {
+    "/v1/devices/{id}/update": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4521,7 +4527,7 @@
         }
       }
     },
-    "/device-dist/latest": {
+    "/v1/device-dist/latest": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -4616,7 +4622,7 @@
         }
       }
     },
-    "/device-registrations": {
+    "/v1/device-registrations": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -4658,7 +4664,7 @@
         }
       }
     },
-    "/device-registrations/{code}": {
+    "/v1/device-registrations/{code}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/RegistrationCodePath"
@@ -4700,7 +4706,7 @@
         }
       }
     },
-    "/device-registrations/{code}/claim": {
+    "/v1/device-registrations/{code}/claim": {
       "parameters": [
         {
           "$ref": "#/components/parameters/RegistrationCodePath"
@@ -4734,7 +4740,7 @@
         }
       }
     },
-    "/get/{code}": {
+    "/v1/get/{code}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/RegistrationCodePath"
@@ -4775,7 +4781,7 @@
         }
       }
     },
-    "/devices/{id}/telemetry": {
+    "/v1/devices/{id}/telemetry": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4885,7 +4891,7 @@
         }
       }
     },
-    "/devices/{id}/telemetry/latest": {
+    "/v1/devices/{id}/telemetry/latest": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -4938,7 +4944,7 @@
         }
       }
     },
-    "/devices/{id}/telemetry/recent": {
+    "/v1/devices/{id}/telemetry/recent": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5029,7 +5035,7 @@
         }
       }
     },
-    "/devices/{id}/telemetry/readings": {
+    "/v1/devices/{id}/telemetry/readings": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5199,7 +5205,7 @@
         }
       }
     },
-    "/devices/{id}/sessions": {
+    "/v1/devices/{id}/sessions": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5332,7 +5338,7 @@
         }
       }
     },
-    "/devices/{id}/sessions/{sessionId}": {
+    "/v1/devices/{id}/sessions/{sessionId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5380,7 +5386,7 @@
         }
       }
     },
-    "/devices/{id}/sessions/{sessionId}/segments": {
+    "/v1/devices/{id}/sessions/{sessionId}/segments": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5440,7 +5446,7 @@
         }
       }
     },
-    "/devices/{id}/sessions/{sessionId}/segments/{seq}/playback": {
+    "/v1/devices/{id}/sessions/{sessionId}/segments/{seq}/playback": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5520,7 +5526,7 @@
         }
       }
     },
-    "/devices/{id}/replay-manifest": {
+    "/v1/devices/{id}/replay-manifest": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5614,7 +5620,7 @@
         }
       }
     },
-    "/devices/{id}/kvs-channels": {
+    "/v1/devices/{id}/video-channels": {
       "parameters": [
         {
           "$ref": "#/components/parameters/IdPath"
@@ -5624,15 +5630,15 @@
         }
       ],
       "get": {
-        "operationId": "getDeviceKvsChannels",
-        "summary": "List the device's KVS signaling channels",
-        "description": "Channel METADATA only, one entry per provisioned video stream, and no credentials: a viewer obtains its own scoped AWS credentials from the Cognito identity pool and then runs the KVS WebRTC VIEWER role against these channels. An empty array means the device is not provisioned yet, which is a 200 rather than a 404. Video frames never traverse this API.",
+        "operationId": "getDeviceVideoChannels",
+        "summary": "List the device's live video channels",
+        "description": "Channel METADATA only, one entry per provisioned video stream, and no credentials: a viewer obtains its own scoped credentials from `POST /auth/live-credentials` and then joins these channels as a viewer. An empty array means the device is not provisioned yet, which is a 200 rather than a 404. Video frames never traverse this API.\n\nRenamed from `GET /devices/{id}/kvs-channels`, which still answers unversioned during the alias period and is not served under `/v1`.",
         "tags": [
           "Live"
         ],
         "responses": {
           "200": {
-            "description": "KVS channels, possibly empty if the device is not provisioned.",
+            "description": "Video channels, possibly empty if the device is not provisioned.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5644,7 +5650,7 @@
                     "channels": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/KvsChannel"
+                        "$ref": "#/components/schemas/VideoChannel"
                       }
                     }
                   }
@@ -5667,11 +5673,11 @@
         }
       }
     },
-    "/iot/attach-policy": {
+    "/v1/live/access": {
       "post": {
-        "operationId": "attachIotPolicy",
-        "summary": "Authorize the caller to subscribe to live telemetry over MQTT",
-        "description": "AWS IoT does not authorize MQTT for Cognito-federated principals through their IAM role. It requires an IoT policy attached to the Cognito IDENTITY. This endpoint resolves the caller's identity from the bearer token and attaches the browser policy to it, after which the browser can connect over MQTT-over-WSS and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\n**Use the returned `identityId` as the prefix of your MQTT client id.** The policy scopes `iot:Connect` to `client/<identityId>*`, so a CONNECT presenting any other client id is refused. Append something random after the identity id (xorgate-web uses `<identityId>-<role>-<uuid>`): one identity legitimately holds several concurrent connections, and two browser tabs of the same user resolve to the SAME identity id, so a bare identity id would make your own connections displace each other.\n\nRequires membership of at least one organization, not merely a valid token. Losing your last membership therefore ends live access rather than merely un-attaching a policy you could immediately re-attach.\n\nNote the current policy is org-blind in what it lets you SUBSCRIBE to: it authorizes the telemetry topic space broadly rather than per organization, so it is safe for first-party use and NOT yet safe to hand to a third party. Narrowing the subscribe scope is tracked as platform-readiness work. Connect scoping and revocation are done.\n\n**Cognito ID token only.** The grant attaches to the caller's Cognito identity, which an API key does not have; a key is refused with `401 USER_CREDENTIAL_REQUIRED`. Live-plane access for key-authenticated consumers is separate work.",
+        "operationId": "grantLiveAccess",
+        "summary": "Authorize the caller to subscribe to live telemetry",
+        "description": "The first-party dashboard's own path onto the live plane. It resolves the caller's Cognito identity from the bearer token and authorizes that identity to connect to the realtime broker and subscribe to `xorgate/devices/{deviceId}/telemetry`. Idempotent, so calling it on every page load is fine.\n\nRenamed from `POST /iot/attach-policy`, which still answers unversioned during the alias period and is not served under `/v1`.\n\n**Third parties do not use this.** `POST /auth/live-credentials` is the third-party entry to the live plane: it needs no Cognito identity, works with any of the three credentials, and comes back scoped to the caller's organization or workspace. This operation exists because a browser federated through the identity pool is authorized by a different mechanism, and it is org-blind in what it lets you SUBSCRIBE to.\n\n**Use the returned `identityId` as the prefix of your client id.** Connect is scoped to `client/<identityId>*`, so a connection presenting any other client id is refused. Append something random after the identity id (xorgate-web uses `<identityId>-<role>-<uuid>`): one identity legitimately holds several concurrent connections, and two browser tabs of the same user resolve to the SAME identity id, so a bare identity id would make your own connections displace each other.\n\nRequires membership of at least one organization, not merely a valid token. Losing your last membership therefore ends live access rather than merely un-attaching something you could immediately re-attach.\n\n**Cognito ID token only.** The grant hangs off the caller's Cognito identity, which an API key does not have; a key is refused with `401 USER_CREDENTIAL_REQUIRED`.",
         "tags": [
           "Live"
         ],
@@ -5682,7 +5688,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Policy attached to the caller identity.",
+            "description": "The caller identity is authorized.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5698,7 +5704,7 @@
                     },
                     "identityId": {
                       "type": "string",
-                      "description": "The Cognito identity id the policy was attached to, and the required prefix of the MQTT client id you connect with.",
+                      "description": "The Cognito identity id that was authorized, and the required prefix of the client id you connect with.",
                       "example": "us-east-1:00000000-0000-0000-0000-000000000000"
                     },
                     "policyName": {
@@ -5722,13 +5728,11 @@
             "$ref": "#/components/responses/MethodNotAllowed"
           }
         }
-      }
-    },
-    "/live/access": {
+      },
       "delete": {
         "operationId": "revokeLiveAccess",
         "summary": "Revoke your own access to the live plane",
-        "description": "The counterpart to `POST /iot/attach-policy`: detaches the browser policy from the Cognito identity behind your bearer token, after which the broker refuses that identity's next CONNECT and any live subscription dies on its next reconnect. Idempotent — revoking access you do not have returns the same 200.\n\nSelf-service only. Revoking someone else's live access is a consequence of removing their membership: `DELETE /memberships/{id}` detaches automatically when the removal takes away their LAST organization membership. It deliberately does not fire while the user still belongs to another organization, because the browser policy is one shared org-blind policy and they remain entitled to it.\n\nUnlike the grant, this needs only a valid token and no organization membership: someone who has just lost their last membership must still be able to clean up after themselves.\n\n**Cognito ID token only**, for the same reason as the grant: there is no Cognito identity behind an API key to detach from (`401 USER_CREDENTIAL_REQUIRED`).",
+        "description": "The counterpart to `POST /live/access`: withdraws the authorization from the Cognito identity behind your bearer token, after which the broker refuses that identity's next connection and any live subscription dies on its next reconnect. Idempotent — revoking access you do not have returns the same 200.\n\nSelf-service only. Revoking someone else's live access is a consequence of removing their membership: `DELETE /memberships/{id}` revokes automatically when the removal takes away their LAST organization membership. It deliberately does not fire while the user still belongs to another organization, because the grant is one shared org-blind authorization and they remain entitled to it.\n\nUnlike the grant, this needs only a valid token and no organization membership: someone who has just lost their last membership must still be able to clean up after themselves.\n\n**Cognito ID token only**, for the same reason as the grant: there is no Cognito identity behind an API key to revoke (`401 USER_CREDENTIAL_REQUIRED`).",
         "tags": [
           "Live"
         ],
@@ -5739,7 +5743,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Policy detached from the caller identity.",
+            "description": "The caller identity is no longer authorized.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5755,7 +5759,7 @@
                     },
                     "identityId": {
                       "type": "string",
-                      "description": "The Cognito identity id the policy was detached from.",
+                      "description": "The Cognito identity id the authorization was removed from.",
                       "example": "us-east-1:00000000-0000-0000-0000-000000000000"
                     },
                     "policyName": {
@@ -5778,7 +5782,7 @@
         }
       }
     },
-    "/search": {
+    "/v1/search": {
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
@@ -5837,7 +5841,7 @@
         }
       }
     },
-    "/health": {
+    "/v1/health": {
       "get": {
         "operationId": "health",
         "summary": "Service health",
@@ -5879,7 +5883,7 @@
         }
       }
     },
-    "/openapi.json": {
+    "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
         "summary": "This OpenAPI document",
@@ -5903,7 +5907,7 @@
         }
       }
     },
-    "/docs": {
+    "/v1/docs": {
       "get": {
         "operationId": "getSwaggerUi",
         "summary": "Swagger UI for this document",

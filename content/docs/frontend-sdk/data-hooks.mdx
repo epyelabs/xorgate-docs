@@ -302,8 +302,8 @@ function Chart({ deviceId }: { deviceId: string }) {
       description:
         "Mostly for ioCapabilities, which tells you which metrics and video streams a device can produce.",
     },
-    "useKvsChannels(id)": {
-      type: "QueryResult<KvsChannel[]>",
+    "useVideoChannels(id)": {
+      type: "QueryResult<VideoChannel[]>",
       description:
         "Channel metadata only, no credentials. An empty array means the device is not provisioned.",
     },
