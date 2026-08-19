@@ -30,27 +30,12 @@ generated from the OpenAPI document. Prose elsewhere on this site writes paths
 without it (`POST /auth/session-tokens`), relative to the versioned base URL.
 Both mean the same URL.
 
-### Deprecated paths
-
-Every path also answers **without** the `/v1` prefix, and two of them answer
-under an older name as well. These exist only so the first-party dashboard did
-not have to move in the same release. They are deprecated from the day `/v1`
-shipped (2026-08-19), they are not operations in the OpenAPI document, and they
-will be removed.
-
-| Deprecated                                                        | Use instead                                                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| any path without `/v1`, e.g. `GET /devices`                       | `GET /v1/devices`                                                                           |
-| `GET /devices/{id}/kvs-channels`                                  | [`GET /v1/devices/{id}/video-channels`](/docs/api-reference/live/get-device-video-channels) |
-| `POST /iot/attach-policy`                                         | [`POST /v1/live/access`](/docs/api-reference/live/grant-live-access)                        |
-| `channelRef`'s old spelling `channelArn`, still sent alongside it | `channelRef`                                                                                |
-
-<Callout type="warn" title="Do not build on the deprecated paths">
-  They are not versioned, so nothing protects you when they change. The two
-  renamed ones are also NOT served under `/v1`, deliberately: asking for the old
-  name with the prefix is a `404`, so the versioned surface carries new names
-  only.
-</Callout>
+There is no unversioned surface. A request without the prefix is a `404`. Two
+routes also changed name at the cut: `GET /devices/{id}/kvs-channels` became
+[`GET /v1/devices/{id}/video-channels`](/docs/api-reference/live/get-device-video-channels)
+and `POST /iot/attach-policy` became
+[`POST /v1/live/access`](/docs/api-reference/live/grant-live-access). The old
+names are gone rather than redirected.
 
 ## Things that are true everywhere
 

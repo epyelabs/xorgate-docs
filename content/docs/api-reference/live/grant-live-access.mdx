@@ -18,10 +18,6 @@ _openapi:
           every page load is fine.
 
 
-          Renamed from `POST /iot/attach-policy`, which still answers
-          unversioned during the alias period and is not served under `/v1`.
-
-
           **Third parties do not use this.** `POST /auth/live-credentials` is
           the third-party entry to the live plane: it needs no Cognito identity,
           works with any of the three credentials, and comes back scoped to the
