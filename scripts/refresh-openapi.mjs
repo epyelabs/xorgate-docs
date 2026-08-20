@@ -30,7 +30,12 @@ if (fileArg) {
   console.log(`Reading ${from}`)
   spec = JSON.parse(await readFile(from, "utf8"))
 } else {
-  const specUrl = `${await resolveApiBaseUrl()}/openapi.json`
+  // `/v1` is part of the PATH, not the host: NEXT_PUBLIC_API_BASE_URL is a bare
+  // origin and the document lives under the version like every other route.
+  // Fetching `${base}/openapi.json` returned a stale snapshot silently once the
+  // unversioned paths were deleted (2026-08-19), because the 404 only exits
+  // this script and callers had already piped its output.
+  const specUrl = `${await resolveApiBaseUrl()}/v1/openapi.json`
   console.log(`Fetching ${specUrl}`)
   const res = await fetch(specUrl)
   if (!res.ok) {
