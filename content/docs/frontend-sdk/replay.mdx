@@ -397,6 +397,14 @@ known position is the failure mode that puts an asset somewhere it never was.
 `routeLines` and `traveledLines` are arrays of `[lon, lat]` polylines, split at
 recording holes, in Mapbox coordinate order.
 
+Options: `metrics` (defaults to everything the device model declares when a
+REST credential is available, else a small default set), `windowSpanMs`
+(default 120000), `breakGapMs` (default 30000), and `fetchTelemetry`, which is
+how a PROXIED consumer uses this hook at all: the browser holds no xorgate
+REST credential, so point `fetchTelemetry` at your own backend, which relays
+`GET /devices/{id}/telemetry` with its API key. The default fetches with the
+provider's REST client.
+
 The pure functions behind all of it are exported too, for anyone building
 something the hook does not cover: `seriesFromReadings`, `floorIndex`,
 `latestWithin`, `stalenessMs`, `overviewStalenessMs`, `chooseIntervalSeconds`,

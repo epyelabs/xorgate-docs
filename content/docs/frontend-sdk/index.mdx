@@ -1,6 +1,6 @@
 ---
 title: "Frontend SDK (React)"
-description: "A design document for @xorgate/react, the headless browser SDK for live video, live telemetry and replay, written before the package exists."
+description: "@xorgate/react, the headless browser SDK for live video, live telemetry and replay."
 ---
 
 `@xorgate/react` is the browser half of the xorgate SDK. It wraps
@@ -10,21 +10,6 @@ video over WebRTC, plus the recorded-media replay player.
 
 It is headless. There is no styling, no design system, no layout. Hooks return
 state and refs; you render.
-
-<Callout type="warn" title="The package does not exist yet">
-
-These pages are the **specification**, not a reference for shipped code.
-`npm install @xorgate/react` will not work today. Every hook, option and example
-here is the contract a future implementation is built to, and it is kept
-type-checkable against a single `interface-react.d.ts` sketch that lives with
-the plan.
-
-The code being specified does exist, though. Every live and replay behaviour
-described here is running in production inside `xorgate-web` today. This design
-is a description of how it gets lifted out from behind its hardcoded
-environment variables, not a proposal for something new.
-
-</Callout>
 
 ## What it is
 

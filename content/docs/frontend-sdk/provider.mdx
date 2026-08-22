@@ -37,9 +37,9 @@ point a hook at a fake without a bundler.
   type={{
     baseUrl: {
       type: "string",
-      required: true,
+      default: "https://api.xorgate.io",
       description:
-        "API origin. No default: there is no stable public API domain yet.",
+        "API origin, defaulting to production. A bare origin: the SDK appends /v1 itself.",
     },
     region: {
       type: "string",
@@ -78,13 +78,13 @@ point a hook at a fake without a bundler.
   }}
 />
 
-Only `baseUrl` is required. The four AWS fields are what the **live** plane
-needs, and leaving them out is a supported configuration rather than a mistake:
-every live hook then reports `status: "unavailable"` with
-`unavailableReason: "not-configured"` instead of failing at runtime. REST and
-replay work without any of them.
-
-Today's development API base is <ApiBaseUrl /> in <AwsRegion />.
+Nothing is required; `config` may be omitted entirely. The four AWS fields are
+what the **first-party** live plane needs, and leaving them out is a supported
+configuration rather than a mistake: in `{ getIdToken }` mode every live hook
+then reports `status: "unavailable"` with
+`unavailableReason: "not-configured"` instead of failing at runtime. In the two
+third-party modes the live coordinates arrive with the credential, so those
+fields stay unset. REST and replay work without any of them.
 
 `realtimeEndpoint` is the one value that is not in any console page you would think
 to look at. Get it with `aws iot describe-endpoint --endpoint-type iot:Data-ATS`,
@@ -101,9 +101,10 @@ most important thing to understand about this SDK.
 auth={{ getIdToken: async () => (await auth.currentSession()).getIdToken() }}
 ```
 
-The only mode that can do live video and live telemetry today. It returns a
-Cognito **ID** token, not an access token: the API verifies `tokenUse: "id"`,
-and the Identity Pool federates on the ID token as well.
+The first-party mode, for applications whose users sign in to xorgate itself.
+It returns a Cognito **ID** token, not an access token: the API verifies
+`tokenUse: "id"`, and the Identity Pool federates on the ID token as well. This
+is the one mode that needs the four AWS fields in `config`.
 
 It is called on every REST request and before every live reconnect. The SDK does
 not cache it, because your Cognito library already does and only that library
@@ -253,11 +254,18 @@ places it means something.
 
 <Step>
 
-**Live telemetry** needs an extra step nothing else does. AWS IoT authorizes
-Cognito identities through an **attached IoT policy**, not through the IAM role
-on the credentials. So before the first connect, the SDK calls
-`POST /live/access`, which attaches the browser policy to the **caller's
+**Live telemetry** in FIRST-PARTY mode needs an extra step nothing else does.
+AWS IoT authorizes Cognito identities through an **attached IoT policy**, not
+through the IAM role on the credentials. So before the first connect, the SDK
+calls `POST /live/access`, which attaches the browser policy to the **caller's
 own** Cognito identity.
+
+The two vended-credential modes skip the attach entirely: their authorization
+is the inline session policy on the credentials, which allows connecting only
+with an `xgl-`-prefixed client id and subscribing only to the credential's own
+tenant-scoped telemetry topic. The SDK obeys both rules for you; they are worth
+knowing because violating either by hand surfaces as a bare
+`Connection refused: Not authorized` with nothing distinguishing the cause.
 
 That is why `@xorgate/sdk` has no method for it and this package does: an
 endpoint that acts on the identity of whoever calls it is meaningless from a

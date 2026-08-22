@@ -3,9 +3,14 @@ title: "Live telemetry"
 description: "useLiveTelemetry over MQTT, the metric interop contract, socket sharing, QoS 0 semantics, and the live-block gate."
 ---
 
-`useLiveTelemetry` subscribes to `xorgate/devices/{id}/telemetry` over
-MQTT-over-WebSocket, signed with SigV4 from Cognito Identity Pool credentials.
-Devices publish at 1 Hz.
+`useLiveTelemetry` subscribes to a device's telemetry topic over
+MQTT-over-WebSocket, signed with SigV4. Devices publish at 1 Hz. Which topic
+and which credentials depend on the auth mode, and the SDK handles both: in
+first-party mode it subscribes to both the legacy and tenant-scoped topic
+planes with Identity Pool credentials; in the two vended-credential modes it
+subscribes to the credential's own tenant-scoped topic
+(`xorgate/orgs/{org}/ws/{workspace}/devices/{id}/telemetry`), which is the only
+one the session policy allows.
 
 ```tsx
 import { useLiveTelemetry } from "@xorgate/react"
@@ -198,12 +203,15 @@ library-level reconnect would replay a stale signature.
 - The connection is proactively cycled at 50 minutes, comfortably inside the
   roughly one hour credential and URL lifetime. You will see a brief `closed`
   followed by `connected` on a long-lived page. That is healthy.
-- `POST /live/access` runs before every connect attempt, not once. It is
-  idempotent and cheap, and doing it every time removes a whole class of "worked
-  yesterday, 403 today" bugs. It also returns the `identityId` the connection
-  needs: the MQTT client id must start with it, or the broker refuses the
-  CONNECT. Put something random after it, because one identity legitimately
-  holds several connections at once and two tabs share an identity.
+- In first-party mode, `POST /live/access` runs before every connect attempt,
+  not once. It is idempotent and cheap, and doing it every time removes a whole
+  class of "worked yesterday, 403 today" bugs. It also returns the `identityId`
+  the connection needs: the MQTT client id must start with it, or the broker
+  refuses the CONNECT. The SDK puts something random after it, because one
+  identity legitimately holds several connections at once and two tabs share an
+  identity. Vended-credential connections skip the attach and use an
+  `xgl-`-prefixed client id instead, which is what their session policy
+  requires.
 
 ## QoS 0, and nothing retained
 
