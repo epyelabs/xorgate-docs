@@ -61,6 +61,15 @@ state most of these:
 - **owner/admin**: exactly those two.
 - **owner**: owner only.
 - **platform admin**: `user.role === "admin"`, unrelated to any membership.
+- **API key only**: refuses a user token and a session token alike.
+
+Two orderings are worth knowing before you write error handling, because both
+were confirmed against production. The **role gate fires before the state
+check**: a `member` key calling `reboot()` on an OFFLINE device gets
+`INSUFFICIENT_ROLE`, not `CONFLICT`, so a service account that is only a member
+never sees the offline branch at all. And the **credential-shape refusals happen
+before any lookup**, so `USER_CREDENTIAL_REQUIRED` and `API_KEY_REQUIRED` are
+decided on the token's prefix and are safe to branch on.
 
 | Method                                      | Endpoint                                          | Role           |
 | ------------------------------------------- | ------------------------------------------------- | -------------- |
@@ -77,6 +86,7 @@ state most of these:
 | `xg.apiKeys.list()`                         | `GET /api-keys`                                   | read           |
 | `xg.apiKeys.create(input)`                  | `POST /api-keys`                                  | owner/admin    |
 | `xg.apiKeys.delete(id)`                     | `DELETE /api-keys/{id}`                           | owner/admin    |
+| `xg.auth.createSessionToken(input)`         | `POST /auth/session-tokens`                       | API key only   |
 | `xg.workspaces.list()`                      | `GET /workspaces`                                 | read           |
 | `xg.workspaces.get(id)`                     | `GET /workspaces/{id}`                            | read           |
 | `xg.workspaces.create(input)`               | `POST /workspaces`                                | write          |
@@ -94,6 +104,7 @@ state most of these:
 | `xg.devices.delete(id)`                     | `DELETE /devices/{id}`                            | write          |
 | `xg.devices.getConfig(id)`                  | `GET /devices/{id}` (view)                        | read           |
 | `xg.devices.patchConfig(id, patch)`         | `PATCH /devices/{id}/config`                      | write          |
+| `xg.devices.mergeConfig(id, patch)`         | `GET` then `PATCH /devices/{id}/config`           | write          |
 | `xg.devices.patchUiPrefs(id, patch)`        | `PATCH /devices/{id}/ui-prefs`                    | write          |
 | `xg.devices.identity(id)`                   | `GET /devices/{id}/identity`                      | read           |
 | `xg.devices.provision(id)`                  | `POST /devices/{id}/provision`                    | owner/admin    |

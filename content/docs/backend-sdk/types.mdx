@@ -20,8 +20,10 @@ Three rules cover every difference between these types and the raw API.
    `{ device }` becomes `Device`, `{ api_keys }` becomes `ApiKey[]`.
 2. **Everything is camelCase.** The snake_case envelope keys (`api_keys`,
    `api_key` / `plaintext_key`, `device_model` / `device_models`) and the
-   snake_case timestamps on `User` and `Organization` (`created_at`,
-   `updated_at`) are normalized. Nothing else on the wire is snake_case.
+   snake_case timestamps on `Organization` (`created_at`, `updated_at`) are
+   normalized. Nothing else on the wire is snake_case. The normalization accepts
+   **both** spellings, so the day the platform normalizes its own casing is a
+   no-op here rather than the day every timestamp becomes `undefined`.
 3. **Timestamps stay strings.** ISO-8601, exactly as returned, not `Date`
    objects. Parsing is lossy in one direction and opinionated in the other, and
    a string round-trips into JSON without a serializer. The one exception is the
@@ -67,7 +69,7 @@ interface User {
   name: string | null
   tier: "free" | "pro" | "team"
   role: "user" | "admin" // PLATFORM role
-  createdAt: string
+  createdAt: string | null // null through GET /me; see below
 }
 
 interface Organization {
@@ -104,6 +106,11 @@ interface Workspace {
 `User.role` is the **platform** role and gates device-model catalog writes only.
 `Membership.role` is per organization and gates everything else. They are
 unrelated, and confusing them is the most common cause of a surprising `403`.
+
+`User.createdAt` is nullable because of one endpoint. `GET /me` builds its `user`
+block from the request's own credential rather than serializing the row, so it
+carries no timestamp at all. Typing it `string` would have been a lie in the only
+place the type is observable.
 
 ## Device
 

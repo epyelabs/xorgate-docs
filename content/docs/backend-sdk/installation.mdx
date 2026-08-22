@@ -43,11 +43,16 @@ bun add @xorgate/sdk
 
 The package targets Node 20 or newer and any runtime with a global `fetch`,
 which covers Cloudflare Workers, Vercel Edge, Deno and Bun. It ships ESM and
-CJS, has zero runtime dependencies, and bundles its own TypeScript types.
+CJS, has zero runtime dependencies, and bundles its own TypeScript types. The
+zero-dependency claim is checked on the packed tarball rather than on
+`package.json`, because an empty `dependencies` block is not the same thing as
+an artifact that imports nothing.
 
 <Callout title="Not published yet">
-  The package name is reserved but nothing is on npm. Publishing is public (npm
-  plus a public GitHub repo), decided alongside the rest of the SDK plan.
+  The `@xorgate` scope exists and the source is public at
+  [epyelabs/xorgate-sdk-js](https://github.com/epyelabs/xorgate-sdk-js), but the
+  first publish has not happened, so the install commands above do not resolve
+  yet.
 </Callout>
 
 ## Create a client
@@ -56,17 +61,24 @@ CJS, has zero runtime dependencies, and bundles its own TypeScript types.
 import { createClient } from "@xorgate/sdk"
 
 const xg = createClient({
-  baseUrl: "https://api.xorgate.io",
   auth: { apiKey: process.env.XORGATE_API_KEY! },
   organizationId: process.env.XORGATE_ORG_ID!,
   workspaceId: process.env.XORGATE_WORKSPACE_ID, // optional
 })
 ```
 
-The development API base URL is <ApiBaseUrl /> in region <AwsRegion />. There is
-no default `baseUrl` and there will not be one until the platform has a stable
-custom domain, at which point the `/v1` prefix arrives with it. Read the base URL
-from your environment rather than hardcoding it.
+`baseUrl` defaults to `https://api.xorgate.io`, the production deployment, so a
+normal integration never sets it.
+
+<Callout title="baseUrl is a bare ORIGIN, and the SDK owns the version segment">
+
+The SDK appends `/v1` itself. That is why the option is an origin rather than a
+full base path: pointing it at another deployment or at a proxy cannot silently
+drop the version and land you on a deprecated unversioned alias. A `baseUrl` that
+already ends in `/v1` is refused at construction with `INVALID_CONFIG` rather
+than being doubled up.
+
+</Callout>
 
 ### Options
 
@@ -74,9 +86,9 @@ from your environment rather than hardcoding it.
   type={{
     baseUrl: {
       type: "string",
-      required: true,
       description:
-        "API origin, no trailing slash and no path. Required: there is no stable public domain yet.",
+        "API origin, no path. The SDK appends /v1 itself. Defaults to production.",
+      default: '"https://api.xorgate.io"',
     },
     auth: {
       type: "{ apiKey } | { getToken }",
@@ -148,7 +160,6 @@ none, so they cannot be reached through a client that requires one:
 import { createBootstrapClient } from "@xorgate/sdk"
 
 const boot = createBootstrapClient({
-  baseUrl: process.env.XORGATE_API_URL!,
   auth: { getToken: () => session.idToken },
 })
 
@@ -190,16 +201,19 @@ await xg.devices.list({ workspaceId: "9f21..." })
 ## Timeouts and cold starts
 
 The default `timeoutMs` is 30000, which is generous on purpose. Warm requests
-against the development deployment answer in 200 to 420 ms, but the **first call
-after an idle period takes 1 to 2.5 seconds**. That is a cold Lambda plus an
-Aurora Serverless cluster sitting at its 0.5 ACU floor, not slow code, and it
-applies to the first call of every process.
+answer in a few hundred milliseconds, but the **first call after a quiet period
+is seconds**, not milliseconds. The production database is Aurora Serverless with
+a floor of 0 ACU and a 30-minute auto-pause, so the first request after it has
+gone to sleep waits for the cluster to resume; a cold Lambda sits on top of that.
+Measured against production, a first call of 2 to 5 seconds is normal and one
+that took longer would not be surprising.
 
-One endpoint is a genuine outlier even when warm:
-`GET /devices/{id}/sessions` has been measured around 1090 ms.
+Two endpoints are outliers even when warm: `GET /devices/{id}/sessions` and
+`GET /devices/{id}/video-channels` have both been measured in the seconds.
 
-Do not set an aggressive timeout to "fail fast". A 1-second deadline turns a
-normal cold start into an error.
+Do not set an aggressive timeout to "fail fast". **Never set `timeoutMs` below
+about 3000**: a 1-second deadline turns a normal resume into an error, and
+retrying makes it worse rather than better.
 
 ## Cancellation
 
@@ -234,6 +248,9 @@ const raw = await xg.request<{ device_models: unknown[] }>(
   "/device-models",
 )
 ```
+
+The path is appended to the origin **and the version segment**, so pass
+`/device-models`, not `/v1/device-models`.
 
 If you find yourself using it for something the platform supports properly, that
 is a gap in this SDK worth reporting.

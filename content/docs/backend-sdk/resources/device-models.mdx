@@ -71,8 +71,13 @@ each one produces:
 | `media.video[].key`                | a video channel named `${deviceId}-${key}`          |
 | `sensors.imu.accel: ["x","y","z"]` | metrics `imu.accel_x`, `imu.accel_y`, `imu.accel_z` |
 | `comm.gps.fields: ["lat"]`         | metric `gps.lat`                                    |
-| `comm.signal.fields: ["rssi"]`     | metric `signal.rssi`                                |
+| `comm.signal.fields: ["rssi"]`     | metric `lte.rssi` (not `signal.rssi`)               |
 | `system.fields: ["cpu_temp"]`      | metric `system.cpu_temp`                            |
+
+The `lte.` prefix on the signal row is not a typo and is the one mapping nobody
+guesses right: the device publishes modem statistics under the `lte` group even
+though the capability that declares them is called `signal`. Use the helper below
+rather than composing metric names by hand.
 
 Two helpers derive those without you re-implementing the mapping:
 

@@ -39,6 +39,7 @@ class XorgateError extends Error {
   readonly requestId?: string
   readonly hint?: string
   readonly retryable: boolean
+  readonly retryAfterMs?: number
 }
 ```
 
@@ -81,6 +82,11 @@ class XorgateError extends Error {
       description:
         "True for timeouts, network failures, 429 and 5xx. False for every 4xx.",
     },
+    retryAfterMs: {
+      type: "number",
+      description:
+        "Parsed from the response's Retry-After header. Only ever set on a 429.",
+    },
   }}
 />
 
@@ -110,6 +116,8 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 | `NOT_FOUND`                 | 404    | No such resource, **or** it belongs to another organization.                                                                         |
 | `METHOD_NOT_ALLOWED`        | 405    | The path exists, not with this method. Carries an `Allow` header.                                                                    |
 | `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                            |
+| `RATE_LIMITED`              | 429    | Throttled. The SDK's own name for it: a gateway 429 carries no `error.code`. Carries `retryAfterMs` when the response said so.       |
+| `SERVER_ERROR`              | 5xx    | A 5xx with no error envelope, so it came from the gateway rather than from the API. Retryable.                                       |
 | `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                                |
 | `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                                |
 | `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                         |
@@ -179,6 +187,10 @@ const xg = createClient({
 Retryable conditions are `TIMEOUT`, `NETWORK`, 429 and 5xx, with exponential
 backoff and full jitter. Every 4xx fails immediately.
 
+A 429 that carries `Retry-After` raises the backoff **floor** to what the server
+asked for, still capped by `maxDelayMs`, so a misconfigured gateway cannot stall
+your process for a minute and a correctly configured one is obeyed.
+
 The reason writes are excluded is that **the API has no idempotency keys**.
 Re-sending a `POST /workspaces` after a timeout creates a second workspace;
 re-sending a device-model write re-applies it. Some writes happen to be safe,
@@ -198,9 +210,15 @@ resource back rather than to retry.
 
 ## Rate limits
 
-There are none. No usage plans, no per-key quotas, no 429 in practice, and no
-`Retry-After`. The SDK handles 429 anyway because that is cheap and the platform
-will grow throttling before it grows a warning.
+There are none **yet**: no usage plans, no per-key quotas, and no 429 you will
+see today. Gateway throttling is planned and per-key quotas are behind it.
+
+The SDK already understands 429 anyway, and that ordering is deliberate rather
+than incidental. A client that learns about throttling only when throttling
+ships is a client that retries blindly into the thing that is trying to slow it
+down, and it is the deployed old version that does the damage. So `RATE_LIMITED`,
+`retryable: true` and `Retry-After` are all handled now, before there is anything
+to handle.
 
 This is not permission to hammer the API. `iterate()` is sequential for exactly
 this reason, and a parallel fan-out across a fleet is how you find the account's

@@ -98,28 +98,17 @@ A resource in another organization answers `404`. You cannot distinguish "does
 not exist" from "not yours". That is deliberate, and it means reconciliation code
 must treat `NOT_FOUND` as "not visible to me" rather than "deleted".
 
-### Live-plane policies are not organization-scoped
+### The first-party live grant is still one shared policy
 
-The first-party browser grants are broad but authenticated: any authenticated
-user can subscribe to any device's telemetry topic. This is a known cross-tenant
-gap that has to close before third parties touch the live plane. It does not
-affect this SDK, which reads only org-scoped REST endpoints, but it does affect
-anything you build on `@xorgate/react` today.
+`POST /live/access` attaches **one** browser IoT policy to the caller's Cognito
+identity, so a member of any organization can subscribe to any device's telemetry
+topic. That is the xorgate dashboard's own path, and narrowing it is open work.
 
-### No credential path for your own users
-
-The live plane needs identity-pool credentials federated from xorgate's Cognito.
-An application that authenticates its own users, rather than federating them into
-xorgate, has no way to obtain them today. Its backend can read everything through
-this SDK; its browser cannot do live video or live telemetry. A
-credential-vending design for API-key consumers is on the backlog.
-
-### No versioning, no stable domain
-
-There is no `/v1` prefix and no custom API domain. The base URL is a raw
-`execute-api` hostname, which is why `baseUrl` is required and has no default.
-The `/v1` prefix arrives with the custom domain, and old paths stay aliased until
-the first-party web app migrates.
+It does not affect this SDK, which reads only org-scoped REST endpoints, and it
+is **not** the path a third party uses: `POST /auth/live-credentials` vends
+credentials confined to one tenant, and a sibling workspace's device is refused
+on both planes by the credential itself. See
+[Authentication](/docs/backend-sdk/authentication).
 
 ### No idempotency keys
 
