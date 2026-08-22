@@ -1,25 +1,11 @@
 ---
 title: "Backend SDK (JS)"
-description: "A design document for @xorgate/sdk, the server-side JavaScript client, written before the package exists."
+description: "Reference for @xorgate/sdk, the server-side JavaScript and TypeScript client for the xorgate platform API."
 ---
 
 `@xorgate/sdk` is the server-side JavaScript and TypeScript client for the
 xorgate platform API. It is what your own backend uses to sync devices, read
 telemetry history, manage workspaces and members, and pull recorded media.
-
-<Callout type="warn" title="The package does not exist yet">
-
-These pages are the **specification**, not a reference for shipped code.
-`npm install @xorgate/sdk` will not work today. Every signature, option and
-example here is the contract a future implementation is built to, and it is kept
-type-checkable against a single `interface.d.ts` sketch that lives with the plan.
-When the package ships, this section becomes its reference and this callout goes
-away.
-
-Until then, use the [API reference](/docs/api-reference) and call the endpoints
-directly. The [Quickstart](/docs/getting-started/quickstart) does exactly that.
-
-</Callout>
 
 ## What it is
 
@@ -27,8 +13,7 @@ directly. The [Quickstart](/docs/getting-started/quickstart) does exactly that.
 import { createClient } from "@xorgate/sdk"
 
 const xg = createClient({
-  baseUrl: process.env.XORGATE_API_URL!,
-  auth: { getToken: () => session.idToken },
+  auth: { apiKey: process.env.XORGATE_API_KEY! },
   organizationId: process.env.XORGATE_ORG_ID!,
 })
 
@@ -124,9 +109,14 @@ badly.
 
 **Be honest in the types.** `Device.status` is machine-managed, so
 `UpdateDeviceInput` does not include it. `MediaSession.segmentCount` is present
-only on the list endpoint, so it is optional. `ApiKey.lastUsedAt` is typed
-`string | null` and documented as always null.
+only on the list endpoint, so it is optional. `User.createdAt` is typed
+`string | null`, because `GET /me` builds its `user` block from the request's
+credential and carries no timestamp at all.
 
 **Never invent an endpoint.** Every method maps to a real operation, except
-`devices.getConfig()` (a view over `GET /devices/{id}`) and the two helpers
-above, each of which says so where it is documented.
+four that say so where they are documented: `devices.getConfig()` (a view over
+`GET /devices/{id}`), `telemetry.latestByMetric()` (a reshape of
+`telemetry.latest()`), and the two helpers above. `devices.mergeConfig()` is the
+fifth and the most opinionated: it is `patchConfig()` with a read in front,
+because a partial config write that looks like a merge and is not is a foot-gun
+aimed at customer hardware.

@@ -111,6 +111,7 @@ anything newer than its last-applied revision.
 ```ts
 getConfig(id: string): Promise<DeviceConfigView>
 patchConfig(id: string, patch: DeviceConfigPatch): Promise<Device>
+mergeConfig(id: string, patch: DeviceConfigPatch): Promise<Device>
 patchUiPrefs(id: string, patch: DeviceUiPrefsPatch): Promise<Device>
 ```
 
@@ -145,7 +146,7 @@ const device = await xg.devices.patchConfig(deviceId, {
   recording: {
     video: { enabled: true, preset: "1080p15-2mbps", segmentSeconds: 60 },
   },
-  timeSync: { offlineSources: ["gps", "nitz"] },
+  timeSync: { offlineSources: true },
 })
 
 console.log(device.configRev) // bumped
@@ -154,12 +155,21 @@ console.log(device.configRev) // bumped
 The namespaces are `gnssAntBias`, `imuMount`, `recording`, `lteRecovery`,
 `timeSync` and `cellular`.
 
-<Callout type="warn" title="Each namespace is replaced WHOLE">
+<Callout type="warn" title="Each namespace is replaced WHOLE. This has broken real hardware.">
 
 A present namespace is validated and replaced entirely, because the device
 replaces namespaces the same way. Writing only the `recording.video` block when
-`recording.telemetry` was already configured **drops** the telemetry block. Read
-the current value, merge, then write:
+`recording.telemetry` was already configured **drops** the telemetry block.
+
+This is not hypothetical. Bringing production up, a single
+`patchConfig(id, { recording: { telemetry: { enabled: true } } })` erased the rest
+of that device's `recording` namespace, including a per-camera flag that was
+suppressing a camera which does not work on that unit. The device went from zero
+errors to a start/fail loop every sixty seconds, and the only way back was to
+re-send the whole namespace from a backup. The request looked like a merge. It
+was not.
+
+Read the current value, merge, then write:
 
 ```ts
 const { config } = await xg.devices.getConfig(deviceId)
@@ -167,6 +177,9 @@ await xg.devices.patchConfig(deviceId, {
   recording: { ...config.recording, video: { ...config.recording?.video, enabled: true } },
 })
 ```
+
+Or let `mergeConfig()` below do exactly that for you, which is what you almost
+always want.
 
 </Callout>
 
@@ -185,6 +198,38 @@ Two failure modes worth handling separately:
 - A device whose `reportedConfig.effective` has no `apn` block predates the APN
   rollback machinery. Writing the `cellular` namespace to it has no safety net,
   so a bad APN takes the device off the network. Check for the block first.
+
+### `mergeConfig(id, patch)`
+
+Read-modify-write. It fetches the device, deep-merges your patch into the current
+config, and sends each **touched namespace back whole**, so the smallest possible
+expression of "turn X on" stops being the most dangerous one.
+
+```ts
+// Enables telemetry recording and changes NOTHING else in `recording`.
+await xg.devices.mergeConfig(deviceId, {
+  recording: { telemetry: { enabled: true } },
+})
+```
+
+Semantics worth knowing:
+
+- `null` **at the namespace level** still means "revert this namespace to the
+  device defaults", and is passed through unmerged, exactly as in
+  `patchConfig()`.
+- `null` **below** a namespace deletes that one key from the merged result. It is
+  the only way to remove a single setting without rewriting its siblings.
+- Arrays replace rather than concatenate. Every array in the config contract is a
+  complete list rather than an accumulator.
+- It costs one extra `GET`.
+
+<Callout type="warn" title="Safer, not atomic">
+  The API has no `If-Match` on `configRev`, so two writers racing on the same
+  device still clobber each other and the loser is never told. `mergeConfig()`
+  removes the self-inflicted case, where your own partial write erases your own
+  earlier one. It cannot remove the concurrent case, and nothing in the API can
+  today.
+</Callout>
 
 ### Watching a config change land
 

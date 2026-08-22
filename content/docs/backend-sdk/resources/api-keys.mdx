@@ -68,9 +68,15 @@ for (const key of await xg.apiKeys.list()) {
 }
 ```
 
-`lastUsedAt` is typed `string | null` and is **always null**: no code path
-verifies a key, so nothing stamps it. Do not build "unused key" cleanup on it,
-because every key looks unused.
+`lastUsedAt` is a real signal. Every request a key authenticates stamps it, and
+it has been observed advancing within seconds of a key's first use. The write is
+throttled and fire-and-forget, so treat it as a liveness **hint** for finding
+keys nobody holds any more, not as an audit trail: a key used a minute ago may
+still read as used five minutes ago.
+
+(This paragraph used to say the column was always null. That stopped being true
+when API keys became verifiable, and it was corrected once the SDK's integration
+suite watched it advance against production.)
 
 ## `delete(id)`
 
@@ -80,6 +86,11 @@ await xg.apiKeys.delete(apiKey.id)
 
 A hard delete, not a revocation: the row is removed and `revokedAt` is never set
 by this call. `ApiKey.revokedAt` exists in the schema and stays null.
+
+It also destroys **every session token minted from this key**, immediately. That
+cascade is the only way to kill a live session token, which makes this the
+emergency stop for a leaked client credential. It also means the order matters:
+mint the replacement key first if the integration has to keep working.
 
 Rotation is therefore manual and ordered: mint the new key, deploy it
 everywhere, confirm, then delete the old one. There is no grace period and no

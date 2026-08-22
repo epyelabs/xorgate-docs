@@ -12,18 +12,24 @@ report position and motion over cellular, record video locally, and upload it
 when they have bandwidth. Your service owns its own users and dashboards; xorgate
 is the device platform underneath.
 
-<Callout type="warn" title="One thing does not work yet">
+<Callout title="Everything below has been run against production">
 
-**Live planes.** Live video and the 1 Hz MQTT feed need identity-pool
-credentials federated from xorgate's Cognito, which neither an API key nor an
-application authenticating its own users can obtain. Everything below is REST
-and works regardless. See
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+Every step on this page is executed against the live platform by the SDK's
+`walkthrough` integration test, with two exceptions that need a human and say so
+where they appear: claiming a registration code needs someone at the hardware,
+and `updateAgent()` reinstalls the agent on a live device. The test creates and
+destroys its own workspace and its own device, and reads a real device's
+telemetry and media without writing to it.
 
 </Callout>
 
 Auth below is `auth: { apiKey }`, which is what an application with its own user
-layer wants and what the platform now verifies.
+layer wants and what the platform verifies.
+
+Live video and the 1 Hz MQTT feed are a separate plane and are not on this page:
+your backend vends credentials for them with
+`POST /auth/live-credentials` and your browser uses `@xorgate/react`. See
+[What this SDK does not cover](/docs/backend-sdk/not-covered).
 
 ## 0. One client per organization
 
@@ -32,7 +38,6 @@ import { createClient, isXorgateError } from "@xorgate/sdk"
 
 export function clientFor(organizationId: string) {
   return createClient({
-    baseUrl: process.env.XORGATE_API_URL!,
     auth: { apiKey: process.env.XORGATE_API_KEY! },
     organizationId,
     timeoutMs: 30_000,
@@ -102,7 +107,7 @@ await xg.devices.patchConfig(device.id, {
       preset: "1080p15-2mbps",
       segmentSeconds: 60,
       bootDefer: "auto",
-      gpsGate: true,
+      gpsGate: "auto",
     },
   },
 })
@@ -110,7 +115,18 @@ await xg.devices.patchConfig(device.id, {
 
 The spread is not optional style. Each namespace is **replaced whole**, so
 omitting `telemetry` while writing `video` would delete the telemetry block. See
-[Devices](/docs/backend-sdk/resources/devices).
+[Devices](/docs/backend-sdk/resources/devices), where the same mistake against
+production is written up in full.
+
+`mergeConfig()` does the read and the spread for you, and is what you want for
+any change smaller than "rewrite this namespace":
+
+```ts
+// Changes the sample rate and nothing else in `recording`.
+await xg.devices.mergeConfig(device.id, {
+  recording: { telemetry: { rateHz: 2 } },
+})
+```
 
 Then wait for the device to confirm, because the write only means the cloud
 stored it:
@@ -376,7 +392,11 @@ try {
       // Offline. Commands are not retained; there is nothing to queue.
       break
     case "INSUFFICIENT_ROLE":
-      // The service account is a member, not an owner or admin.
+      // The service account is a member, not an owner or admin. Note this is
+      // checked BEFORE the device's state, so a member key sees this for
+      // reboot() whether the device is online or not, and never reaches the
+      // CONFLICT branch above. `refreshState()` is the one command open to a
+      // member, which makes it the one that can actually return CONFLICT.
       break
     case "COMMAND_PUBLISH_FAILED":
       // Never reached the broker. Safe to retry.

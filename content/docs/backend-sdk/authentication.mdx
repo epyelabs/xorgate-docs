@@ -19,7 +19,6 @@ platform; they differ in what they can reach, not in whether they work.
 
 ```ts
 const xg = createClient({
-  baseUrl: process.env.XORGATE_API_URL!,
   auth: { apiKey: process.env.XORGATE_API_KEY! },
   organizationId: process.env.XORGATE_ORG_ID!,
 })
@@ -127,7 +126,6 @@ Full request and response shape:
 
 ```ts
 const xg = createClient({
-  baseUrl: process.env.XORGATE_API_URL!,
   auth: { getToken: async () => (await auth.currentSession()).getIdToken() },
   organizationId: orgId,
 })
