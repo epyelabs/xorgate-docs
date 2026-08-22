@@ -3,11 +3,6 @@ title: "Installation"
 description: "Peer dependencies, what each one costs, and why this package is browser-only."
 ---
 
-<Callout type="warn" title="Not published yet">
-  `@xorgate/react` is a design document. The commands below are what installing
-  it will look like.
-</Callout>
-
 ## Install
 
 <Tabs items={["npm", "pnpm", "yarn"]}>
@@ -63,6 +58,7 @@ signing behaviour the SDK depends on.
 | `@aws-sdk/client-kinesis-video`                 | live video                 | signaling endpoint resolution   |
 | `@aws-sdk/client-kinesis-video-signaling`       | live video                 | ICE server configuration        |
 | `amazon-kinesis-video-streams-webrtc`           | live video                 | the signaling client            |
+| `events`                                        | live video                 | Node-builtin shim the signaling client requires but does not declare |
 
 **Every one of them is behind a dynamic import.** An app that only lists devices
 and reads telemetry history never pulls the AWS SDK clients or `mqtt` into its
