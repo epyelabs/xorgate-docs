@@ -48,12 +48,6 @@ zero-dependency claim is checked on the packed tarball rather than on
 `package.json`, because an empty `dependencies` block is not the same thing as
 an artifact that imports nothing.
 
-<Callout type="warn" title="Use 0.1.1 or newer">
-  `0.1.0` serializes its own API key: the credential was an enumerable property
-  at runtime, so `JSON.stringify(client)` and any structured logger handed the
-  client printed it. Fixed in `0.1.1`, with no change to the surface.
-</Callout>
-
 ## Create a client
 
 ```ts
