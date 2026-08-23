@@ -11,9 +11,9 @@ _openapi:
     headings: []
     contents:
       - content: >-
-          Unpaginated: the whole set comes back in one `organizations` array
-          with no `page` block. A user belongs to a handful of organizations at
-          most.
+          Paginated with the shared list dialect (a user belongs to a handful of
+          organizations at most, so the default page size of 100 is effectively
+          "all of them").
 
 
           **Cognito ID token only.** The result is defined by the caller's

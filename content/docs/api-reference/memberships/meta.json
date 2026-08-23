@@ -5,6 +5,7 @@
     "index",
     "list-memberships",
     "add-membership",
+    "update-membership-role",
     "remove-membership"
   ]
 }
