@@ -41,19 +41,21 @@ The organization is the tenant boundary. Workspaces, devices, telemetry, media
 and API keys live inside exactly one and never cross.
 
 ```ts
-list(): Promise<Organization[]>
-listAll(): Promise<Organization[]>
-iterate(options?): AsyncIterableIterator<Organization>
+list(params?: ListOrganizationsParams): Promise<Organization[]>
+listAll(params?): Promise<Organization[]>
+iterate(params?): AsyncIterableIterator<Organization>
 get(id: string): Promise<Organization>
 create(input: CreateOrganizationInput): Promise<Organization>
 update(id: string, input: UpdateOrganizationInput): Promise<Organization>
 delete(id: string): Promise<void>
 ```
 
-### `list()`
+### `list(params?)`
 
-Unpaginated: every organization the caller is a member of, in one array. A user
-belongs to a handful at most.
+Every organization the caller is a member of. Paginated with the
+[shared list dialect](/docs/backend-sdk/pagination); a user belongs to a
+handful at most, so one default page is effectively all of them, and
+`listAll()` is the guaranteed-complete form.
 
 ### `get(id)`
 
@@ -100,17 +102,22 @@ Maps to the
 ## `xg.memberships`
 
 ```ts
-list(): Promise<MembershipWithUser[]>
-listAll(): Promise<MembershipWithUser[]>
-iterate(options?): AsyncIterableIterator<MembershipWithUser>
+list(params?: ListMembershipsParams): Promise<MembershipWithUser[]>
+listAll(params?): Promise<MembershipWithUser[]>
+iterate(params?): AsyncIterableIterator<MembershipWithUser>
 add(input: AddMembershipInput): Promise<AddMembershipResult>
+updateRole(membershipId: string, role: MembershipRole): Promise<Membership>
 remove(membershipId: string): Promise<void>
 ```
 
-### `list()`
+### `list(params?)`
 
-The roster for the active organization, unpaginated, each row enriched with its
-member's `user` so a UI renders names and emails without a second round trip.
+The roster for the active organization, each row enriched with its member's
+`user` so a UI renders names and emails without a second round trip. Paginated
+with the [shared list dialect](/docs/backend-sdk/pagination); the default order
+is **ascending by join date**, the one list whose default is not `desc`.
+`list()` returns one request's worth (up to `limit`, default 100);
+`listAll()` is the guaranteed-complete form.
 
 ```ts
 for (const m of await xg.memberships.list()) {
@@ -147,18 +154,30 @@ not a no-op, so guard on the roster if you are reconciling a list.
 
 Owner or admin.
 
+### `updateRole(membershipId, role)`
+
+Changes a member's role in place, keeping their membership id and `createdAt`.
+(Before this existed, the only way was `remove()` then `add()`, which briefly
+left the member with no access.)
+
+```ts
+const membership = await xg.memberships.updateRole("m-9c2f...", "admin")
+```
+
+Owner or admin, with two extra gates the API enforces:
+
+- **Owner-level changes need an owner.** Granting `owner`, or changing an
+  existing owner's role, is a `403` unless the caller is an owner themselves;
+  an admin cannot promote anyone (or themselves) past the gate.
+- **The last owner cannot be demoted.** A `403`, same as `remove()`, so an
+  organization can never lock itself out.
+
+Setting the role a member already has is a no-op `200`.
+
 ### `remove(membershipId)`
 
 Takes the **membership** id, not the user id. Removing the last remaining owner
 is refused with a `403`, so an organization can never be left ownerless.
-
-<Callout type="warn" title="There is no way to change a role">
-  The API has no membership update endpoint. Changing someone's role means
-  `remove()` then `add()`, which briefly leaves them with no access and loses
-  the original `createdAt`. A `PATCH /memberships/{id}` is on the
-  platform-readiness backlog; until it ships, the SDK has no `update()` here
-  because there is nothing to call.
-</Callout>
 
 Maps to the [Memberships endpoints](/docs/api-reference/memberships).
 

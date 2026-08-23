@@ -8,18 +8,20 @@ whatever fits. Every device belongs to exactly one. Workspaces are usually the
 second thing a client reads, right after `me()`.
 
 ```ts
-list(): Promise<Workspace[]>
-listAll(): Promise<Workspace[]>
-iterate(options?): AsyncIterableIterator<Workspace>
+list(params?: ListWorkspacesParams): Promise<Workspace[]>
+listAll(params?): Promise<Workspace[]>
+iterate(params?): AsyncIterableIterator<Workspace>
 get(id: string): Promise<Workspace>
 create(input: CreateWorkspaceInput): Promise<Workspace>
 update(id: string, input: UpdateWorkspaceInput): Promise<Workspace>
 delete(id: string): Promise<void>
 ```
 
-## `list()`
+## `list(params?)`
 
-Unpaginated: every workspace in the active organization, in one array.
+Every workspace in the active organization. Paginated with the
+[shared list dialect](/docs/backend-sdk/pagination); `listAll()` is the
+guaranteed-complete form.
 
 ```ts
 const workspaces = await xg.workspaces.list()

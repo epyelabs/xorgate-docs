@@ -4,9 +4,9 @@ description: "Minting, listing and deleting organization keys, the one-shot plai
 ---
 
 ```ts
-list(): Promise<ApiKey[]>
-listAll(): Promise<ApiKey[]>
-iterate(options?): AsyncIterableIterator<ApiKey>
+list(params?: ListApiKeysParams): Promise<ApiKey[]>
+listAll(params?): Promise<ApiKey[]>
+iterate(params?): AsyncIterableIterator<ApiKey>
 create(input: CreateApiKeyInput): Promise<CreatedApiKey>
 delete(id: string): Promise<void>
 ```
@@ -58,9 +58,11 @@ console.log(apiKey.id, apiKey.createdAt)
 
 Owner or admin.
 
-## `list()`
+## `list(params?)`
 
-Unpaginated, newest first, metadata only. The hashed key is never returned.
+Newest first by default, metadata only; the hashed key is never returned.
+Paginated with the [shared list dialect](/docs/backend-sdk/pagination);
+`listAll()` is the guaranteed-complete form.
 
 ```ts
 for (const key of await xg.apiKeys.list()) {

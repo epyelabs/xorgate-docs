@@ -37,6 +37,7 @@ class XorgateError extends Error {
   readonly method?: HttpMethod
   readonly url?: string
   readonly requestId?: string
+  readonly serverRequestId?: string
   readonly hint?: string
   readonly retryable: boolean
   readonly retryAfterMs?: number
@@ -69,7 +70,12 @@ class XorgateError extends Error {
     requestId: {
       type: "string",
       description:
-        "The X-Request-ID the SDK generated and sent. The API does not echo one back yet, so this is the client's copy.",
+        "The X-Request-ID the SDK generated and sent. Correlates your own logs; the API does not echo it.",
+    },
+    serverRequestId: {
+      type: "string",
+      description:
+        "The API's own request id, from error.requestId in the body. The platform's access log records this one, so QUOTE IT in a support ticket. Absent when the response never reached the API (network failures, gateway 429s).",
     },
     hint: {
       type: "string",
@@ -117,7 +123,7 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 | `METHOD_NOT_ALLOWED`        | 405    | The path exists, not with this method. Carries an `Allow` header.                                                                    |
 | `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                            |
 | `RATE_LIMITED`              | 429    | Throttled. The SDK's own name for it: a gateway 429 carries no `error.code`. Carries `retryAfterMs` when the response said so.       |
-| `SERVER_ERROR`              | 5xx    | A 5xx with no error envelope, so it came from the gateway rather than from the API. Retryable.                                       |
+| `SERVER_ERROR`              | 5xx    | An unhandled API failure (full envelope, with `requestId`), or a 5xx with no envelope at all from the gateway in front. Retryable.   |
 | `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                                |
 | `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                                |
 | `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                         |
@@ -237,13 +243,15 @@ logger.error(
     method: e.method,
     url: e.url,
     requestId: e.requestId,
+    serverRequestId: e.serverRequestId,
     details: e.details,
   },
   e.message,
 )
 ```
 
-`requestId` is the id the SDK generated and sent as `X-Request-ID`. The API does
-not currently return a request id in error bodies, so it correlates your logs
-with each other but not yet with the platform's. Adding one server-side is on
-the backlog.
+Two ids, two jobs. `requestId` is the id the SDK generated and sent as
+`X-Request-ID`; it correlates your own logs with each other.
+`serverRequestId` is the API's id for the same request, read from
+`error.requestId` in the body: the platform's access log records it, so it is
+the one to quote in a support ticket.

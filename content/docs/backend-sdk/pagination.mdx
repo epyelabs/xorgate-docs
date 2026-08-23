@@ -1,40 +1,38 @@
 ---
 title: "Pagination"
-description: "Three endpoints paginate and the rest return everything. One iterator convention covers both, so a future change is a no-op for your code."
+description: "Every list endpoint speaks one dialect and returns a page block. One iterator convention covers them all."
 ---
-
-The platform has two kinds of collection, and the SDK does not pretend
-otherwise.
 
 ## Which endpoints paginate
 
-Exactly three, and they share one dialect:
+Since the platform's API-productization release: **every list endpoint**, and
+they share one dialect. The paginated collections are devices, media sessions
+(and runs), telemetry readings, organizations, memberships, workspaces, device
+models and API keys.
 
-| SDK method                 | Endpoint                                                                                              | Page unit                            |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `xg.devices.list()`        | [`GET /devices`](/docs/api-reference/devices/list-devices)                                            | devices                              |
-| `xg.media.sessions.list()` | [`GET /devices/{id}/sessions`](/docs/api-reference/media-sessions/list-media-sessions)                | sessions, or runs under `listRuns()` |
-| `xg.telemetry.readings()`  | [`GET /devices/{id}/telemetry/readings`](/docs/api-reference/telemetry/get-device-telemetry-readings) | distinct timestamps                  |
+Two deliberate exceptions return their whole (small, bounded) collection with
+no `page` block: a device's video channels and a session's segments. Neither
+has an `iterate()`, which is the SDK's way of saying so.
 
-Everything else returns its whole collection with **no `page` block at all**:
-organizations, memberships, workspaces, device models, API keys, video channels and
-a session's segments.
-
-That is a property of the API, not a simplification here. Adding pagination to
-the unpaginated list endpoints is on the platform-readiness backlog, and the
-iterator below is designed so that change costs you nothing.
+<Callout title="Older SDK versions keep working">
+  Versions before 0.2.0 fetched the five newly paginated collections in one
+  request and did not send `limit`. The server's default page (100 rows) covers
+  every realistic tenant today, and the SDK tolerates a response with or
+  without a `page` block in both directions. Upgrade to 0.2.0 for
+  guaranteed-complete `listAll()` past 100 rows.
+</Callout>
 
 ## Three ways to read a collection
 
 Every collection, paginated or not, offers the same three:
 
 ```ts
-// 1. One page (or the whole thing, when the endpoint does not paginate).
+// 1. One page.
 const page = await xg.devices.list({ status: "online", limit: 50 })
 page.items // Device[]
 page.page // PageMeta
 
-const workspaces = await xg.workspaces.list() // Workspace[], no page block
+const workspaces = await xg.workspaces.list({ limit: 50 }) // Workspace[]
 
 // 2. Iterate. Fetches pages lazily as you consume them.
 for await (const device of xg.devices.iterate({ status: "online" })) {
@@ -45,21 +43,21 @@ for await (const device of xg.devices.iterate({ status: "online" })) {
 const all = await xg.devices.listAll({ status: "online" })
 ```
 
-The return type of `list()` differs between the two kinds, and that is
-deliberate:
+The return type of `list()` differs between the two shapes, for historical
+reasons that are now load-bearing:
 
-- Paginated: `Promise<Page<T>>`, an object with `items` and `page`.
-- Unpaginated: `Promise<T[]>`.
-
-TypeScript catches the difference at compile time, which is the point. Making
-both return `T[]` would let `await xg.devices.list()` quietly hand back the first
-100 of 4,000 devices, and that is a bug you find in production.
+- The original three (devices, sessions, readings): `Promise<Page<T>>`, an
+  object with `items` and `page`.
+- The five that gained pagination later (organizations, memberships,
+  workspaces, device models, API keys): still `Promise<T[]>` — one request's
+  items, up to `limit` (default 100). Changing their return type would have
+  broken every existing consumer for collections that rarely exceed a handful
+  of rows.
 
 <Callout title="iterate() is the portable choice">
-  `iterate()` and `listAll()` have identical signatures on both kinds. Code
-  written against them keeps working unchanged when the platform paginates the
-  remaining endpoints, because the SDK is the only thing that has to learn about
-  the new `page` block. Reach for `list()` when you genuinely want one page.
+  `iterate()` and `listAll()` have identical signatures on both shapes, walk
+  the server's `page` blocks, and are the guaranteed-complete forms. Reach for
+  `list()` when one page is genuinely what you want.
 </Callout>
 
 ## The list dialect
@@ -71,7 +69,7 @@ The paginated endpoints accept the same parameters.
     limit: {
       type: "number",
       description:
-        "Page size. Values above the endpoint maximum are silently CLAMPED, not rejected, so read page.limit back.",
+        "Page size. The maximum is 500 everywhere the shared dialect applies; a value above it is a 400, never a silent clamp.",
       default: "100",
     },
     offset: {
@@ -94,21 +92,19 @@ The paginated endpoints accept the same parameters.
   }}
 />
 
-Two exceptions worth knowing, because they behave the opposite way:
-
-- `xg.telemetry.readings()` **rejects** an out-of-range `limit` with a 400
-  instead of clamping it. Its maximum is 500.
-- `xg.telemetry.recent()` is not a paginated endpoint at all, but it takes a
-  `limit` that also rejects rather than clamps. Its maximum is 5000.
+One outlier: `xg.telemetry.recent()` is not a paginated endpoint, but it takes
+a `limit` with the same reject-not-clamp behaviour and a higher maximum, 5000.
 
 The SDK passes your value through and does not pre-clamp, so the platform's
-answer is the one you see.
+answer is the one you see. (Before API productization the paginated endpoints
+clamped silently; they now answer 400, so a too-large `pageSize` fails loudly
+instead of quietly shortening pages.)
 
 ## `PageMeta`
 
 ```ts
 interface PageMeta {
-  limit: number // the REQUEST value after clamping
+  limit: number // echoes the request
   offset: number
   order: "asc" | "desc"
   total: number // exact match count under the same filters
@@ -118,7 +114,6 @@ interface PageMeta {
 }
 ```
 
-`limit` and `offset` echo the request after clamping, not what you asked for.
 `total` is the exact count of matching rows under the same filters, on every
 endpoint except one.
 
@@ -171,11 +166,12 @@ are yielded. It is also the honest way to build a progress indicator, since
 `iterate()` and `listAll()` make one request per page, sequentially. They do not
 parallelize, because `offset` pagination over a table that is still being
 written gives inconsistent results when pages are fetched out of order, and
-because the platform has no rate limiting yet and a parallel fan-out is a good
-way to discover that.
+because the platform throttles at the gateway (a parallel fan-out is a good way
+to meet the 429).
 
 - Use `pageSize` to trade requests against payload size:
-  `xg.devices.iterate({ pageSize: 500 })`.
+  `xg.devices.iterate({ pageSize: 500 })`. Above 500 the platform answers a
+  400.
 - Pass a `signal` to stop early. Abandoning a `for await` loop with `break` also
   stops it: the iterator is lazy and issues no further requests.
 - `listAll()` holds the entire collection in memory. For device counts in the

@@ -9,9 +9,9 @@ not per organization, so it takes no tenancy header and every authenticated
 caller sees the same rows.
 
 ```ts
-list(): Promise<DeviceModel[]>
-listAll(): Promise<DeviceModel[]>
-iterate(options?): AsyncIterableIterator<DeviceModel>
+list(params?: ListDeviceModelsParams): Promise<DeviceModel[]>
+listAll(params?): Promise<DeviceModel[]>
+iterate(params?): AsyncIterableIterator<DeviceModel>
 get(id: string): Promise<DeviceModel>
 create(input, options?): Promise<DeviceModel>
 update(id, input, options?): Promise<DeviceModel>
@@ -22,9 +22,10 @@ Reads need only a valid credential. **Writes need the platform admin role**
 (`user.role === "admin"`), which is separate from every membership role: being an
 organization owner does not grant it.
 
-## `list()` and `get(id)`
+## `list(params?)` and `get(id)`
 
-Unpaginated.
+Paginated with the [shared list dialect](/docs/backend-sdk/pagination);
+`listAll()` is the guaranteed-complete form.
 
 ```ts
 const models = await xg.deviceModels.list()
