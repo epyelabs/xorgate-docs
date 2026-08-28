@@ -1,12 +1,12 @@
-import { Inter } from "next/font/google"
+import { Figtree } from "next/font/google"
 import type { Metadata } from "next"
 import { Provider } from "@/components/provider"
 import { appName, siteUrl } from "@/lib/shared"
 import "./global.css"
 
-const inter = Inter({
-  subsets: ["latin"],
-})
+// Same typeface as the landing site (xorgate-landing/app/layout.tsx), exposed
+// as --font-sans and picked up by global.css. Self-hosted at build time.
+const figtree = Figtree({ subsets: ["latin"], variable: "--font-sans" })
 
 export const metadata: Metadata = {
   // Absolute base for the generated OG images (`app/og/docs/**`).
@@ -18,7 +18,11 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={inter.className} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${figtree.variable} font-sans`}
+      suppressHydrationWarning
+    >
       <body className="flex min-h-screen flex-col">
         <Provider>{children}</Provider>
       </body>

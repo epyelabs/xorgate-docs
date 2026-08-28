@@ -118,7 +118,7 @@ auth={{ apiKey: process.env.XORGATE_API_KEY }}
 ```
 
 Sent as `Authorization: Bearer xg_…`, matching
-[the backend SDK](/docs/backend-sdk/authentication). Two warnings, both real:
+[the backend SDK](/backend-sdk/authentication). Two warnings, both real:
 
 <Callout type="warn" title="An API key in a browser bundle is a published key">
   This mode exists for React rendered on a server you control, or behind a proxy
@@ -132,8 +132,8 @@ Sent as `Authorization: Bearer xg_…`, matching
   title="Reach the live plane from your server, not from this mode"
 >
   An API key can obtain live credentials — that is what the [live-credentials
-  endpoint](/docs/api-reference/auth/create-live-credentials) is for — but doing
-  it from a browser means the key was in the browser, which is the problem above
+  endpoint](/api-reference/auth/create-live-credentials) is for — but doing it
+  from a browser means the key was in the browser, which is the problem above
   rather than a solution to it. Vend on your server and pass the result in
   through `getLiveCredentials`, or use `getSessionToken` and let the SDK vend
   for itself.
@@ -181,7 +181,7 @@ For a consumer whose own backend vends live credentials and whose browser
 therefore touches no xorgate endpoint at all. This is Project Alocate's shape:
 it manages its own users, talks to xorgate server-to-server with an API key, and
 its server calls
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 with the workspace that end user is allowed to see.
 
 Almost nobody needs it — `{ getSessionToken }` is the supported path and does the
@@ -327,7 +327,7 @@ scoping.
 Two things that used to be listed here are done. MQTT **connect** is scoped to
 the caller's own Cognito identity, so a browser can no longer connect as a
 device and displace it on the broker, nor collide with another user. And live
-access can be taken away: [`DELETE /live/access`](/docs/api-reference/live/revoke-live-access)
+access can be taken away: [`DELETE /live/access`](/api-reference/live/revoke-live-access)
 detaches the policy, and losing your last organization membership detaches it
 automatically.
 

@@ -9,7 +9,7 @@ CSS framework, no component library, no map library in particular. The map
 calls below are pseudocode for whichever one you use.
 
 The server half of the same application is the
-[backend SDK walkthrough](/docs/backend-sdk/asset-tracking-walkthrough).
+[backend SDK walkthrough](/backend-sdk/asset-tracking-walkthrough).
 
 <Callout type="warn" title="Pick your live plane before you start">
 
@@ -464,7 +464,7 @@ platform. Every threshold runs in your application, over data you polled or
 subscribed to. That is probably correct for the platform's scope, but it means
 an alert only fires while somebody has the page open. Real alerting belongs on
 your backend, over the
-[backend SDK](/docs/backend-sdk/asset-tracking-walkthrough).
+[backend SDK](/backend-sdk/asset-tracking-walkthrough).
 
 **Fleet-wide history.** There is no batch telemetry read, so "show me every
 asset's path yesterday" is one request per device. Keep the map to a bounded

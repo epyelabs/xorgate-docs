@@ -12,14 +12,14 @@ mTLS, MQTT v5, port 8883, with a clean session.
 All six are `xorgate/devices/{deviceId}/…`. The table is the contract; each row
 links to the page that specifies its payload.
 
-| Topic                                                              | Direction       | Retained             | QoS | Purpose                                                                                                                              |
-| ------------------------------------------------------------------ | --------------- | -------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| [`telemetry`](/docs/device-sdk/cloud-contract/telemetry)           | device to cloud | no                   | 0   | Sensor readings, media and recording status. 1 Hz by default. Published to the tenant-scoped topic once the device knows its tenant. |
-| [`status`](/docs/device-sdk/cloud-contract/status)                 | device to cloud | no                   | 0   | Connect and graceful-stop markers, plus the Last-Will.                                                                               |
-| [`config`](/docs/device-sdk/cloud-contract/configuration)          | cloud to device | **yes**              | 1   | The desired configuration document.                                                                                                  |
-| [`config/reported`](/docs/device-sdk/cloud-contract/configuration) | device to cloud | no                   | 1   | What the device actually holds, per namespace.                                                                                       |
-| [`command`](/docs/device-sdk/cloud-contract/commands)              | cloud to device | **no, deliberately** | 1   | One-shot imperatives.                                                                                                                |
-| [`command/response`](/docs/device-sdk/cloud-contract/commands)     | device to cloud | no                   | 1   | Acknowledgement for a command.                                                                                                       |
+| Topic                                                         | Direction       | Retained             | QoS | Purpose                                                                                                                              |
+| ------------------------------------------------------------- | --------------- | -------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| [`telemetry`](/device-sdk/cloud-contract/telemetry)           | device to cloud | no                   | 0   | Sensor readings, media and recording status. 1 Hz by default. Published to the tenant-scoped topic once the device knows its tenant. |
+| [`status`](/device-sdk/cloud-contract/status)                 | device to cloud | no                   | 0   | Connect and graceful-stop markers, plus the Last-Will.                                                                               |
+| [`config`](/device-sdk/cloud-contract/configuration)          | cloud to device | **yes**              | 1   | The desired configuration document.                                                                                                  |
+| [`config/reported`](/device-sdk/cloud-contract/configuration) | device to cloud | no                   | 1   | What the device actually holds, per namespace.                                                                                       |
+| [`command`](/device-sdk/cloud-contract/commands)              | cloud to device | **no, deliberately** | 1   | One-shot imperatives.                                                                                                                |
+| [`command/response`](/device-sdk/cloud-contract/commands)     | device to cloud | no                   | 1   | Acknowledgement for a command.                                                                                                       |
 
 The device subscribes to `config` and `command` at QoS 1. It publishes
 `telemetry` and `status` at QoS 0, and `config/reported` and `command/response`

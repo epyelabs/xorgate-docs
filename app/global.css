@@ -1,14 +1,116 @@
 @import "tailwindcss";
-@import "fumadocs-ui/css/neutral.css";
+/* Maps Fumadocs' --color-fd-* tokens onto the shadcn-style tokens below, so the
+   docs share one palette with xorgate-landing (app/global.css there). */
+@import "fumadocs-ui/css/shadcn.css";
 @import "fumadocs-ui/css/preset.css";
 /* Styles the generated API reference: method badges, schema tables, playground. */
 @import "fumadocs-openapi/css/preset.css";
 
+@theme inline {
+  /* Figtree, loaded by next/font in layout.tsx, which sets --font-sans on
+     <html>. Headings alias the same family: size and weight do the work. */
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-sans);
+  --color-shell: var(--shell);
+  --color-brand: var(--brand);
+  --color-brand-green: var(--brand-green);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-wash: var(--brand-wash);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+/* Tokens copied from xorgate-landing/app/global.css: warm cream shell, warm
+   white ground, pure white cards, and the one brand accent (#ff3a00). Keep the
+   two files in sync by hand; the landing file is the source of truth. */
+:root {
+  --shell: oklch(0.972 0.014 85);
+  --background: oklch(0.985 0.007 85);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  /* Fumadocs paints links, the active sidebar item and the TOC marker with
+     `primary`, so it carries the brand here (the AA-safe deepened orange). */
+  --primary: var(--brand-strong);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.945 0.012 85);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.945 0.012 85);
+  --muted-foreground: oklch(0.5 0.01 85);
+  --accent: oklch(0.945 0.012 85);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.902 0.014 85);
+  --input: oklch(0.902 0.014 85);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+  --brand: oklch(0.6641 0.2454 34.85);
+  --brand-strong: oklch(0.55 0.21 35);
+  --brand-wash: oklch(0.955 0.025 45);
+  --brand-green: #00ff3a;
+  --brand-blue: #0046ff;
+
+  /* Sidebar reads from the shell cream, like the landing navbar/footer. */
+  --sidebar: var(--shell);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-accent: oklch(0.93 0.016 85);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-ring: var(--ring);
+  --sidebar-primary-foreground: var(--primary-foreground);
+}
+
+.dark {
+  --shell: oklch(0.205 0 0);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: var(--brand-strong);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --brand: oklch(0.6641 0.2454 34.85);
+  --brand-strong: oklch(0.75 0.19 38);
+  --brand-wash: oklch(0.23 0.025 35);
+  --brand-blue: #6b93ff;
+
+  --sidebar: var(--shell);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-ring: var(--ring);
+  --sidebar-primary-foreground: var(--primary-foreground);
+}
+
 html {
   scrollbar-gutter: stable;
+  font-family: var(--font-sans);
 }
 
 html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Headings: tighter tracking, like the landing hero and section titles. */
+.prose :is(h1, h2, h3) {
+  letter-spacing: -0.02em;
 }

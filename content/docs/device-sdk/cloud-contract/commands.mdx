@@ -47,7 +47,7 @@ Non-retained plus a clean session means a command published while the device is
 offline is simply **dropped**. That is the correct semantics rather than a
 limitation: you only reboot a device that is online right now. If you want a
 device to do something when it next appears, that is desired state and belongs on
-the [config topic](/docs/device-sdk/cloud-contract/configuration).
+the [config topic](/device-sdk/cloud-contract/configuration).
 
 ## Two independent guards
 
@@ -146,5 +146,5 @@ Commands are not uniformly privileged at the API layer either. `reboot`,
 `power_off` and `update` require `owner` or `admin`; `refresh-state` is
 deliberately open to `member`, since it changes nothing. The full per-endpoint
 table is on
-[the resources page](/docs/backend-sdk/resources), verified against the handlers
+[the resources page](/backend-sdk/resources), verified against the handlers
 rather than the specification.

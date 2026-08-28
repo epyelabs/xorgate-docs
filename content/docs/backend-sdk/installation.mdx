@@ -137,15 +137,15 @@ than one organization and omits the header gets a hard
 would produce a client that works in development, where the test account has one
 organization, and fails in production the moment a second one exists.
 
-See [Tenancy model](/docs/getting-started/tenancy) for the full resolution order.
+See [Tenancy model](/getting-started/tenancy) for the full resolution order.
 
 ### The bootstrap problem
 
 Three operations do not need an active organization, and a brand-new user has
 none, so they cannot be reached through a client that requires one:
-[`GET /me`](/docs/api-reference/users/get-me),
-[`GET /organizations`](/docs/api-reference/organizations/list-organizations) and
-[`POST /organizations`](/docs/api-reference/organizations/create-organization).
+[`GET /me`](/api-reference/users/get-me),
+[`GET /organizations`](/api-reference/organizations/list-organizations) and
+[`POST /organizations`](/api-reference/organizations/create-organization).
 
 `createBootstrapClient` is the narrow client for exactly those three:
 

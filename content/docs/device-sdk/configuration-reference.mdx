@@ -14,7 +14,7 @@ take effect.
 | **Local settings**         | `settings.json`, directly                         | `xorgate set`, the `manage` UI, an editor         | live, and reported upstream |
 
 The bottom two layers write the same file. That is deliberate, and the
-[reported-config loop](/docs/device-sdk/cloud-contract/configuration#local-edits-flow-back)
+[reported-config loop](/device-sdk/cloud-contract/configuration#local-edits-flow-back)
 is what stops them from fighting.
 
 ## Layer 1: environment and flags
@@ -44,7 +44,7 @@ not need to be world readable.
 
 On a provisioned device these point at `/etc/xorgate/device.cert.pem`,
 `device.key.pem` and `root-ca.pem`. `CA_PATH` is Amazon Root CA 1 and validates
-**MQTT only**; see the [KVS CA gotcha](/docs/device-sdk/media).
+**MQTT only**; see the [KVS CA gotcha](/device-sdk/media).
 
 If any of the three cannot be read the agent throws at startup with an actionable
 message rather than spawning a worker that would crash-loop.
@@ -87,7 +87,7 @@ message rather than spawning a worker that would crash-loop.
 
 Six namespaces arrive on the retained `config` topic and are persisted into
 `settings.json`. Each is REPLACE, never merge. Full semantics are on
-[Configuration sync](/docs/device-sdk/cloud-contract/configuration).
+[Configuration sync](/device-sdk/cloud-contract/configuration).
 
 ### `gnssAntBias` (boolean)
 
@@ -151,7 +151,7 @@ a wrong APN can strand a device.
 
 ## Layer 3: local `xorgate set`
 
-The [CLI reference](/docs/device-sdk/cli#set) has the full key catalog. The
+The [CLI reference](/device-sdk/cli#set) has the full key catalog. The
 important property is what happens afterwards.
 
 **Local edits are detected and reported upstream.** A fingerprint watcher over

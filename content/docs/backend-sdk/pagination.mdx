@@ -17,9 +17,9 @@ has an `iterate()`, which is the SDK's way of saying so.
 <Callout title="Older SDK versions keep working">
   Versions before 0.2.0 fetched the five newly paginated collections in one
   request and did not send `limit`. The server's default page (100 rows) covers
-  every realistic tenant today, and the SDK tolerates a response with or
-  without a `page` block in both directions. Upgrade to 0.2.0 for
-  guaranteed-complete `listAll()` past 100 rows.
+  every realistic tenant today, and the SDK tolerates a response with or without
+  a `page` block in both directions. Upgrade to 0.2.0 for guaranteed-complete
+  `listAll()` past 100 rows.
 </Callout>
 
 ## Three ways to read a collection
@@ -55,8 +55,8 @@ reasons that are now load-bearing:
   of rows.
 
 <Callout title="iterate() is the portable choice">
-  `iterate()` and `listAll()` have identical signatures on both shapes, walk
-  the server's `page` blocks, and are the guaranteed-complete forms. Reach for
+  `iterate()` and `listAll()` have identical signatures on both shapes, walk the
+  server's `page` blocks, and are the guaranteed-complete forms. Reach for
   `list()` when one page is genuinely what you want.
 </Callout>
 
@@ -170,8 +170,7 @@ because the platform throttles at the gateway (a parallel fan-out is a good way
 to meet the 429).
 
 - Use `pageSize` to trade requests against payload size:
-  `xg.devices.iterate({ pageSize: 500 })`. Above 500 the platform answers a
-  400.
+  `xg.devices.iterate({ pageSize: 500 })`. Above 500 the platform answers a 400.
 - Pass a `signal` to stop early. Abandoning a `for await` loop with `break` also
   stops it: the iterator is lazy and issues no further requests.
 - `listAll()` holds the entire collection in memory. For device counts in the

@@ -29,7 +29,7 @@ layer wants and what the platform verifies.
 Live video and the 1 Hz MQTT feed are a separate plane and are not on this page:
 your backend vends credentials for them with
 `POST /auth/live-credentials` and your browser uses `@xorgate/react`. See
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+[What this SDK does not cover](/backend-sdk/not-covered).
 
 ## 0. One client per organization
 
@@ -115,7 +115,7 @@ await xg.devices.patchConfig(device.id, {
 
 The spread is not optional style. Each namespace is **replaced whole**, so
 omitting `telemetry` while writing `video` would delete the telemetry block. See
-[Devices](/docs/backend-sdk/resources/devices), where the same mistake against
+[Devices](/backend-sdk/resources/devices), where the same mistake against
 production is written up in full.
 
 `mergeConfig()` does the read and the spread for you, and is what you want for
@@ -413,7 +413,7 @@ try {
 The one that catches people: `CONFIG_PUBLISH_FAILED` is **not** a failed write.
 The config was saved and only delivery failed, so retrying bumps `configRev`
 again and makes the device look permanently behind. See
-[Errors](/docs/backend-sdk/errors).
+[Errors](/backend-sdk/errors).
 
 ## What this exercise found
 

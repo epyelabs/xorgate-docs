@@ -1,71 +1,41 @@
-import { getPageImageUrl, getPageMarkdownUrl, source } from "@/lib/source"
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
-} from "fumadocs-ui/layouts/docs/page"
-import { notFound } from "next/navigation"
-import { getMDXComponents } from "@/components/mdx"
 import type { Metadata } from "next"
-import { createRelativeLink } from "fumadocs-ui/mdx"
-import { gitConfig } from "@/lib/shared"
+import Link from "next/link"
+import { notFound } from "next/navigation"
+import { source } from "@/lib/source"
+import { ClientRedirect } from "@/components/client-redirect"
 
-export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
-  const params = await props.params
-  const page = source.getPage(params.slug)
+// Legacy URLs. The docs used to live under `/docs/**`; they are the site root
+// now. This is a static export, so there is no server redirect: each old path
+// is emitted as a page that forwards to the new one (meta refresh fires before
+// hydration, the client component fixes the history entry, and the link is the
+// no-JS fallback). Delete this route once nothing links to `/docs/` any more.
+export const metadata: Metadata = {
+  robots: { index: false, follow: true },
+}
+
+export default async function LegacyDocsPage(
+  props: PageProps<"/docs/[[...slug]]">
+) {
+  const { slug } = await props.params
+  const page = source.getPage(slug)
   if (!page) notFound()
 
-  const MDX = page.data.body
-  const markdownUrl = getPageMarkdownUrl(page).url
-
+  const target = page.url.replace(/\/?$/, "/")
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="mb-0">
-        {page.data.description}
-      </DocsDescription>
-      <div className="flex flex-row items-center gap-2 border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={
-            gitConfig
-              ? `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`
-              : undefined
-          }
-        />
-      </div>
-      <DocsBody>
-        <MDX
-          components={getMDXComponents({
-            // this allows you to link to other pages with relative file paths
-            a: createRelativeLink(source, page),
-          })}
-        />
-      </DocsBody>
-    </DocsPage>
+    <main className="flex flex-1 items-center justify-center p-8">
+      <meta httpEquiv="refresh" content={`0;url=${target}`} />
+      <ClientRedirect href={target} />
+      <p className="text-sm text-fd-muted-foreground">
+        This page moved to{" "}
+        <Link href={target} className="text-fd-primary underline">
+          {target}
+        </Link>
+        .
+      </p>
+    </main>
   )
 }
 
 export async function generateStaticParams() {
   return source.generateParams()
-}
-
-export async function generateMetadata(
-  props: PageProps<"/docs/[[...slug]]">
-): Promise<Metadata> {
-  const params = await props.params
-  const page = source.getPage(params.slug)
-  if (!page) notFound()
-
-  return {
-    title: page.data.title,
-    description: page.data.description,
-    openGraph: {
-      images: getPageImageUrl(page).url,
-    },
-  }
 }

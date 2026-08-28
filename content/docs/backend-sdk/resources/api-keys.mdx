@@ -16,7 +16,7 @@ delete(id: string): Promise<void>
   (default `member`). It cannot reach the four person-scoped operations and
   cannot write the device-model catalog, but it CAN vend live-plane credentials
   for a workspace. `scope` is validated on write and still never enforced. See
-  [Authentication](/docs/backend-sdk/authentication).
+  [Authentication](/backend-sdk/authentication).
 </Callout>
 
 ## `create(input)`
@@ -61,7 +61,7 @@ Owner or admin.
 ## `list(params?)`
 
 Newest first by default, metadata only; the hashed key is never returned.
-Paginated with the [shared list dialect](/docs/backend-sdk/pagination);
+Paginated with the [shared list dialect](/backend-sdk/pagination);
 `listAll()` is the guaranteed-complete form.
 
 ```ts
@@ -113,12 +113,12 @@ raw `curl`.
 
 The envelope keys mirror their Postgres table name. They stay that way on the
 wire deliberately, and the
-[API reference](/docs/api-reference/api-keys) documents them truthfully. The SDK
+[API reference](/api-reference/api-keys) documents them truthfully. The SDK
 is the layer that translates, so a database naming detail does not reach your
 code. `device_model` / `device_models` is the same story, on
-[Device models](/docs/backend-sdk/resources/device-models).
+[Device models](/backend-sdk/resources/device-models).
 
 Everything **inside** those envelopes is already camelCase on the wire. Only the
 envelope keys differ.
 
-Maps to the [API Keys endpoints](/docs/api-reference/api-keys).
+Maps to the [API Keys endpoints](/api-reference/api-keys).

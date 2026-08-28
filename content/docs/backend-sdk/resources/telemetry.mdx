@@ -5,7 +5,7 @@ description: "Four read shapes over stored telemetry: a time range, the latest p
 
 Devices publish telemetry at 1 Hz. This module reads what was stored. The live
 MQTT feed is a different plane and is not part of this SDK; see
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+[What this SDK does not cover](/backend-sdk/not-covered).
 
 Every metric is named `group.field`. That naming is the interop contract across
 the whole platform: live MQTT, these endpoints, and replayed telemetry all use
@@ -250,4 +250,4 @@ metrics the model forgot to declare:
 const seen = (await xg.telemetry.latest(deviceId)).map((r) => r.metric)
 ```
 
-Maps to the [Telemetry endpoints](/docs/api-reference/telemetry).
+Maps to the [Telemetry endpoints](/api-reference/telemetry).

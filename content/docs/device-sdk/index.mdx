@@ -15,8 +15,8 @@ agent's own README and its code disagreed, the code won.
 <Callout title="No new capabilities">
   This section describes what exists, including its limits. The collector set,
   the topic layout and the command set are all closed today.
-  [Extending](/docs/device-sdk/extending) covers what is genuinely pluggable and
-  what is not.
+  [Extending](/device-sdk/extending) covers what is genuinely pluggable and what
+  is not.
 </Callout>
 
 ## The two components
@@ -83,11 +83,11 @@ Verified on a provisioned Pi rather than transcribed from the installer.
 | ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `agent.pid`        | CLI manager or the worker                                       | JSON pid record (pid, `startedAt`, `deviceId`, `mode`, launch argv). Carries enough to detect a recycled pid via process start time.                                                                                                                         |
 | `state.json`       | worker, every tick (throttled)                                  | Atomic snapshot: connection state, counters, and the whole last telemetry payload under `latest`. This is what `xorgate status` and the `manage` UI read.                                                                                                    |
-| `settings.json`    | `xorgate set`, the `manage` UI, and the retained config applier | The persisted settings the agent actually holds. See the [configuration reference](/docs/device-sdk/configuration-reference).                                                                                                                                |
+| `settings.json`    | `xorgate set`, the `manage` UI, and the retained config applier | The persisted settings the agent actually holds. See the [configuration reference](/device-sdk/configuration-reference).                                                                                                                                     |
 | `commands.json`    | worker                                                          | The replay ledger of executed command `requestId`s. On disk precisely because the command it guards reboots the process.                                                                                                                                     |
 | `config-sync.json` | worker                                                          | Reported-config bookkeeping: `lastAppliedRev`, the settings hash, and the namespace baseline the cloud is believed to know. Deliberately its own file, because `loadSettings()` is an allowlist rewriter that would destroy unknown keys in `settings.json`. |
 | `agent.log`        | dev daemon only                                                 | Append-only worker stdout/stderr. Under systemd the worker's output goes to the journal instead, so `xorgate logs` has nothing to read.                                                                                                                      |
-| `recordings/`      | recording manager                                               | The segment tree plus `counters.json`. See [On-device recording](/docs/device-sdk/recording).                                                                                                                                                                |
+| `recordings/`      | recording manager                                               | The segment tree plus `counters.json`. See [On-device recording](/device-sdk/recording).                                                                                                                                                                     |
 | `shm/`             | video capture                                                   | Shared-memory sockets for the camera bridge.                                                                                                                                                                                                                 |
 
 A provisioned device also accumulates `gnss-sky.json` (the GNSS sky-view
@@ -117,22 +117,22 @@ a bare checkout.
 <Cards>
   <Card
     title="Install and provisioning"
-    href="/docs/device-sdk/installation"
+    href="/device-sdk/installation"
     description="The zero-touch claim flow, the stable serial, and the dev path."
   />
   <Card
     title="Cloud contract"
-    href="/docs/device-sdk/cloud-contract"
+    href="/device-sdk/cloud-contract"
     description="The six MQTT topics, their payloads, and the identity chain that scopes them."
   />
   <Card
     title="CLI reference"
-    href="/docs/device-sdk/cli"
+    href="/device-sdk/cli"
     description="All eleven commands, with real output."
   />
   <Card
     title="Extending the agent"
-    href="/docs/device-sdk/extending"
+    href="/device-sdk/extending"
     description="What is pluggable (pipelines) and what needs a source change."
   />
 </Cards>

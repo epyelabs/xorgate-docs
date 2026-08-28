@@ -10,42 +10,42 @@ needs, and a runnable example.
 <Cards>
   <Card
     title="Users and organizations"
-    href="/docs/backend-sdk/resources/users-and-organizations"
+    href="/backend-sdk/resources/users-and-organizations"
     description="me(), organizations, memberships, search()."
   />
   <Card
     title="Workspaces"
-    href="/docs/backend-sdk/resources/workspaces"
+    href="/backend-sdk/resources/workspaces"
     description="The unit devices belong to. Full CRUD."
   />
   <Card
     title="API keys"
-    href="/docs/backend-sdk/resources/api-keys"
+    href="/backend-sdk/resources/api-keys"
     description="Mint, list and delete. The snake_case envelope lives here."
   />
   <Card
     title="Device models"
-    href="/docs/backend-sdk/resources/device-models"
+    href="/backend-sdk/resources/device-models"
     description="The platform catalog, and the ioCapabilities validation that matters."
   />
   <Card
     title="Devices"
-    href="/docs/backend-sdk/resources/devices"
+    href="/backend-sdk/resources/devices"
     description="CRUD, config, commands, provisioning, identity."
   />
   <Card
     title="Device registrations"
-    href="/docs/backend-sdk/resources/device-registrations"
+    href="/backend-sdk/resources/device-registrations"
     description="The onboarding code flow, and waiting for a claim."
   />
   <Card
     title="Media"
-    href="/docs/backend-sdk/resources/media"
+    href="/backend-sdk/resources/media"
     description="Sessions, runs, segments, playback URLs, replay manifests."
   />
   <Card
     title="Telemetry"
-    href="/docs/backend-sdk/resources/telemetry"
+    href="/backend-sdk/resources/telemetry"
     description="History, latest, recent, and the paginated readings table."
   />
 </Cards>
@@ -131,7 +131,7 @@ decided on the token's prefix and are safe to branch on.
 | `xg.telemetry.readingsFlat(deviceId, p)`    | the same, `shape=flat`                            | read           |
 
 Collections additionally carry `iterate()` and `listAll()`; see
-[Pagination](/docs/backend-sdk/pagination). Two collections deliberately do not,
+[Pagination](/backend-sdk/pagination). Two collections deliberately do not,
 because the platform commits to returning them whole: a session's segments and a
 device's video channels.
 
@@ -141,7 +141,7 @@ device's video channels.
 on the **caller's own** Cognito identity, granting and revoking a browser's
 ability to subscribe to live telemetry, which makes them meaningless from a
 server. They belong to the frontend SDK. See
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+[What this SDK does not cover](/backend-sdk/not-covered).
 
 `POST /device-registrations/{code}/claim` and `GET /get/{code}` have no SDK
 method either. They are the install script's private contract, called on the

@@ -58,7 +58,7 @@ tracked platform work.
 Connecting is scoped either way, and revocation exists: a connection is limited
 to the caller's own identity, so a browser can neither impersonate a device on
 the broker nor collide with another user, and
-[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) plus the
+[`DELETE /live/access`](/api-reference/live/revoke-live-access) plus the
 membership-removal path withdraw the grant.
 
 </Callout>
@@ -115,7 +115,7 @@ implementation detail:
   The backend's ingest schema does not declare the field, so it is stripped
   before anything is persisted. A consumer polling REST cannot discover that a
   device is refusing to stream. The device side is documented under
-  [telemetry](/docs/device-sdk/cloud-contract/telemetry).
+  [telemetry](/device-sdk/cloud-contract/telemetry).
 </Callout>
 
 ## Choosing

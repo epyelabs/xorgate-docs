@@ -21,7 +21,7 @@ string to parse. An empty array means the device is not provisioned yet, which i
 `200` rather than a `404`.
 
 From there the client obtains scoped credentials from
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 and joins those channels as a viewer while the device publishes. Getting that
 lifecycle right (signaling, ICE, credential refresh, reconnection) is real work,
 and it is what the Frontend SDK will package.
@@ -35,7 +35,7 @@ subscribe to `xorgate/devices/{deviceId}/telemetry`. It is idempotent, so callin
 it on every page load is fine and is the normal pattern.
 
 A third-party integration uses
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 instead: it needs no Cognito identity, accepts any of the three credentials, and
 comes back scoped to the calling credential's organization or workspace.
 
@@ -45,13 +45,13 @@ something random after the identity id: one identity holds several concurrent
 connections, and two browser tabs of the same user resolve to the same identity
 id.
 
-[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) is the
+[`DELETE /live/access`](/api-reference/live/revoke-live-access) is the
 counterpart. It withdraws the authorization from the caller's identity, and
 removing someone's last organization membership does the same thing
 automatically.
 
 The payload on that topic uses the same `group.field` metric names as the
-[stored telemetry](/docs/api-reference/telemetry) endpoints, which is what lets
+[stored telemetry](/api-reference/telemetry) endpoints, which is what lets
 a chart seeded from `/telemetry/recent` append live samples without translating
 anything.
 

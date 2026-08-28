@@ -324,7 +324,7 @@ function Chart({ deviceId }: { deviceId: string }) {
 list. One drive with two cameras is two sessions and one run, and the clustering
 happens server-side, so pages are even and no run straddles a page boundary.
 Each run carries `fromTs` and `toTs`, which is exactly the window
-[`useReplayManifest`](/docs/frontend-sdk/replay) wants.
+[`useReplayManifest`](/frontend-sdk/replay) wants.
 
 <Callout title="This endpoint is the slow one">
   `GET /devices/{id}/sessions` measures around 1,090 ms warm against the
@@ -336,7 +336,7 @@ Each run carries `fromTs` and `toTs`, which is exactly the window
 
 Everything thrown or reported is a `XorgateError` from `@xorgate/sdk`, including
 client-side failures, so one check covers the lot. The
-[backend SDK's error page](/docs/backend-sdk/errors) has the full code table.
+[backend SDK's error page](/backend-sdk/errors) has the full code table.
 
 ```tsx
 const { error } = useDevices()

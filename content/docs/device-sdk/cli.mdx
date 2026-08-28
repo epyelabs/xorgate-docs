@@ -169,7 +169,7 @@ xorgate pipeline <list|show|set|clear|bridge|direct> [streamKey] [file]
 Six subcommands, not four. `bridge` rewrites a stream's `.gst` into a `shmsrc`
 consumer for the recording camera bridge, backing up the direct pipeline to
 `<streamKey>.gst.direct`; `direct` restores it. Both are covered on
-[On-device recording](/docs/device-sdk/recording#the-camera-bridge).
+[On-device recording](/device-sdk/recording#the-camera-bridge).
 
 ```bash
 xorgate pipeline list
@@ -212,7 +212,7 @@ prefixed so a failing LED can never stop the agent.
 The driver needs no root: `pinctrl` does not require it, and adding `sudo` is a
 mistake. Off a Pi, or with a pin held by another driver, it goes inert and
 everything else stays healthy.
-[The LED ladder](/docs/device-sdk/hardware#rgb-status-led) and the audio overlay
+[The LED ladder](/device-sdk/hardware#rgb-status-led) and the audio overlay
 conflict are in the hardware notes.
 
 ## Agent flags
@@ -231,4 +231,4 @@ Only `--offline` is a boolean flag. Every other flag consumes the next token as
 its value even when that token starts with `--`, so a typo like
 `--rate --mode sim` surfaces as an invalid value rather than silently falling
 back to a default. The full environment and flag table is in the
-[configuration reference](/docs/device-sdk/configuration-reference).
+[configuration reference](/device-sdk/configuration-reference).

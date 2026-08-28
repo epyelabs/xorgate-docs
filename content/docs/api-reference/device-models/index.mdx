@@ -8,7 +8,7 @@ A device model describes a hardware configuration: a name, a SKU, and an
 is PLATFORM-wide rather than per organization. These endpoints take no
 `X-Organization-Id` header, every authenticated caller sees the same rows, and
 writes require the platform-admin role (`user.role === "admin"` from
-[`GET /me`](/docs/api-reference/users/get-me)), which is separate from any
+[`GET /me`](/api-reference/users/get-me)), which is separate from any
 membership role.
 
 `ioCapabilities` is the field that matters. It is a structured JSON document
@@ -16,7 +16,7 @@ membership role.
 drives two things elsewhere in the platform. Its declared video and audio stream
 keys (`cam0`, `cam1`, `audio0`) become the video channels created when a
 device is provisioned, and its declared sensors become the default column set of
-the [telemetry history table](/docs/api-reference/telemetry/get-device-telemetry-readings).
+the [telemetry history table](/api-reference/telemetry/get-device-telemetry-readings).
 A model that declares nothing usable is not an error, but devices built from it
 fall back to discovering columns from whatever data a page happens to contain.
 
@@ -24,11 +24,11 @@ fall back to discovering columns from whatever data a page happens to contain.
   `POST` and `PUT` accept any JSON object here. The schema shown on those pages
   is generated from the same definition the provisioning code parses with, but
   that parse happens later, when the device is
-  [provisioned](/docs/api-reference/devices/provision-device), and it is
-  forgiving in the worst way: a document that fails it yields no video stream
-  keys, so the device is provisioned with ZERO video channels and live video
-  simply never works, with no error anywhere along the way. Validate the
-  document against the schema yourself before writing it.
+  [provisioned](/api-reference/devices/provision-device), and it is forgiving in
+  the worst way: a document that fails it yields no video stream keys, so the
+  device is provisioned with ZERO video channels and live video simply never
+  works, with no error anywhere along the way. Validate the document against the
+  schema yourself before writing it.
 </Callout>
 
 Two more consequences worth planning around. Editing `ioCapabilities` does not
@@ -39,4 +39,4 @@ to have a small, curated catalog rather than a large one.
 
 The envelope keys are `device_models` and `device_model` in snake_case, mirroring
 the table name, with camelCase contents. See
-[the reference overview](/docs/api-reference) for why that stays.
+[the reference overview](/api-reference) for why that stays.

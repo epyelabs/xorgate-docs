@@ -14,7 +14,7 @@ cloud, not by the device.**
 | `xorgate/devices/{deviceId}/telemetry`                                        | before that, and if the tenant is ever unknown           |
 
 The tenant arrives in the `scope` field of the retained configuration message
-(see [Configuration](/docs/device-sdk/cloud-contract/configuration)), so a
+(see [Configuration](/device-sdk/cloud-contract/configuration)), so a
 device already in the field moves across without being re-provisioned: it
 switches on the next delivery, which is within a second of any reconnect.
 
@@ -88,8 +88,8 @@ flattens leaves into a numeric readings table. `gps.sky_state` and
 
 Metric names follow the platform's `group.field` contract, so
 `metrics.gps.speed` becomes the metric name `gps.speed`. This is the same
-`MetricName` type the [backend](/docs/backend-sdk/types) and
-[frontend](/docs/frontend-sdk/types) SDKs use, and the same key you get back from
+`MetricName` type the [backend](/backend-sdk/types) and
+[frontend](/frontend-sdk/types) SDKs use, and the same key you get back from
 `GET /devices/{id}/telemetry/latest`. There is one vocabulary, not two.
 
 The catalog below is what the collectors emit today. Fields marked conditional

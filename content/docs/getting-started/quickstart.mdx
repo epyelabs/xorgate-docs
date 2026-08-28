@@ -21,7 +21,7 @@ WS="<the workspace the device belongs in>"
 
 You need an organization and at least one workspace. Create them with
 `POST /organizations` and `POST /workspaces` if you do not have them yet, and see
-[Authentication](/docs/getting-started/authentication) for how to obtain a token.
+[Authentication](/getting-started/authentication) for how to obtain a token.
 
 </Callout>
 
@@ -170,9 +170,9 @@ agent is running and has connectivity.
   `/telemetry/recent` for the newest N samples, `/telemetry/readings` for raw
   paginated rows.
 - **Live telemetry.** Subscribe over MQTT rather than polling. See
-  [Authentication](/docs/getting-started/authentication) for how the browser gets
+  [Authentication](/getting-started/authentication) for how the browser gets
   credentials.
 - **Video.** `GET /devices/{id}/video-channels` for the live WebRTC channel, or
   `GET /devices/{id}/sessions` and `/replay-manifest` for what the device
   recorded.
-- **Everything else.** The [API reference](/docs/api-reference).
+- **Everything else.** The [API reference](/api-reference).

@@ -20,7 +20,7 @@ delete(id: string): Promise<void>
 ## `list(params?)`
 
 Every workspace in the active organization. Paginated with the
-[shared list dialect](/docs/backend-sdk/pagination); `listAll()` is the
+[shared list dialect](/backend-sdk/pagination); `listAll()` is the
 guaranteed-complete form.
 
 ```ts
@@ -100,4 +100,4 @@ so it is unaffected by the client default. That asymmetry is the API's, and the
 SDK keeps it visible rather than papering over it: the body field is required and
 typed.
 
-Maps to the [Workspaces endpoints](/docs/api-reference/workspaces).
+Maps to the [Workspaces endpoints](/api-reference/workspaces).

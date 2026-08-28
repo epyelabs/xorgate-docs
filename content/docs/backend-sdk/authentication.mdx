@@ -25,7 +25,7 @@ const xg = createClient({
 ```
 
 A key is a long-lived, organization-scoped credential minted with
-[`POST /api-keys`](/docs/api-reference/api-keys/create-api-key) and returned
+[`POST /api-keys`](/api-reference/api-keys/create-api-key) and returned
 exactly once. This is the right shape for a backend: no interactive login, no
 refresh cycle, no token expiry to schedule around.
 
@@ -62,7 +62,7 @@ silent.
 Live telemetry and live video are streaming protocols the client speaks
 directly, so they are entered with a signed connection rather than with a bearer
 token.
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 is what signs it, and your key may call it. Pass the target `workspaceId` and
 you get credentials confined to that one customer: they receive its devices'
 telemetry, they can view its devices' video, and a sibling workspace's device is
@@ -109,12 +109,12 @@ Three properties make this safe to hand out where a key would not be:
   and `403 WORKSPACE_SCOPED` on organization-wide operations at any role.
 
 Deleting the key with
-[`DELETE /api-keys/{id}`](/docs/api-reference/api-keys/delete-api-key) destroys
+[`DELETE /api-keys/{id}`](/api-reference/api-keys/delete-api-key) destroys
 every token it minted, immediately. That is the emergency stop; there is no
 per-token revoke.
 
 Full request and response shape:
-[Auth](/docs/api-reference/auth).
+[Auth](/api-reference/auth).
 
 <Callout title="A session token is a client credential, not a second backend one">
   Do not authenticate your own backend with a token it minted. It buys nothing
@@ -189,7 +189,7 @@ The usual rules, listed because SDK examples get copied.
   workspace**, and it is the only xorgate credential that belongs in a browser
   or a mobile binary. Rotation is manual and overlapping: mint the
   new key, deploy it, then delete the old one with
-  [`DELETE /api-keys/{id}`](/docs/api-reference/api-keys/delete-api-key).
+  [`DELETE /api-keys/{id}`](/api-reference/api-keys/delete-api-key).
   Expiry is opt-in per key, so set one on anything long-lived.
 - `XorgateError` never includes the credential in its `message` or `url`.
 
@@ -201,4 +201,4 @@ identity pool, which requires a Cognito identity that neither an API key nor a
 session token has. The `live` block on a minted token carries the coordinates
 (region and realtime endpoint) so a client never hardcodes them, but the
 credential that opens a stream is separate work. See
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+[What this SDK does not cover](/backend-sdk/not-covered).

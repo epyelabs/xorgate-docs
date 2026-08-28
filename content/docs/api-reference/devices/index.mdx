@@ -47,7 +47,7 @@ that is never delivered to the device and never bumps `configRev`.
 video channels, and returns the certificate and private key exactly
 once. Nothing is stored server-side, there is no rotation yet, and a second call
 is a `409`. For onboarding real hardware you usually do not call this directly;
-the [registration code flow](/docs/api-reference/device-registrations) does it
+the [registration code flow](/api-reference/device-registrations) does it
 for you.
 
 `GET /devices/{id}/identity` reads back the non-secret half of that: thing name,
@@ -69,6 +69,6 @@ typically within about 45 seconds and rate-limited to roughly one per 30
 seconds. `update` is the one to be careful with: the agent restarts mid-update,
 so no acknowledgement can be trusted. Poll `GET /devices/{id}` until
 `agentVersion` changes, and compare it against
-[`GET /device-dist/latest`](/docs/api-reference/devices/get-latest-agent-build)
+[`GET /device-dist/latest`](/api-reference/devices/get-latest-agent-build)
 by string equality only. An unchanged build after the device comes back online
 means the install failed and rolled back.

@@ -53,7 +53,7 @@ partial-capability kit validates: a telemetry-only tracker with no cameras simpl
 omits `media`.
 
 Each declared leaf names a metric under the corresponding
-[`group.field`](/docs/platform-concepts/metrics) namespace. So
+[`group.field`](/platform-concepts/metrics) namespace. So
 `sensors.imu.accel: ["x","y","z"]` declares `imu.accel_x`, `imu.accel_y` and
 `imu.accel_z`. `sensors.imu.axes` is a legacy alias for `accel`, retained for
 older accel-only models.
@@ -73,7 +73,7 @@ The canonical media stream keys are `cam0`, `cam1` and `audio0`.
 Notably absent from that list: **what the device actually collects.** The agent's
 worker instantiates its collectors from a hardcoded set rather than from the
 model, relying on each collector self-gating on whether its hardware is present.
-See [the device SDK](/docs/device-sdk/extending#the-enabled-capability-set-is-hardcoded).
+See [the device SDK](/device-sdk/extending#the-enabled-capability-set-is-hardcoded).
 
 ## Two places it is not enforced
 

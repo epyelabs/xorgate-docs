@@ -12,7 +12,7 @@ me(): Promise<Me>
 The bootstrap call. Resolves the credential to a user, creating the row on first
 sight, and returns every organization the caller belongs to. It is the only
 org-aware endpoint that never needs the tenancy header, which is why it is also
-available on the [bootstrap client](/docs/backend-sdk/installation).
+available on the [bootstrap client](/backend-sdk/installation).
 
 ```ts
 const { user, memberships, organizations } = await xg.me()
@@ -33,7 +33,7 @@ anything org-scoped.
   Postgres. The SDK normalizes them, like the other snake_case outliers.
 </Callout>
 
-Maps to [`GET /me`](/docs/api-reference/users/get-me).
+Maps to [`GET /me`](/api-reference/users/get-me).
 
 ## `xg.organizations`
 
@@ -53,7 +53,7 @@ delete(id: string): Promise<void>
 ### `list(params?)`
 
 Every organization the caller is a member of. Paginated with the
-[shared list dialect](/docs/backend-sdk/pagination); a user belongs to a
+[shared list dialect](/backend-sdk/pagination); a user belongs to a
 handful at most, so one default page is effectively all of them, and
 `listAll()` is the guaranteed-complete form.
 
@@ -97,7 +97,7 @@ Cascades to workspaces, devices, API keys and memberships. There is no undo and
 no soft delete. Owner only.
 
 Maps to the
-[Organizations endpoints](/docs/api-reference/organizations).
+[Organizations endpoints](/api-reference/organizations).
 
 ## `xg.memberships`
 
@@ -114,7 +114,7 @@ remove(membershipId: string): Promise<void>
 
 The roster for the active organization, each row enriched with its member's
 `user` so a UI renders names and emails without a second round trip. Paginated
-with the [shared list dialect](/docs/backend-sdk/pagination); the default order
+with the [shared list dialect](/backend-sdk/pagination); the default order
 is **ascending by join date**, the one list whose default is not `desc`.
 `list()` returns one request's worth (up to `limit`, default 100);
 `listAll()` is the guaranteed-complete form.
@@ -179,7 +179,7 @@ Setting the role a member already has is a no-op `200`.
 Takes the **membership** id, not the user id. Removing the last remaining owner
 is refused with a `403`, so an organization can never be left ownerless.
 
-Maps to the [Memberships endpoints](/docs/api-reference/memberships).
+Maps to the [Memberships endpoints](/api-reference/memberships).
 
 ## `xg.search(q)`
 
@@ -209,4 +209,4 @@ endpoint returns those, and the SDK does not filter them out, but their resource
 are not part of this SDK's surface. Treat any hit that is not a `device` as
 something you cannot follow.
 
-Maps to [`GET /search`](/docs/api-reference/search/search).
+Maps to [`GET /search`](/api-reference/search/search).

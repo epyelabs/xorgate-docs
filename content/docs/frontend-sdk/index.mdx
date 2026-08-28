@@ -4,7 +4,7 @@ description: "@xorgate/react, the headless browser SDK for live video, live tele
 ---
 
 `@xorgate/react` is the browser half of the xorgate SDK. It wraps
-[`@xorgate/sdk`](/docs/backend-sdk) for everything REST, and adds the two planes
+[`@xorgate/sdk`](/backend-sdk) for everything REST, and adds the two planes
 that never go through the REST API at all: live telemetry over MQTT and live
 video over WebRTC, plus the recorded-media replay player.
 
@@ -55,47 +55,47 @@ function Fleet() {
 <Cards>
   <Card
     title="Installation"
-    href="/docs/frontend-sdk/installation"
+    href="/frontend-sdk/installation"
     description="Peer dependencies, bundle weight, and what is browser-only."
   />
   <Card
     title="Provider and auth"
-    href="/docs/frontend-sdk/provider"
+    href="/frontend-sdk/provider"
     description="Config, the three auth modes, and the three credential flows."
   />
   <Card
     title="Data hooks"
-    href="/docs/frontend-sdk/data-hooks"
+    href="/frontend-sdk/data-hooks"
     description="Devices, telemetry latest and history, and the query contract."
   />
   <Card
     title="Live telemetry"
-    href="/docs/frontend-sdk/live-telemetry"
+    href="/frontend-sdk/live-telemetry"
     description="useLiveTelemetry, the payload, socket sharing, and QoS 0."
   />
   <Card
     title="Live video"
-    href="/docs/frontend-sdk/live-video"
+    href="/frontend-sdk/live-video"
     description="useLiveVideo, LiveVideo, and the live-block gate."
   />
   <Card
     title="Replay"
-    href="/docs/frontend-sdk/replay"
+    href="/frontend-sdk/replay"
     description="The manifest, the clock, lanes, and the headless MSE player."
   />
   <Card
     title="Types"
-    href="/docs/frontend-sdk/types"
+    href="/frontend-sdk/types"
     description="What is re-exported, what is new, and the two timestamp units."
   />
   <Card
     title="What this SDK does not cover"
-    href="/docs/frontend-sdk/not-covered"
+    href="/frontend-sdk/not-covered"
     description="React Native, server rendering, and the org-blind live plane."
   />
   <Card
     title="Walkthrough: live asset map"
-    href="/docs/frontend-sdk/asset-map-walkthrough"
+    href="/frontend-sdk/asset-map-walkthrough"
     description="A fleet map and an incident replay, with no styling framework."
   />
 </Cards>

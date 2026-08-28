@@ -13,7 +13,7 @@ there".
 ```
 
 Four fields, no variants. `ts` is epoch milliseconds in the device's clock
-domain, with the [usual caveat](/docs/device-sdk/cloud-contract#clocks).
+domain, with the [usual caveat](/device-sdk/cloud-contract#clocks).
 
 ## Three ways it gets published
 
@@ -98,4 +98,4 @@ The topic is inside the device's own subtree, so the device policy grants it
 without any extra configuration. A browser reaches it through the same
 `POST /live/access` path as telemetry, and inherits the same org-blind
 subscribe caveat described on
-[the overview](/docs/device-sdk/cloud-contract#the-identity-chain).
+[the overview](/device-sdk/cloud-contract#the-identity-chain).

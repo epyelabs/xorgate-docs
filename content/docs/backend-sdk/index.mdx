@@ -41,42 +41,42 @@ console.log(page.items.length, "of", page.page.total, "online")
 <Cards>
   <Card
     title="Installation and setup"
-    href="/docs/backend-sdk/installation"
+    href="/backend-sdk/installation"
     description="createClient options, derived clients, and the request escape hatch."
   />
   <Card
     title="Authentication"
-    href="/docs/backend-sdk/authentication"
+    href="/backend-sdk/authentication"
     description="API keys (the target) and Cognito ID tokens (what works today)."
   />
   <Card
     title="Pagination"
-    href="/docs/backend-sdk/pagination"
+    href="/backend-sdk/pagination"
     description="Three endpoints paginate and the rest do not. One iterator covers both."
   />
   <Card
     title="Errors"
-    href="/docs/backend-sdk/errors"
+    href="/backend-sdk/errors"
     description="XorgateError, the code table, and what is safe to retry."
   />
   <Card
     title="Resources"
-    href="/docs/backend-sdk/resources"
+    href="/backend-sdk/resources"
     description="Every method: signature, parameters, return type, example."
   />
   <Card
     title="Types"
-    href="/docs/backend-sdk/types"
+    href="/backend-sdk/types"
     description="The shared vocabulary, including the group.field metric contract."
   />
   <Card
     title="What this SDK does not cover"
-    href="/docs/backend-sdk/not-covered"
+    href="/backend-sdk/not-covered"
     description="Live video, live telemetry, workflows, and the platform gaps."
   />
   <Card
     title="Walkthrough: asset tracking"
-    href="/docs/backend-sdk/asset-tracking-walkthrough"
+    href="/backend-sdk/asset-tracking-walkthrough"
     description="End to end, from a workspace to an incident replay."
   />
 </Cards>
@@ -95,7 +95,7 @@ raw HTTP.
 
 **One exception: casing.** The two snake_case envelopes mirror Postgres table
 names and stay on the wire deliberately (see the
-[API reference overview](/docs/api-reference)). Presenting them unchanged would
+[API reference overview](/api-reference)). Presenting them unchanged would
 push a database naming detail into every consumer, so this is the one place the
 SDK translates.
 

@@ -167,18 +167,18 @@ Each channel resolves its GStreamer pipeline in this order:
 So `cam0.gst` and `cam1.gst` drive the two masters with their own
 `libcamerasrc camera-name=…`. This is the supported way to change what a device
 streams, and it is covered in full under
-[GStreamer pipelines](/docs/device-sdk/extending#gstreamer-pipelines).
+[GStreamer pipelines](/device-sdk/extending#gstreamer-pipelines).
 
 ## What is not here
 
 - **No audio.** The carrier has an I2S microphone, but there is no `audio0`
   channel in any manifest, no audio pipeline, and the agent never opens the card.
   The `audio0` entry that appears in some device models' `io_capabilities` is
-  aspirational. See the [hardware notes](/docs/device-sdk/hardware#audio-i2s) for
+  aspirational. See the [hardware notes](/device-sdk/hardware#audio-i2s) for
   the overlay warning, which is a real trap.
 - **No cloud recorder.** A Fargate viewer-recorder used to join device channels
   and remux to MP4. It was removed in July 2026; recording is now owned entirely
-  by the device. See [On-device recording](/docs/device-sdk/recording).
+  by the device. See [On-device recording](/device-sdk/recording).
 - **No `mediaEnabled` switch.** The operator-facing media master switch, its
   `--media` flag and its `MEDIA_ENABLED` environment variable were all removed.
   Media is enabled for any device that is not `--offline`. Turn cameras off

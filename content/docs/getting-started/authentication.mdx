@@ -26,7 +26,7 @@ A person signing in to xorgate's own dashboard holds an ID token.
 ## Cognito ID tokens
 
 A Cognito ID token (not an access token) on the `Authorization` header, plus the
-tenancy headers from [Tenancy model](/docs/getting-started/tenancy):
+tenancy headers from [Tenancy model](/getting-started/tenancy):
 
 ```http
 GET /v1/devices HTTP/1.1
@@ -92,7 +92,7 @@ everything and write devices, workspaces and device registrations, which is what
 a data-plane integration needs. It cannot touch memberships, API keys or
 organization settings. A key is also never a _platform_ admin, so device-model
 writes are closed to every key regardless of its role. See the
-[method index](/docs/backend-sdk/resources) for the per-operation gates.
+[method index](/backend-sdk/resources) for the per-operation gates.
 
 You cannot mint a key more privileged than you are: an `admin` minting an
 `owner` key gets a `403`.
@@ -236,7 +236,7 @@ use the same credential.
 
 - **Live telemetry** is MQTT over a signed WebSocket. Exchange your key or
   session token at
-  [`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials),
+  [`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials),
   hand the result to the SDK, and subscribe to
   `xorgate/devices/<deviceId>/telemetry`. Treat the credential as opaque.
 - **Live video** is WebRTC. `GET /devices/{id}/video-channels` returns channel
@@ -253,7 +253,7 @@ touch it.
 <Callout type="info" title="Live-plane read scope is per-tenant">
 
 A credential from
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 reaches its own scope's live plane and nothing else. Vended for a workspace, it
 receives that workspace's devices' telemetry and can view that workspace's
 devices' video; a sibling workspace's device is refused rather than filtered,
@@ -265,14 +265,14 @@ is still broad-but-authenticated. Narrowing the first-party path onto the same
 per-tenant mechanism is a separate change and is not done yet. Connecting is
 identity-scoped either way, so an MQTT client id must start with the
 `identityId` that `POST /live/access` returns.
-[`DELETE /live/access`](/docs/api-reference/live/revoke-live-access) revokes what
+[`DELETE /live/access`](/api-reference/live/revoke-live-access) revokes what
 that call granted.
 
 </Callout>
 
 An API key and a session token both have a live plane, and it is the same one.
 Call
-[`POST /auth/live-credentials`](/docs/api-reference/auth/create-live-credentials)
+[`POST /auth/live-credentials`](/api-reference/auth/create-live-credentials)
 with either, and hand what comes back to the SDK. This is the endpoint that lets
 an application authenticating its OWN users open a live stream, which is the
 thing that used to be impossible: the browser holds a session token and vends

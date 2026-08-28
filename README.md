@@ -33,8 +33,8 @@ API. Without it, the dev values in `lib/shared.ts` apply.
 | `lib/openapi.ts`               | OpenAPI server instance, document paths, and the schema id                |
 | `lib/openapi-slice.ts`         | Trims the document to one page's operations before it ships to the client |
 | `components/openapi-page.tsx`  | Server wrapper the generated reference pages render                       |
-| `app/(home)`                   | Landing page                                                              |
-| `app/docs`                     | Docs layout and pages                                                     |
+| `app/(docs)`                   | Docs layout and pages, served at the site root (`/`, `/getting-started`)  |
+| `app/docs`                     | Legacy `/docs/**` URLs, each emitted as a forwarder to its new root path  |
 | `app/api/search/route.ts`      | Emits the static Orama search index at build time                         |
 | `scripts/refresh-openapi.mjs`  | Refreshes the checked-in OpenAPI snapshot                                 |
 | `scripts/generate-openapi.mjs` | Derives the public document and generates the reference pages             |

@@ -178,8 +178,8 @@ each value and `DeviceConfig` does not.
   artifact the web frontend already imports and the device agent contract-tests
   against. Generating them keeps the SDK from becoming a fourth hand-maintained
   copy of a contract that drifts. The [config
-  endpoint](/docs/api-reference/devices/patch-device-config) documents their
-  bounds and enums, generated from that same artifact.
+  endpoint](/api-reference/devices/patch-device-config) documents their bounds
+  and enums, generated from that same artifact.
 </Callout>
 
 ```ts
@@ -240,7 +240,7 @@ interface IoCapabilities {
 `ioCapabilities` is typed strictly here even though the API accepts any JSON
 object, because provisioning parses it strictly and a document that fails that
 parse costs you every camera. See
-[Device models](/docs/backend-sdk/resources/device-models).
+[Device models](/backend-sdk/resources/device-models).
 
 ## Identity and provisioning
 
@@ -270,7 +270,7 @@ interface AgentBuild {
 ```
 
 `DeviceProvisioning` carries one-shot credentials and is documented on
-[Devices](/docs/backend-sdk/resources/devices). Never log it whole.
+[Devices](/backend-sdk/resources/devices). Never log it whole.
 
 ## Media
 
@@ -312,7 +312,7 @@ interface ReplayManifest {
 ```
 
 The full `ReplaySession`, `ReplaySegment` and `ReplayGap` shapes are on
-[Media](/docs/backend-sdk/resources/media).
+[Media](/backend-sdk/resources/media).
 
 ## Pagination and errors
 
@@ -334,7 +334,7 @@ interface PageMeta {
 ```
 
 `XorgateError` and the code unions are on
-[Errors](/docs/backend-sdk/errors).
+[Errors](/backend-sdk/errors).
 
 ## Sharing types with the frontend SDK
 

@@ -50,14 +50,14 @@ The live and replay planes need real AWS machinery, and it is not small. These
 are regular dependencies, not peers, because their versions are coupled to
 signing behaviour the SDK depends on.
 
-| Dependency                                      | Used by                    | Notes                           |
-| ----------------------------------------------- | -------------------------- | ------------------------------- |
-| `mqtt`                                          | live telemetry             | MQTT 5 over WebSocket           |
-| `@aws-crypto/sha256-js`                         | live telemetry             | the hand-rolled SigV4 presigner |
-| `@aws-sdk/credential-provider-cognito-identity` | live telemetry, live video | Identity Pool credentials       |
-| `@aws-sdk/client-kinesis-video`                 | live video                 | signaling endpoint resolution   |
-| `@aws-sdk/client-kinesis-video-signaling`       | live video                 | ICE server configuration        |
-| `amazon-kinesis-video-streams-webrtc`           | live video                 | the signaling client            |
+| Dependency                                      | Used by                    | Notes                                                                |
+| ----------------------------------------------- | -------------------------- | -------------------------------------------------------------------- |
+| `mqtt`                                          | live telemetry             | MQTT 5 over WebSocket                                                |
+| `@aws-crypto/sha256-js`                         | live telemetry             | the hand-rolled SigV4 presigner                                      |
+| `@aws-sdk/credential-provider-cognito-identity` | live telemetry, live video | Identity Pool credentials                                            |
+| `@aws-sdk/client-kinesis-video`                 | live video                 | signaling endpoint resolution                                        |
+| `@aws-sdk/client-kinesis-video-signaling`       | live video                 | ICE server configuration                                             |
+| `amazon-kinesis-video-streams-webrtc`           | live video                 | the signaling client                                                 |
 | `events`                                        | live video                 | Node-builtin shim the signaling client requires but does not declare |
 
 **Every one of them is behind a dynamic import.** An app that only lists devices
@@ -89,7 +89,7 @@ Under a server-rendering framework, mount the provider in a client component and
 keep the live and replay hooks below it. The provider itself renders on the
 server without error, and every data hook returns
 `{ data: undefined, isLoading: true }` there, so a shell renders and hydration
-fills it in. See [what this SDK does not cover](/docs/frontend-sdk/not-covered)
+fills it in. See [what this SDK does not cover](/frontend-sdk/not-covered)
 for the details, including React Native, which is not supported.
 
 ## TypeScript
@@ -111,4 +111,4 @@ One `tsconfig` flag is worth turning on:
 `LatestByMetric` is a `Record` keyed by a template literal type, so without that
 flag TypeScript will happily let you write `latest["gps.lat"].value` for a
 metric the device has never reported. With it on, you get the `undefined` you
-would actually receive. The [types page](/docs/frontend-sdk/types) covers this.
+would actually receive. The [types page](/frontend-sdk/types) covers this.

@@ -33,7 +33,7 @@ involvement: video frames never traverse the API. The viewer lifecycle,
 reconnection and credential refresh belong to `@xorgate/react`.
 
 Recorded video is fully covered here. See
-[Media](/docs/backend-sdk/resources/media).
+[Media](/backend-sdk/resources/media).
 
 ### The device claim and install script
 
@@ -41,7 +41,7 @@ Recorded video is fully covered here. See
 script's private contract, called unauthenticated on the device itself, and the
 claim returns X.509 private key material. They are excluded from the public API
 reference and will never be SDK methods. Your side of that flow is
-[Device registrations](/docs/backend-sdk/resources/device-registrations).
+[Device registrations](/backend-sdk/resources/device-registrations).
 
 ### Workflows and AI
 
@@ -57,7 +57,7 @@ stability promise attached.
 
 The agent that runs on the hardware is a separate program with its own CLI and
 configuration, not something this SDK talks to. See
-[Device SDK](/docs/device-sdk).
+[Device SDK](/device-sdk).
 
 ## Platform gaps
 
@@ -70,7 +70,7 @@ Every one of them is on the platform-readiness backlog.
 onboard a customer as its own xorgate organization. Map customers onto
 **workspaces** inside one organization instead, which a default `member` key can
 create. Organizations are provisioned out of band. See
-[Authentication](/docs/backend-sdk/authentication).
+[Authentication](/backend-sdk/authentication).
 
 ### There are no webhooks
 
@@ -108,12 +108,12 @@ It does not affect this SDK, which reads only org-scoped REST endpoints, and it
 is **not** the path a third party uses: `POST /auth/live-credentials` vends
 credentials confined to one tenant, and a sibling workspace's device is refused
 on both planes by the credential itself. See
-[Authentication](/docs/backend-sdk/authentication).
+[Authentication](/backend-sdk/authentication).
 
 ### No idempotency keys
 
 A timed-out write is genuinely ambiguous. The SDK does not retry writes for that
-reason. See [Errors](/docs/backend-sdk/errors).
+reason. See [Errors](/backend-sdk/errors).
 
 ### No request id in error bodies
 
@@ -125,13 +125,13 @@ handed to someone reading the platform's.
 
 Six list endpoints return their whole collection. That is fine at today's scale
 and will not stay fine. Use `iterate()` rather than `list()` where you can, so
-the change is free. See [Pagination](/docs/backend-sdk/pagination).
+the change is free. See [Pagination](/backend-sdk/pagination).
 
 ### Roles cannot be changed
 
 There is no membership update endpoint. Changing a role means remove then add.
 See
-[Users and organizations](/docs/backend-sdk/resources/users-and-organizations).
+[Users and organizations](/backend-sdk/resources/users-and-organizations).
 
 ### Devices are not decommissioned, only deleted
 

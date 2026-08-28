@@ -32,9 +32,9 @@ Both mean the same URL.
 
 There is no unversioned surface. A request without the prefix is a `404`. Two
 routes also changed name at the cut: `GET /devices/{id}/kvs-channels` became
-[`GET /v1/devices/{id}/video-channels`](/docs/api-reference/live/get-device-video-channels)
+[`GET /v1/devices/{id}/video-channels`](/api-reference/live/get-device-video-channels)
 and `POST /iot/attach-policy` became
-[`POST /v1/live/access`](/docs/api-reference/live/grant-live-access). The old
+[`POST /v1/live/access`](/api-reference/live/grant-live-access). The old
 names are gone rather than redirected.
 
 ## Things that are true everywhere
@@ -44,16 +44,16 @@ names are gone rather than redirected.
   `X-Organization-Id` header, falling back to your sole membership when you have
   exactly one. If you belong to more than one organization and omit the header,
   every one of those endpoints answers `400 ORGANIZATION_REQUIRED`. Read the
-  organization ids from [`GET /me`](/docs/api-reference/users/get-me) and send
-  the header on every request.
+  organization ids from [`GET /me`](/api-reference/users/get-me) and send the
+  header on every request.
 </Callout>
 
 **Authentication** is one of three credentials in `Authorization: Bearer <…>`,
 told apart by prefix: a Cognito ID token (not an access token) for a person, an
-`xg_` [API key](/docs/api-reference/api-keys) for a program, or an `xgs_`
-[session token](/docs/api-reference/auth) for a browser or mobile app. Most
+`xg_` [API key](/api-reference/api-keys) for a program, or an `xgs_`
+[session token](/api-reference/auth) for a browser or mobile app. Most
 endpoints take any of them. See
-[Authentication](/docs/getting-started/authentication) for which to reach for.
+[Authentication](/getting-started/authentication) for which to reach for.
 
 **Responses are always a named object**, never a bare array: `{devices, page}`,
 `{device}`, `{organizations}`. Fields are camelCase throughout. Three envelope
@@ -84,13 +84,13 @@ Live telemetry and live video do not flow through this API. The client
 subscribes over MQTT-over-WebSocket for the 1 Hz telemetry feed, and connects
 over WebRTC for live video, using credentials it
 mints itself. This API only hands out the metadata and the authorization needed
-to do that; see [Live](/docs/api-reference/live).
+to do that; see [Live](/api-reference/live).
 
 Two routes are excluded on purpose and do not appear here: `GET /get/{code}`,
 which renders the device install script, and
 `POST /device-registrations/{code}/claim`, which returns private key material.
 Both are internal to the installer. See
-[Device Registrations](/docs/api-reference/device-registrations) for how they
+[Device Registrations](/api-reference/device-registrations) for how they
 fit into onboarding.
 
 The Workflows and AI surface is undocumented while it is still moving.

@@ -6,10 +6,10 @@ description: "Who belongs to an organization, with what role, and what each role
 A membership joins a user to an organization with one of four roles: `owner`,
 `admin`, `member` or `viewer`. This is the role that gates almost every write in
 the platform, and it is separate from the platform-wide `user.role` that only
-controls the [device model](/docs/api-reference/device-models) catalog.
+controls the [device model](/api-reference/device-models) catalog.
 
 Roughly, `owner` and `admin` can do the destructive and irreversible things:
-manage members, mint and delete [API keys](/docs/api-reference/api-keys),
+manage members, mint and delete [API keys](/api-reference/api-keys),
 provision a device identity, reboot or power off a device, install an agent
 update, and delete recorded sessions. `member` covers ordinary work: reading,
 creating devices and workspaces, writing device config, and asking a device to
@@ -29,5 +29,5 @@ never be left ownerless, so promote someone else first.
 `GET /memberships` returns the whole roster unpaginated, and each row is
 enriched with its member's `user` object (id, email, name) so a members table
 renders in one round-trip. That enriched shape is specific to this endpoint;
-the `memberships` array in [`GET /me`](/docs/api-reference/users/get-me) is the
+the `memberships` array in [`GET /me`](/api-reference/users/get-me) is the
 plain row without the `user`.

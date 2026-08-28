@@ -76,7 +76,7 @@ shared-memory caps are a fixed contract on both sides (I420 1280x720 15/1)
 because `shmsrc` does no negotiation. A companion `<streamKey>.camera` file
 records which libcamera device the capture daemon should open, so the camera
 identity survives the rewrite. See
-[the camera bridge](/docs/device-sdk/recording#the-camera-bridge).
+[the camera bridge](/device-sdk/recording#the-camera-bridge).
 
 ## Collectors are a fixed registry of five
 
@@ -89,7 +89,7 @@ supervisor and produces the payload's `media` block rather than a `group.field`
 family.
 
 A new metric additionally has to be landed in **three repositories at once**. See
-[the three copies](/docs/device-sdk/cloud-contract/telemetry#keeping-the-three-copies-honest). That is the real cost, not the collector itself.
+[the three copies](/device-sdk/cloud-contract/telemetry#keeping-the-three-copies-honest). That is the real cost, not the collector itself.
 
 <Callout type="warn" title="The agent's own metric interface is not the catalog">
   `TelemetryMetrics` in `src/agent/telemetry.ts` looks like the authoritative
@@ -97,7 +97,7 @@ A new metric additionally has to be landed in **three repositories at once**. Se
   `Record<string, unknown>`, so TypeScript never checks one against the other,
   and three `gps` fields (`sats_heard`, `snr_max`, `sky_state`) are on the wire
   today without being declared there. Read the collectors, or
-  [the catalog](/docs/device-sdk/cloud-contract/telemetry#the-metric-catalog).
+  [the catalog](/device-sdk/cloud-contract/telemetry#the-metric-catalog).
 </Callout>
 
 ## The enabled capability set is hardcoded
@@ -139,7 +139,7 @@ the KVS stream keys. It is just not consulted at collection time.
 
 ## Topics and commands are closed
 
-The [six topics](/docs/device-sdk/cloud-contract) are built from the device id in
+The [six topics](/device-sdk/cloud-contract) are built from the device id in
 `loadConfig` and are not configurable. That is not an oversight: the device IoT
 policy grants publish and subscribe on
 `topic/xorgate/devices/${iot:Connection.Thing.ThingName}/*`, so a seventh topic

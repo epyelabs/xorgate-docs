@@ -16,7 +16,7 @@ listAll(params?): Promise<Device[]>
 
 This is one of the three paginated endpoints, so `list()` returns
 `{ items, page }` rather than an array. See
-[Pagination](/docs/backend-sdk/pagination).
+[Pagination](/backend-sdk/pagination).
 
 ```ts
 const page = await xg.devices.list({ status: "online", sort: "lastSeenAt" })
@@ -72,7 +72,7 @@ const device = await xg.devices.create({
 This creates the **row only**. The device has no IoT identity until
 `provision()`, and no agent until someone installs one. For onboarding real
 hardware, use the
-[registration code flow](/docs/backend-sdk/resources/device-registrations)
+[registration code flow](/backend-sdk/resources/device-registrations)
 instead, which does all three in one pass.
 
 ### `update(id, input)`
@@ -194,7 +194,7 @@ An empty object is **not** an erase; it is a `400`. `null` is the erase.
 Two failure modes worth handling separately:
 
 - `CONFIG_PUBLISH_FAILED` (502) means the write **succeeded** and delivery
-  failed. Do not retry. See [Errors](/docs/backend-sdk/errors).
+  failed. Do not retry. See [Errors](/backend-sdk/errors).
 - A device whose `reportedConfig.effective` has no `apn` block predates the APN
   rollback machinery. Writing the `cellular` namespace to it has no safety net,
   so a bad APN takes the device off the network. Check for the block first.
@@ -373,7 +373,7 @@ bundle.mqtt.telemetryTopic // xorgate/devices/{id}/telemetry
 
 If `kvs.channels` comes back empty for a model that declares cameras, its
 `ioCapabilities` failed the provisioning parse. That is the failure the
-[device-model validation](/docs/backend-sdk/resources/device-models) exists to
+[device-model validation](/backend-sdk/resources/device-models) exists to
 prevent, and this response is the first place it becomes visible.
 
 Owner or admin.
@@ -386,7 +386,7 @@ a `404`.
 
 This is what a **browser** needs to join a live stream as a viewer, and the
 viewer itself is not part of this SDK. See
-[What this SDK does not cover](/docs/backend-sdk/not-covered).
+[What this SDK does not cover](/backend-sdk/not-covered).
 
-Maps to the [Devices endpoints](/docs/api-reference/devices) and
-[Live](/docs/api-reference/live).
+Maps to the [Devices endpoints](/api-reference/devices) and
+[Live](/api-reference/live).
