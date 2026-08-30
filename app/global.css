@@ -24,12 +24,16 @@
   --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-/* Tokens copied from xorgate-landing/app/global.css: warm cream shell, warm
-   white ground, pure white cards, and the one brand accent (#ff3a00). Keep the
-   two files in sync by hand; the landing file is the source of truth. */
+/* Tokens follow xorgate-landing/app/global.css (same hue, brand set, dark
+   mode) with the light grounds toned down to near-white, matching the console
+   in xorgate-web/src/index.css: the landing's cream read too heavy behind long
+   docs pages. Two-surface scheme kept: --shell paints the chrome (sidebar),
+   the content area sits a step lighter, and cards stay pure white so surfaces
+   lift. Neutrals hold the same faint warm hue (85) so nothing reads
+   blue-gray against them. */
 :root {
-  --shell: oklch(0.972 0.014 85);
-  --background: oklch(0.985 0.007 85);
+  --shell: oklch(0.98 0.004 85);
+  --background: oklch(0.993 0.002 85);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -39,15 +43,15 @@
      `primary`, so it carries the brand here (the AA-safe deepened orange). */
   --primary: var(--brand-strong);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.945 0.012 85);
+  --secondary: oklch(0.955 0.004 85);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.945 0.012 85);
-  --muted-foreground: oklch(0.5 0.01 85);
-  --accent: oklch(0.945 0.012 85);
+  --muted: oklch(0.955 0.004 85);
+  --muted-foreground: oklch(0.5 0.005 85);
+  --accent: oklch(0.955 0.004 85);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.902 0.014 85);
-  --input: oklch(0.902 0.014 85);
+  --border: oklch(0.91 0.005 85);
+  --input: oklch(0.91 0.005 85);
   --ring: oklch(0.708 0 0);
   --radius: 0.625rem;
   --brand: oklch(0.6641 0.2454 34.85);
@@ -56,11 +60,11 @@
   --brand-green: #00ff3a;
   --brand-blue: #0046ff;
 
-  /* Sidebar reads from the shell cream, like the landing navbar/footer. */
+  /* The sidebar IS the shell surface (the landing navbar/footer, toned down). */
   --sidebar: var(--shell);
   --sidebar-foreground: var(--foreground);
   --sidebar-border: var(--border);
-  --sidebar-accent: oklch(0.93 0.016 85);
+  --sidebar-accent: oklch(0.94 0.006 85);
   --sidebar-accent-foreground: var(--accent-foreground);
   --sidebar-ring: var(--ring);
   --sidebar-primary-foreground: var(--primary-foreground);
