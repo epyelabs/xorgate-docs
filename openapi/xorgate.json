@@ -750,139 +750,174 @@
         }
       },
       "IoCapabilities": {
-        "type": "object",
-        "properties": {
-          "schemaVersion": {
-            "type": "number",
-            "enum": [
-              1
-            ]
-          },
-          "media": {
+        "anyOf": [
+          {
             "type": "object",
             "properties": {
-              "video": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "key": {
-                      "type": "string"
-                    },
-                    "codec": {
-                      "type": "string"
-                    },
-                    "maxWidth": {
-                      "type": "integer",
-                      "exclusiveMinimum": true,
-                      "minimum": 0
-                    },
-                    "maxHeight": {
-                      "type": "integer",
-                      "exclusiveMinimum": true,
-                      "minimum": 0
-                    },
-                    "maxFps": {
-                      "type": "number",
-                      "exclusiveMinimum": true,
-                      "minimum": 0
-                    },
-                    "label": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "key",
-                    "codec"
-                  ],
-                  "additionalProperties": false
-                },
-                "default": []
+              "schemaVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
               },
-              "audio": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "key": {
-                      "type": "string"
-                    },
-                    "codec": {
-                      "type": "string"
-                    },
-                    "sampleRate": {
-                      "type": "integer",
-                      "exclusiveMinimum": true,
-                      "minimum": 0
-                    },
-                    "channels": {
-                      "type": "integer",
-                      "exclusiveMinimum": true,
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "key",
-                    "codec"
-                  ],
-                  "additionalProperties": false
-                },
-                "default": []
-              }
-            },
-            "additionalProperties": false
-          },
-          "sensors": {
-            "type": "object",
-            "properties": {
-              "imu": {
+              "media": {
                 "type": "object",
                 "properties": {
-                  "axes": {
+                  "video": {
                     "type": "array",
                     "items": {
-                      "type": "string"
-                    }
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "codec": {
+                          "type": "string"
+                        },
+                        "maxWidth": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "maxHeight": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "maxFps": {
+                          "type": "number",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "codec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
                   },
-                  "accel": {
+                  "audio": {
                     "type": "array",
                     "items": {
-                      "type": "string"
-                    }
-                  },
-                  "quaternion": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "euler": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "unit": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "codec": {
+                          "type": "string"
+                        },
+                        "sampleRate": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "channels": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "codec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
+                  }
+                },
+                "additionalProperties": false
+              },
+              "sensors": {
+                "type": "object",
+                "properties": {
+                  "imu": {
+                    "type": "object",
+                    "properties": {
+                      "axes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "accel": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "quaternion": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "euler": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "rateHz": {
+                        "type": "number",
+                        "exclusiveMinimum": true,
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "comm": {
+                "type": "object",
+                "properties": {
+                  "module": {
                     "type": "string"
                   },
-                  "rateHz": {
-                    "type": "number",
-                    "exclusiveMinimum": true,
-                    "minimum": 0
+                  "gps": {
+                    "type": "object",
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "signal": {
+                    "type": "object",
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "fields"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          "comm": {
-            "type": "object",
-            "properties": {
-              "module": {
-                "type": "string"
               },
-              "gps": {
+              "system": {
                 "type": "object",
                 "properties": {
                   "fields": {
@@ -896,45 +931,259 @@
                   "fields"
                 ],
                 "additionalProperties": false
-              },
-              "signal": {
-                "type": "object",
-                "properties": {
-                  "fields": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "required": [
-                  "fields"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "additionalProperties": false
-          },
-          "system": {
-            "type": "object",
-            "properties": {
-              "fields": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
               }
             },
             "required": [
-              "fields"
+              "schemaVersion"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "number",
+                "enum": [
+                  2
+                ]
+              },
+              "media": {
+                "type": "object",
+                "properties": {
+                  "video": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "codec": {
+                          "type": "string"
+                        },
+                        "maxWidth": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "maxHeight": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "maxFps": {
+                          "type": "number",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "connector": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "sensor": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "codec",
+                        "connector",
+                        "sensor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
+                  },
+                  "audio": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "codec": {
+                          "type": "string"
+                        },
+                        "sampleRate": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        },
+                        "channels": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "codec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
+                  }
+                },
+                "additionalProperties": false
+              },
+              "sensors": {
+                "type": "object",
+                "properties": {
+                  "imu": {
+                    "type": "object",
+                    "properties": {
+                      "axes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "accel": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "quaternion": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "euler": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "rateHz": {
+                        "type": "number",
+                        "exclusiveMinimum": true,
+                        "minimum": 0
+                      },
+                      "model": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "comm": {
+                "type": "object",
+                "properties": {
+                  "module": {
+                    "type": "string"
+                  },
+                  "gps": {
+                    "type": "object",
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "signal": {
+                    "type": "object",
+                    "properties": {
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "system": {
+                "type": "object",
+                "properties": {
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "rpi-cm5",
+                      "rpi-cm4"
+                    ]
+                  },
+                  "encoder": {
+                    "type": "string",
+                    "enum": [
+                      "sw-h264",
+                      "hw-h264"
+                    ]
+                  },
+                  "rails": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "statusLed": {
+                    "type": "object",
+                    "properties": {
+                      "r": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "g": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "b": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "r",
+                      "g",
+                      "b"
+                    ],
+                    "additionalProperties": false,
+                    "nullable": true,
+                    "default": null
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "platform"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "system"
             ],
             "additionalProperties": false
           }
-        },
-        "required": [
-          "schemaVersion"
         ],
-        "additionalProperties": false,
         "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a video channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces.\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero video channels and live video silently never works. Validate against this schema yourself before writing."
       },
       "DeviceModel": {
@@ -1026,6 +1275,10 @@
               "decommissioned"
             ],
             "description": "Machine-managed: telemetry ingest, the MQTT last-will and the offline sweeper own this. Writing it through `PUT /devices/{id}` is rejected 400."
+          },
+          "needsModel": {
+            "type": "boolean",
+            "description": "Probe-at-claim could not pick a device model unambiguously; the device carries its registration's fallback model until an operator confirms one via `PUT /devices/{id}` `{deviceModelId}`, which clears this."
           },
           "lastSeenAt": {
             "type": "string",
@@ -1199,7 +1452,7 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 20,
-                "description": "Target sample rate. Each sensor group is additionally capped by its native cadence (IMU 20 Hz, GPS 1 Hz, system 1 Hz). Default 10."
+                "description": "Target sample rate. Each sensor group is additionally capped by its native cadence (IMU 20 Hz, GPS 1 Hz, system 1 Hz). Default 1."
               }
             },
             "additionalProperties": false
@@ -1220,7 +1473,7 @@
                   "720p15-2mbps",
                   "720p15-1mbps"
                 ],
-                "description": "Closed quality preset table (bounded CPU cost). Default 1080p15-2mbps."
+                "description": "Closed quality preset table (bounded CPU cost). Default 720p15-1mbps."
               },
               "segmentSeconds": {
                 "type": "integer",
@@ -1465,6 +1718,46 @@
         "additionalProperties": false,
         "description": "Cellular data-context settings (`cellular` namespace). `apn` empty or absent leaves the modem's stored APN untouched (the safe default). A non-empty APN is applied by the modem daemon with apply-and-confirm rollback: real traffic must flow over the modem interface within a bounded window or the previous APN is restored automatically. Read live from settings.json by the modem daemon — never restart it to apply a setting."
       },
+      "CameraMountConfig": {
+        "type": "object",
+        "properties": {
+          "cameras": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "rotationDeg": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        0
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        180
+                      ]
+                    }
+                  ],
+                  "description": "Rotation applied at the sensor, degrees. 180 = the camera is mounted upside down, so the sensor flips H+V and every consumer (live WebRTC, recorded MP4s, replays, workflow frames) sees an upright image with no added CPU. Only 0 and 180 exist — the camera overlay parameter has no 90/270."
+                }
+              },
+              "required": [
+                "rotationDeg"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Per-camera mounting rotation keyed by stream key, e.g. {\"cam0\": {\"rotationDeg\": 180}}. An ABSENT key is UNMANAGED: the device leaves that camera's boot config exactly as it found it. Send an explicit {\"rotationDeg\": 0} to take a camera over and force it upright. Takes effect on the next boot — the device reports `rebootRequired` and never reboots itself."
+          }
+        },
+        "required": [
+          "cameras"
+        ],
+        "additionalProperties": false,
+        "description": "Camera mounting rotation (`cameraMount` namespace): per-camera 0/180 applied at the image sensor via the camera overlay in /boot/firmware/config.txt, so live video, recordings, replays and workflow frames are all corrected at zero CPU cost. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports the namespace with a `rebootRequired` detail; it never reboots the device itself. An absent camera key is unmanaged (the boot config is left as found); an explicit `rotationDeg: 0` forces that camera upright."
+      },
       "DeviceConfig": {
         "type": "object",
         "additionalProperties": false,
@@ -1509,6 +1802,13 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/CellularConfig"
+              }
+            ]
+          },
+          "cameraMount": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CameraMountConfig"
               }
             ]
           }
@@ -1753,6 +2053,11 @@
             "type": "string",
             "format": "date-time"
           },
+          "thumbnailKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "S3 key of the poster frame extracted from the first segment. NULL when none exists (pre-feature session, first segment never uploaded, or extraction failed) — always treat as optional. Not fetchable directly; use `thumbnailUrl`."
+          },
           "segmentCount": {
             "type": "integer",
             "description": "Rollup (list endpoint only)."
@@ -1764,6 +2069,12 @@
           "totalDurationMs": {
             "type": "integer",
             "description": "Rollup (list endpoint only)."
+          },
+          "thumbnailUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Presigned GET for the poster frame JPEG (list endpoint only, same TTL as segment playback URLs). NULL when the session has no thumbnail."
           }
         }
       },
@@ -4089,7 +4400,7 @@
       "put": {
         "operationId": "updateDevice",
         "summary": "Update device metadata",
-        "description": "Metadata only. `status` and `lastSeenAt` are machine-managed (telemetry ingest, the MQTT last-will, and the offline sweeper own them) and are rejected 400. Device config moved to PATCH /devices/{id}/config and PATCH /devices/{id}/ui-prefs; the old per-namespace body fields below are still accepted for the transition window, forwarded through the same validation into `config`/`uiPrefs`, and logged as deprecated.",
+        "description": "Metadata only. `status` and `lastSeenAt` are machine-managed (telemetry ingest, the MQTT last-will, and the offline sweeper own them) and are rejected 400. `deviceModelId` reassigns the device model (resolving a `needsModel` device, or correcting a wrong model): it clears `needsModel` and republishes the device config with a bumped rev so the new model's hardware block reaches the device — it does NOT re-mint KVS channels. Device config moved to PATCH /devices/{id}/config and PATCH /devices/{id}/ui-prefs; the old per-namespace body fields below are still accepted for the transition window, forwarded through the same validation into `config`/`uiPrefs`, and logged as deprecated.",
         "tags": [
           "Devices"
         ],
@@ -4105,6 +4416,11 @@
                   "name": {
                     "type": "string",
                     "nullable": true
+                  },
+                  "deviceModelId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Reassign the device model. Clears `needsModel` and delivers the new model's hardware block via a rev-bumped config republish."
                   },
                   "gnssAntBias": {
                     "type": "boolean",
@@ -4327,6 +4643,15 @@
                     ],
                     "nullable": true,
                     "description": "Cellular data-context settings (`cellular` namespace). `apn` empty or absent leaves the modem's stored APN untouched (the safe default). A non-empty APN is applied by the modem daemon with apply-and-confirm rollback: real traffic must flow over the modem interface within a bounded window or the previous APN is restored automatically. Read live from settings.json by the modem daemon — never restart it to apply a setting. Apply class: `modem-poll`. null reverts to device defaults."
+                  },
+                  "cameraMount": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/CameraMountConfig"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Camera mounting rotation (`cameraMount` namespace): per-camera 0/180 applied at the image sensor via the camera overlay in /boot/firmware/config.txt, so live video, recordings, replays and workflow frames are all corrected at zero CPU cost. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports the namespace with a `rebootRequired` detail; it never reboots the device itself. An absent camera key is unmanaged (the boot config is left as found); an explicit `rotationDeg: 0` forces that camera upright. Apply class: `agent-poll`. null reverts to device defaults."
                   }
                 }
               }
@@ -4854,10 +5179,27 @@
       "post": {
         "operationId": "createDeviceRegistration",
         "summary": "Mint a device registration code",
-        "description": "Starts onboarding: returns a short-lived code and the `installUrl` to run on the device. `X-Workspace-Id` is REQUIRED here (unlike on `GET /devices`, where it is a filter), because the code carries the workspace the future device will land in. Idempotent per workspace: while a pending, un-expired code exists it is returned again instead of minting a new one, so reloading a dialog does not burn codes. The device model is picked automatically (the most recently created one), and a deployment with no device models is a 400. Note the success status is 200, not 201, even when a code is created.",
+        "description": "Starts onboarding: returns a short-lived code and the `installUrl` to run on the device. `X-Workspace-Id` is REQUIRED here (unlike on `GET /devices`, where it is a filter), because the code carries the workspace the future device will land in. Idempotent per workspace: while a pending, un-expired code exists it is returned again instead of minting a new one, so reloading a dialog does not burn codes. The device model defaults to the most recently created one, and a deployment with no device models is a 400 — but the default is only a FALLBACK: the claim maps the device's own hardware probe to a model row (probe-at-claim), unless `deviceModelId` is passed here to pin the model explicitly (the claim then skips the probe). Passing `deviceModelId` while a pending code exists re-pins that code's model in place. Note the success status is 200, not 201, even when a code is created.",
         "tags": [
           "Device Registrations"
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "deviceModelId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Pin the device model explicitly instead of probe-at-claim mapping. Unknown ids are a 400."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "A pending registration, freshly minted or the existing un-expired one.",
@@ -4935,7 +5277,7 @@
       "post": {
         "operationId": "claimDeviceRegistration",
         "summary": "Claim a registration code (internal, installer only)",
-        "description": "INTERNAL. Called unauthenticated by the install script running on the device. It flips the code to `claimed`, creates the device row, provisions its AWS IoT identity, and returns the certificate and PRIVATE KEY once. Not part of the public API surface: treat the installer as the only client.",
+        "description": "INTERNAL. Called unauthenticated by the install script running on the device. It flips the code to `claimed`, creates the device row, provisions its AWS IoT identity, and returns the certificate and PRIVATE KEY once. The body may carry a hardware probe (`dtModel` = /proc/device-tree/model, `cameras` = libcamera count, 0 = unknown) that picks the device model unless the registration pinned one; an ambiguous probe keeps the registration's model and flags the device `needsModel`. The response embeds the resolved model's device-facing `hardware` block (null for schemaVersion-1 models), which the installer writes to /etc/xorgate/hardware.json. Not part of the public API surface: treat the installer as the only client.",
         "tags": [
           "Device Registrations"
         ],
