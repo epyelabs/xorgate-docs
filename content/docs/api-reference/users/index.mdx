@@ -3,9 +3,10 @@ title: "Overview"
 description: "The bootstrap call: who the caller is and which organizations they can act in."
 ---
 
-There is exactly one endpoint here, and almost every client starts with it.
-`GET /me` turns a bearer token into a user, the memberships that user holds, and
-the organizations those memberships point at.
+Everything here is about the caller and nobody else, and almost every client
+starts with it. `GET /me` turns a bearer token into a user, the memberships that
+user holds, and the organizations those memberships point at. `PATCH /me` and
+the `/me/avatar` pair edit the profile; `DELETE /me` closes the account.
 
 It matters more than its size suggests, because it is where the value of
 `X-Organization-Id` comes from. Nearly every other endpoint is org-scoped and
@@ -27,3 +28,16 @@ to do with the per-organization membership role. It gates exactly one thing:
 writing the [device model](/api-reference/device-models) catalog. The
 membership role (`owner`, `admin`, `member`, `viewer`) is what gates everything
 org-scoped.
+
+## Closing an account
+
+`DELETE /me` removes the Cognito user, the profile and picture, every
+membership and the caller's live-plane policy, and answers `204`. It is refused
+with `409 OWNS_ORGANIZATIONS` while the caller is the _only_ owner of an
+organization; `details.organizations` lists them. Hand ownership to another
+member first (`PATCH /memberships/{id}` with `role: "owner"`) or delete the
+organization. Organizations the caller merely belonged to are untouched.
+
+The token that made the call stays verifiable until it expires, but every later
+request with it is refused with `401 ACCOUNT_DELETED` rather than re-creating
+the user just-in-time. Signing up again with the same email starts from nothing.
