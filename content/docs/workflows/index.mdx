@@ -1,0 +1,148 @@
+---
+title: "Workflows"
+description: "Graphs of catalog nodes that turn video and telemetry into events, records and annotated video, and the one engine that runs them: on a laptop, in a container, on a device, and, by design, on the platform."
+---
+
+A workflow is a directed graph. Source nodes feed telemetry or video into
+processing nodes (decoders, models, filters, logic) that end in outputs: events,
+captured records, and annotated frames. A **template** is one such graph saved
+as JSON, and a **run** is one execution of it over concrete inputs.
+
+Templates are authored in the web application's editor. They are executed by
+**`xorgate-workflow-engine`**, a standalone execution engine with a
+command-line shell, `xwe`, that runs a template over local files on a laptop,
+in a docker container, or on a Raspberry Pi 5 class device today. It is built
+to be the same engine everywhere: the platform's own workflow runs are planned
+to execute on it too, consumed as a package or image, so a template behaves
+identically wherever it runs.
+
+<Callout title="What is, and is not, documented here">
+  This section covers the definition format, the 26-node catalog, and the engine
+  with its `xwe` CLI. The platform side (workflow templates, device attachments,
+  runs and simulations as REST resources) is **not** in the API reference or
+  either SDK yet, and the platform does not yet execute its runs through this
+  engine. [What this does not cover](/workflows/not-covered) says exactly where
+  the line is.
+</Callout>
+
+## The shape of a workflow
+
+The smallest useful graph: GPS telemetry in, ground speed derived from
+position, a threshold, an event. This is a real published template, and it is
+the engine's golden test.
+
+```json
+{
+  "schemaVersion": 2,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "source.telemetry",
+      "data": {
+        "label": "GPS",
+        "config": { "metrics": ["gps.lat", "gps.lon", "gps.speed"] }
+      },
+      "position": { "x": 40, "y": 200 }
+    },
+    {
+      "id": "n2",
+      "type": "telemetry.derivative",
+      "data": {
+        "label": "Speed from GPS",
+        "config": { "mode": "speed_from_position", "outputSignal": "speed_kph" }
+      },
+      "position": { "x": 300, "y": 200 }
+    },
+    {
+      "id": "n3",
+      "type": "logic.threshold",
+      "data": {
+        "label": "Speed Limit Check",
+        "config": { "signal": "speed_kph", "operator": "gt", "value": 10 }
+      },
+      "position": { "x": 580, "y": 200 }
+    },
+    {
+      "id": "n4",
+      "type": "output.event",
+      "data": {
+        "label": "Overspeed",
+        "config": { "kind": "overspeed", "attachClip": true }
+      },
+      "position": { "x": 860, "y": 200 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n1", "target": "n2" },
+    { "id": "e2", "source": "n2", "target": "n3" },
+    { "id": "e3", "source": "n3", "target": "n4" }
+  ]
+}
+```
+
+Every node's executor starts at once and the edges are bounded in-process
+channels, so a source never reads faster than its slowest consumer. A node that
+throws fails its step, every node downstream of it is skipped, independent
+branches run to completion, and the run is marked failed with the first failing
+node's id. Those semantics belong to the engine, not to where it runs.
+
+## One engine, several hosts
+
+The engine takes a **run manifest** (a definition plus source bindings) and
+produces an **artifact tree** (`result.json`, events, records, frames). Hosts
+differ only in where the bindings point and where the tree lands.
+
+|            | Your machine, a container, a device         | The platform (planned)                                                            |
+| ---------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
+| Started by | `xwe run`                                   | a device attachment trigger, a schedule, or a simulation from the editor          |
+| Inputs     | local files: video, CSV or JSONL telemetry  | device telemetry history, uploaded video, on-device session segments, live ingest |
+| Outputs    | `out/<runId>/` on disk                      | object storage under `workflows/v2/runs/<runId>/`, then rows in the database      |
+| Models     | a local mirror of the model registry layout | the model registry                                                                |
+| Secrets    | environment variables or a JSON file        | per-organization credentials, then platform credentials                           |
+
+The local artifact tree already uses the platform's storage key layout, the
+binding kinds are shared, and the catalog is one catalog. That is deliberate:
+when the platform consumes the engine, nothing about a template, a manifest or
+a result changes. Four things are frozen contracts for that reason: the
+definition format (`schemaVersion: 2`), the run manifest, the `result.json`
+shape, and the catalog node definitions.
+
+## The pages
+
+<Cards>
+  <Card
+    title="Definitions and templates"
+    href="/workflows/definitions"
+    description="The JSON format, channels and ports, how edges resolve, and what validation rejects."
+  />
+  <Card
+    title="Node catalog"
+    href="/workflows/catalog"
+    description="All 26 node types by group, with ports, configuration keys and defaults."
+  />
+  <Card
+    title="The engine"
+    href="/workflows/engine"
+    description="What xorgate-workflow-engine is, where it is headed, what it needs from a host, and how to run it with docker or bare node."
+  />
+  <Card
+    title="CLI reference"
+    href="/workflows/cli"
+    description="xwe run and xwe validate, every flag, and the exit codes."
+  />
+  <Card
+    title="Inputs and outputs"
+    href="/workflows/run-artifacts"
+    description="Source bindings, the run manifest, the artifact tree, result.json, and annotated video."
+  />
+  <Card
+    title="Performance"
+    href="/workflows/performance"
+    description="Measured numbers on a laptop, in a container, and on Pi 5 class hardware."
+  />
+  <Card
+    title="What this does not cover"
+    href="/workflows/not-covered"
+    description="The platform API, the planned integration, and the engine features deferred by decision."
+  />
+</Cards>

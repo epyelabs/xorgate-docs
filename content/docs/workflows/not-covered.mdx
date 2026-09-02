@@ -1,0 +1,107 @@
+---
+title: "What this does not cover"
+description: "The platform workflow API, the planned platform integration, the engine features deferred by decision, and the bindings that only resolve on the platform."
+---
+
+Everything here is a known limit, recorded as a decision rather than left as a
+surprise. The engine's first plan deferred a specific list, and the platform's
+workflow surface is still moving; both are stated plainly so you can design
+around them.
+
+## The platform workflow API is not documented
+
+Workflow templates, their versions and publication, device attachments and
+their triggers, runs, run steps, events, the served catalog, the model
+registry, simulations and organization credentials all exist as REST resources
+on the platform. **None of them are in the [API reference](/api-reference)**,
+and neither the [Backend SDK](/backend-sdk) nor the
+[Frontend SDK](/frontend-sdk) models them. `xg.search()` can return
+`workflow-template` and `workflow-instance` hits, and `xg.request()` will reach
+the endpoints, with no stability promise attached.
+
+What this section documents instead is the part that is stable and runnable:
+the definition format, the catalog, and the engine. A template exported from
+the platform runs unchanged in the engine today.
+
+## The planned platform integration
+
+The engine is meant to be the one execution engine for workflows, including the
+platform's own runs. That integration is the stated direction and is **not yet
+in place**: today the platform's attachment-triggered runs and editor
+simulations do not execute through this package, and there is no round trip
+back from a local run (publishing a locally authored template, or ingesting a
+local run's results) either.
+
+What is already true, and what the integration will build on:
+
+- the definition format, run manifest, `result.json` and catalog are frozen
+  contracts, shared by the engine and the platform's storage and editor;
+- the local artifact tree is the platform's storage key layout, so tooling
+  written against one reads the other;
+- the engine core is storage-free, and the platform's shell only has to
+  supply the same seams the local shell supplies (sources, artifacts, secrets,
+  progress) over its own storage.
+
+Until then, a template that behaves differently on the platform than under
+`xwe` is a bug on whichever side diverged from those contracts; the catalog
+hash is the first thing to compare.
+
+## Deferred engine features
+
+These were explicitly kept out of the engine's first plan. Each is a door left
+open, not a gap discovered late.
+
+### No bundle or export format
+
+There is no `.xwf` bundle, no `GET /workflow-templates/{id}/export`, and no
+tethered sync of local results to the platform. You move templates and
+fixtures by hand, as JSON and media files.
+
+### No serve mode, schedules, or watch folders
+
+`xwe run` is one process per run. There is no long-running daemon that accepts
+work, and nothing that watches a directory or a clock.
+
+### No live camera
+
+The live-mode channel semantics (drop-oldest frames, latest wins) are in the
+core, and the editor's webcam simulation is designed around them, but the
+local host shell has no live source: no v4l2, no avfoundation, no MQTT ingest.
+A `webcam` binding fails with "no live ingest support".
+
+### No function nodes
+
+The `custom` node group is reserved for `function.javascript` and
+`function.python`, user code run in a sandboxed child process. They are a
+design placeholder: no executor exists, and the group is empty in the catalog.
+The container image is the intended sandbox boundary when they land, which is
+why the `Dockerfile` avoids anything that would make adding a Python runtime
+painful.
+
+### CPU only
+
+`onnxruntime-node` ships CPU builds for Linux and macOS on x64 and arm64, and
+no GPU execution provider for the Node binding. `model.depth` accepts
+`backend: "gpu-endpoint"` in its schema and nothing implements it. The
+`backend` seam exists so a GPU path costs nothing to add later; the
+[performance](/workflows/performance) page says what CPU buys.
+
+### No device-agent coexistence
+
+The engine is not integrated with the device agent. The measured Compute
+Module 5 run happened on a module with the agent live, which proves they can
+share a host, not that anything coordinates them: no shared media bridge, no
+scheduling around recording, no fleet distribution of templates.
+
+### Not distributed
+
+No npm package, no container registry, no licensing or metering. Run from a
+checkout.
+
+## Bindings that only resolve on the platform
+
+`telemetry_history` (device history from the platform database) and `webcam`
+(the editor's live ingest) are part of the shared binding vocabulary, but the
+local host shell has no database and no live plane, so they fail with a
+message that names the alternative. They will resolve once the platform runs
+the engine through its own shell.

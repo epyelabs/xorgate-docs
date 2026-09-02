@@ -1,0 +1,65 @@
+---
+title: "Performance"
+description: "Measured numbers for the golden runs on a laptop, in a container, and on a Compute Module 5, and what they mean for graph design."
+---
+
+The engine is CPU-only ONNX by decision, and **sampled or batch graphs are its
+target**: process a drive at 2 frames per second, not a live camera at 30. The
+numbers below are the golden runs from the engine's test suite, measured on
+2026-08-31, and they are exactly good enough for that target.
+
+## The measurements
+
+Inputs: the 25 s, 50-frame 720p clip and the 150-sample GPS window shipped in
+`fixtures/`, and `yolov8n` at 640x640.
+
+| Golden run                                         | MacBook (Apple Silicon, bare node) | Same laptop, docker (arm64) | Compute Module 5, 4 GB (bare node) |
+| -------------------------------------------------- | ---------------------------------- | --------------------------- | ---------------------------------- |
+| Overspeed: telemetry only, 150 samples             | under 0.1 s                        | under 0.1 s                 | 0.3 s                              |
+| Perimeter: 50 frames, `yolov8n`, gate              | 4.1 s cold, 1.8 s warm             | about 5 s                   | 14.4 s                             |
+| Visualization plus `--emit-video`                  | 3.8 s                              | 4.7 s                       | 24.4 s                             |
+| `yolov8n` inference per frame                      | 29 to 41 ms                        | about 75 ms                 | about 250 ms                       |
+| Effective frames per second through the model node | 25 or more                         | about 13                    | **about 2.4**                      |
+
+Compute Module 5 detail, from an instrumented `--emit-video` run:
+
+- Decode 11.3 s; detection 20.9 s to end of stream, with the downstream gate,
+  visualization and event steps finishing on the same pipeline at about 21 s.
+- **Peak resident memory 408 MB**, comfortable on a 4 GB module.
+- SoC temperature 60.9 °C to 69.2 °C across the whole 45 s suite, no throttling.
+- The xorgate device agent was **running on the same module** throughout, so
+  this is a busier host than a dedicated runner would be.
+- The full suite (`npm test`, three runs plus probes): 45 s.
+
+The Compute Module 5 is the same silicon as a Raspberry Pi 5, so read the
+column as "Pi 5 class".
+
+## What it means for a graph
+
+- A 2 fps detection graph runs at roughly 0.8x real time on Pi 5 class
+  hardware: 25 s of video in about 21 s. Batch-processing recorded drives on
+  the device is practical; a live 2 fps feed would be borderline; anything
+  faster belongs on a laptop-class or server-class host.
+- Telemetry-only graphs are effectively free everywhere.
+- The h264 mux behind `--emit-video` adds about 10 s per 50 frames on the
+  module (software x264 through the system ffmpeg). Skip the flag when only
+  records and events matter.
+- Results were **identical across all three hosts**: the same 81 detections,
+  the same single overspeed event at the same timestamp. The suite still
+  asserts detection counts with a tolerance, because floating-point variance
+  on other hardware is possible even if it was not observed.
+
+## Reproducing
+
+```bash
+# laptop
+npm ci && npm test
+
+# Pi 5 class device, bare node 20 plus system ffmpeg (docker works too)
+tar czf - package.json package-lock.json tsconfig.json src scripts fixtures \
+  | ssh <device> 'mkdir -p ~/xwe && tar xzf - -C ~/xwe'
+ssh <device> 'cd ~/xwe && npm ci && npm test'
+```
+
+`npm test` prints each golden run's wall time as it goes; per-frame inference
+cost is in the detection node's step summary in `result.json`.

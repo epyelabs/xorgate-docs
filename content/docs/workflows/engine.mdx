@@ -1,0 +1,162 @@
+---
+title: "The engine"
+description: "What xorgate-workflow-engine is, where it is headed, what it needs from a host, and how to run it with docker or bare node."
+---
+
+`xorgate-workflow-engine` is the workflow execution engine, developed as its own
+repository (`engines/xorgate-workflow-engine`). It runs a definition over local
+files and writes the platform's artifact layout, with **no AWS dependency at
+all**: the package has no `@aws-sdk` anywhere in its lockfile, and its smoke
+test fails if one appears. That independence is the point. An engine that
+needs nothing from its host can be handed to a laptop, a container, an edge
+device, or the platform's own runners, and run the same template the same way
+on each.
+
+<Callout title="Not on a registry yet">
+  The engine is not published to npm or a container registry. You run it from a
+  checkout, or build the image from the checkout's `Dockerfile`. Everything on
+  these pages was verified against that checkout, on a laptop, in docker, and on
+  a Compute Module 5.
+</Callout>
+
+## Where it is headed
+
+The engine is developed in isolation on purpose: a standalone codebase is
+easier to test and iterate on, and the platform is used as a source of real
+fixtures (published templates, session video, telemetry windows, registry
+models) rather than as a runtime dependency. The direction is for the
+platform to **consume this engine** as a package or image, so that a workflow
+attached to a device, a scheduled run, and a simulation from the editor all
+execute on exactly the code you can run with `xwe` today.
+
+Everything about the engine's contracts is shaped by that destination:
+
+- The artifact tree a run writes uses the platform's storage key layout under
+  the run prefix, so a local run directory and a platform run are
+  interchangeable for tooling.
+- Source bindings are one shared vocabulary; the local shell resolves them as
+  files, the platform's shell resolves them as storage objects, device history
+  and live ingest.
+- The catalog is one catalog, served to the editor and executed by the engine,
+  with a content hash that tells you at a glance whether two hosts agree.
+
+Until that integration lands, the platform's workflow runs do not execute
+through this package. The line is drawn on
+[What this does not cover](/workflows/not-covered#the-planned-platform-integration).
+
+## What is in the repository
+
+| Directory      | What it is                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| `src/engine/`  | `runGraph`, the bounded channels, ffmpeg and ONNX plumbing, the manifest and result schemas |
+| `src/catalog/` | The 26 node definitions and executors                                                       |
+| `src/models/`  | The model manifest schema (the registry layout)                                             |
+| `src/local/`   | The local host shell: file sources, the artifact writer, secrets, progress, video muxing    |
+| `src/cli/`     | The `xwe` command                                                                           |
+| `fixtures/`    | Real templates, a real drive's video and telemetry, and `yolov8n`, for the golden tests     |
+
+The engine core (`src/engine/`, `src/catalog/`) is storage-free by design.
+Every source reads through a seam, every artifact leaves through a seam, and a
+host supplies the seam implementations. `src/local/` is the host shell for
+files on disk; the platform's shell will supply the same seams over its own
+storage, secrets and progress transport.
+
+## Requirements
+
+- **Node 20 or newer.** The build is CommonJS.
+- **ffmpeg.** Every video node spawns it. Resolution order is `FFMPEG_PATH`,
+  then `ffmpeg` on `PATH`, then the `ffmpeg-static` development dependency if
+  installed. The docker image installs it from apt.
+- **CPU only.** Inference runs through `onnxruntime-node`'s prebuilt CPU
+  binding on Linux and macOS, x64 and arm64. There is no GPU path; see
+  [Performance](/workflows/performance) for what CPU buys you.
+- **Models on disk** for any `model.*` node other than the VLM, in the registry
+  layout described under [Inputs and outputs](/workflows/run-artifacts#models).
+- **A secret** only for the connector (except `osm`) and `model.vlm`.
+
+## Running it
+
+<Tabs items={["Docker", "Bare node"]}>
+
+<Tab value="Docker">
+
+Build from the checkout, then run with your working directory mounted at
+`/work`. Relative template, input and output paths resolve there, and so does
+the default model directory.
+
+```bash
+docker build -t xwe .
+docker run --rm -v "$PWD":/work xwe \
+  run fixtures/templates/overspeed.json \
+  --input telemetry=fixtures/telemetry/window.csv --out out
+```
+
+A multi-architecture image (`linux/amd64` and `linux/arm64`) builds with
+`docker buildx build --platform linux/amd64,linux/arm64 -t xwe .`. The
+entrypoint is the CLI, so any `xwe` argument list works after the image name.
+
+</Tab>
+
+<Tab value="Bare node">
+
+```bash
+npm ci
+npm run build
+npx xwe run fixtures/templates/overspeed.json \
+  --input telemetry=fixtures/telemetry/window.csv --out out
+```
+
+`dist/` is a build artifact, so a fresh checkout needs `npm run build` before
+`npx xwe` resolves. On macOS there is typically no system ffmpeg; the
+`ffmpeg-static` development dependency covers it with no further setup.
+
+</Tab>
+
+</Tabs>
+
+The expected output of that first run, on any host:
+
+```
+[xwe] succeeded in 0.0s -> out/local-1787000000000/result.json
+  ok      n1           150 samples (csv: gps.lat, gps.lon, gps.speed)
+  ok      n2           derived 149 speed_kph values (speed_from_position)
+  ok      n3           true on 149/149 samples (gt 10)
+  ok      n4           emitted 1 event(s)
+  events: 1
+```
+
+## Verifying an install
+
+Two scripts, both offline:
+
+```bash
+npm run smoke   # imports runGraph, counts 26 catalog nodes, prints the catalog hash, asserts no AWS packages
+npm test        # builds, then runs the golden suite
+```
+
+The golden suite is the repository's regression gate. It drives the real CLI
+over the shipped fixtures and asserts outcomes, not bytes: the overspeed
+template must produce exactly one `overspeed` event at a pinned timestamp with
+a pinned observed speed; the detection template must decode exactly 50 frames
+and find 81 objects give or take a tolerance for floating-point variance across
+hosts; the visualization template must emit an MP4 that decodes back to exactly
+50 frames at 2 fps; and a missing input must exit 1 naming the failing node
+while still writing `result.json`.
+
+## The fixtures
+
+Real data, grabbed read-only from the development platform, with provenance
+in `fixtures/README.md`.
+
+| Fixture                                  | What it is                                                                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `templates/overspeed.json`               | The published "Overspeed Detect" template. Telemetry only, no network, no model: the hermetic golden case.        |
+| `templates/perimeter-person-detect.json` | Published: video, `yolov8n`, a person gate, an event.                                                             |
+| `templates/perimeter-visualize.json`     | The same graph plus `output.visualization`, for annotated video.                                                  |
+| `templates/overspeed-osm.json`           | Published: the connector on `osm`. Calls public Overpass at run time, so it is for manual testing, not the suite. |
+| `telemetry/window.csv`                   | 150 s of 1 Hz GPS from one highway drive, 74 to 118 km/h.                                                         |
+| `video/drive.mp4`                        | 25 s of 720p h264 from the same drive and the same minutes, cut from one on-device session segment.               |
+| `models/detection/yolov8n/1/`            | `model.onnx` (12.85 MB) and its manifest, in the registry layout.                                                 |
+
+The video and telemetry are from the same vehicle at the same time, so graphs
+that correlate the two behave as they would on a real session.

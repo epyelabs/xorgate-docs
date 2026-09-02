@@ -1,0 +1,130 @@
+---
+title: "CLI reference"
+description: "The two xwe commands, every flag, how --input keys map to source nodes, the NDJSON progress stream, and the exit codes."
+---
+
+`xwe` is one dispatcher with two subcommands. It has no configuration file and
+no daemon; every run is one process that reads a template, executes it, and
+exits with a code you can act on.
+
+```bash
+xwe validate <template.json>
+xwe run <template.json> --input <key>=<path> ... [options]
+xwe run --manifest <manifest.json> [options]
+```
+
+## `validate`
+
+Parses the template (bare definition or API snapshot), upgrades a v1 graph,
+runs the same publish validation the platform's editor runs, and prints what a
+run of it would need. Real output for the shipped detection template:
+
+```
+OK: 5 nodes, 4 edges (schemaVersion 2)
+required inputs:
+  --input video=<path>   source.video "Video Stream" (node n1)
+required secrets: none
+other requirements: video
+```
+
+On failure it lists every issue with its code and the node or edge it points
+at, and exits 1:
+
+```
+INVALID: 1 issue(s)
+  MISSING_INPUT [viz]: required input "frames" has no edge
+```
+
+"Required secrets" comes from the catalog's capability tokens, so a graph
+with a `google_roads` connector reports `google-roads-api-key` here before you
+find out at run time. "Other requirements" lists the remaining tokens: `video`
+for a video source and one `metric:<name>` per telemetry signal the graph
+expects.
+
+## `run`
+
+| Flag                   | Meaning                                                                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                |
+| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest). |
+| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                     |
+| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                          |
+| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                   |
+| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the defaults `./fixtures/models` and `~/.xorgate/models`.                     |
+| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment.                                                                |
+| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                            |
+| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                 |
+| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                          |
+
+### Input keys
+
+A key is either a **shorthand** for the node's type or a **node id**:
+
+| Key         | Binds                               |
+| ----------- | ----------------------------------- |
+| `video`     | the graph's `source.video` node     |
+| `telemetry` | the graph's `source.telemetry` node |
+| `<nodeId>`  | that node, whatever its type        |
+
+Shorthands only work while the graph has one node of that type; with two video
+sources, `validate` reports their node ids as the keys instead. A key that
+matches no bindable source, or a source left unbound, fails before anything
+runs, with the expected keys in the message. The connector node is never
+bound: it is fed by an edge.
+
+The binding kind is chosen from the node type and the file extension: video
+files become `video_local`; a `.csv` becomes `telemetry_csv`; a `.jsonl` becomes
+`telemetry_materialized`. The formats are on
+[Inputs and outputs](/workflows/run-artifacts#source-bindings).
+
+### What a run prints
+
+Diagnostics go to **stderr**, so stdout stays clean for `--progress json`. A
+successful run ends with one line per step in execution order, the node's own
+summary, and the event count:
+
+```
+[xwe] model detection/yolov8n v1 <- fixtures/models/detection/yolov8n/1/model.onnx
+[engine] n2: decoded 50 frame(s) from fixtures/video/drive.mp4
+[xwe] succeeded in 4.1s -> out/demo/result.json
+  ok      n1           video fixtures/video/drive.mp4 (video_local)
+  ok      n2           50 frame(s) sampled at 2 fps from 1 video(s)
+  ok      n3           81 detection(s) over 50 frame(s) (yolov8n v1, ~36 ms/frame)
+  ok      gate-m6      true on 0/50 detection frame(s)
+  ok      n4           emitted 0 event(s)
+  events: 0
+```
+
+A failed run names the node:
+
+```
+xwe: run failed at node n1: ENOENT: no such file or directory, open '.../missing.csv'
+```
+
+### The progress stream
+
+With `--progress json`, stdout carries the engine's progress messages, one
+object per line, each stamped with `at`. The message set is the engine's, not
+the CLI's; a platform shell publishes the same messages over its own transport:
+
+| `t`      | Fields                                                                   | When                                           |
+| -------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| `status` | `status` (`running` \| `succeeded` \| `failed`), `error`, `failedNodeId` | once at start, once at the end                 |
+| `step`   | `seq`, `nodeId`, `label`, `status`, `output`, `durationMs`               | as each node finishes                          |
+| `event`  | `kind`, `occurredAt`, `confidence`, `payloadSummary`, `payload`          | as `output.event` fires                        |
+| `record` | `nodeId`, `port`, `tag`, `ts`, `seq`, `payload`                          | for each `json`-channel message leaving a node |
+
+`record` covers `json` ports only: connector lookups, VLM verdicts, and the
+like. Detections travel on their own channel and are counted in the detection
+node's step summary rather than streamed.
+
+## Exit codes
+
+| Code | Meaning                                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The run succeeded, or the template validated.                                                                                                                   |
+| `1`  | The run failed (a node threw, or the deadline hit). `result.json` is still written, with `status: "failed"` and the node id. `validate` also exits 1 on issues. |
+| `2`  | Usage or configuration: an unbindable input key, a template that does not parse, a missing file argument. Nothing was run.                                      |
+
+The distinction between 1 and 2 is the useful one for scripting: 2 means the
+invocation was wrong, 1 means the graph was.

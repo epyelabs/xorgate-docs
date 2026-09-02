@@ -1,0 +1,140 @@
+---
+title: "Definitions and templates"
+description: "The schemaVersion 2 definition format, the six channels, how edges resolve to ports, what publish validation rejects, and how v1 graphs are upgraded."
+---
+
+A definition is what the editor saves and what the engine executes. The format
+is react-flow native, which is why every node carries a `position`: the same
+document draws the canvas and runs the graph.
+
+## The document
+
+```json
+{
+  "schemaVersion": 2,
+  "nodes": [
+    {
+      "id": "det",
+      "type": "model.object_detection",
+      "position": { "x": 600, "y": 200 },
+      "data": {
+        "label": "Object Detection",
+        "config": { "model": "yolov8n", "minConfidence": 0.4 }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e2",
+      "source": "dec",
+      "target": "det",
+      "sourceHandle": "frames",
+      "targetHandle": "frames"
+    }
+  ]
+}
+```
+
+| Field                                   | Type               | Notes                                                                                                                                                        |
+| --------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schemaVersion`                         | integer, optional  | `2` for every definition written by the current editor. Absent means a v1 (proof-of-concept) graph, which is upgraded on read. Anything above 2 is rejected. |
+| `nodes[].id`                            | string             | Unique within the definition. It is also the node's directory name in the run's artifact tree.                                                               |
+| `nodes[].type`                          | string             | A catalog type, `group.name`. See the [node catalog](/workflows/catalog).                                                                                    |
+| `nodes[].data.label`                    | string             | The human label. It appears in step summaries and progress messages.                                                                                         |
+| `nodes[].data.config`                   | object             | Parsed against that node type's configuration schema at run time. Missing keys take the schema defaults, so `{}` is valid for most nodes.                    |
+| `nodes[].position`                      | `{ x, y }`         | Canvas coordinates. Required by the schema, ignored by the engine.                                                                                           |
+| `edges[].source` / `target`             | node ids           | Direction is source to target.                                                                                                                               |
+| `edges[].sourceHandle` / `targetHandle` | port ids, optional | When omitted the port is inferred (below). Edges from v1 graphs always omit them.                                                                            |
+
+## Channels
+
+Every port has a channel, and an edge is only valid between compatible ones.
+
+| Channel     | Carries                                           | Typical producers                                                                |
+| ----------- | ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `video`     | a reference to a decodable video input            | `source.video`                                                                   |
+| `frames`    | decoded RGBA frames at the sampled rate           | `video.decode_sample`, `video.scale`                                             |
+| `telemetry` | `{ ts, signals }` samples, one per timestamp      | `source.telemetry`, every `telemetry.*` node                                     |
+| `json`      | typed records, distinguished by a **tag**         | models (`detections`, `depth`, `segments`, `vlm`), the connector (`speed_limit`) |
+| `condition` | a boolean with metadata, one per evaluated sample | `logic.*`, `telemetry.geofence`, `model.vlm`                                     |
+| `event`     | reserved                                          | nothing in the current catalog emits it                                          |
+
+`json` is the one channel that carries more than one kind of data, so its ports
+can be tagged. A tagged input (`logic.detection_gate` wants `detections`) only
+accepts an output with the same tag; an untagged input
+(`output.data_capture`'s `records`) accepts any `json` output. That is how a
+capture node can sit downstream of a connector, a detector or a depth model
+without three variants of itself.
+
+## How an edge finds its ports
+
+Explicit handles win. When a handle is missing, the engine and the validator
+apply the same three rules, in order:
+
+1. If the node has exactly one port on that side, that is the port.
+2. For an input, if exactly one of the node's input ports is channel-compatible
+   with the already-resolved source port, that is the port.
+3. Otherwise the edge fails validation with `UNKNOWN_PORT` (no candidate) or
+   `AMBIGUOUS_PORT` (several).
+
+Rule 2 is what keeps v1 graphs, whose edges have no handles at all, publishable
+after the upgrade. Rule 3 is why a node like `output.visualization`, with four
+inputs, needs handles on every edge into it.
+
+## What publish validation checks
+
+`validateDefinitionForPublish` runs when a template is published from the
+editor and on every `xwe validate` and `xwe run`. It returns a list of issues; an empty
+list is the only passing result.
+
+| Code                              | Meaning                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `UNSUPPORTED_SCHEMA_VERSION`      | `schemaVersion` above 2.                                                                                |
+| `EMPTY_DEFINITION`                | No nodes.                                                                                               |
+| `DUPLICATE_NODE_ID`               | Two nodes share an id.                                                                                  |
+| `UNKNOWN_NODE_TYPE`               | A type the catalog does not know, after alias upgrade.                                                  |
+| `INVALID_CONFIG`                  | `data.config` fails the node's schema.                                                                  |
+| `BAD_EDGE`                        | An edge references a missing node.                                                                      |
+| `UNKNOWN_PORT` / `AMBIGUOUS_PORT` | Port resolution failed, as above.                                                                       |
+| `CHANNEL_MISMATCH`                | The resolved ports carry different channels, or a tag disagrees.                                        |
+| `TOO_MANY_EDGES`                  | More edges into a port than its cardinality allows.                                                     |
+| `MISSING_INPUT`                   | A required input port has no edge.                                                                      |
+| `CONSTRAINT_UNSATISFIED`          | A cross-port rule failed, for example `output.visualization` with none of its overlay inputs connected. |
+| `CYCLE`                           | The graph is not acyclic.                                                                               |
+| `NO_SOURCE` / `NO_OUTPUT`         | The graph has no source node, or no output node.                                                        |
+
+<Callout title="Validation is structural, not semantic">
+  A graph can validate and still produce nothing: a telemetry source whose
+  `metrics` are absent from the bound file, or a detection gate on classes the
+  model never emits. Those show up in the run's step summaries, not at
+  validation time.
+</Callout>
+
+## Upgrading v1 graphs
+
+Definitions without a `schemaVersion` use the proof-of-concept node names.
+`upgradeDefinition` maps them onto catalog types and stamps `schemaVersion: 2`;
+the mapping is part of the served catalog (`aliases`) so the editor can do the
+same thing client-side.
+
+| v1 type                       | Becomes                  |
+| ----------------------------- | ------------------------ |
+| `source.gps`, `source.imu`    | `source.telemetry`       |
+| `processor.decode_sample`     | `video.decode_sample`    |
+| `processor.object_detection`  | `model.object_detection` |
+| `processor.speed_from_gps`    | `telemetry.derivative`   |
+| `processor.speed_limit_check` | `logic.threshold`        |
+| `processor.imu_decel`         | `telemetry.ema`          |
+| `processor.sensor_fusion`     | `telemetry.time_align`   |
+| `logic.composite_rule`        | `logic.boolean`          |
+| `output.alert`                | `output.event`           |
+
+The upgrade renames types and nothing else. A v1 config that does not fit the
+target node's schema surfaces as `INVALID_CONFIG` afterwards.
+
+## Template files
+
+The CLI accepts a template as either a bare definition (the document above) or
+an API snapshot that wraps one under a `definition` key, which is what you get
+when you copy a template out of the platform database or the editor's export.
+Both forms are upgraded and validated the same way.

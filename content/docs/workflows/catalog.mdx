@@ -1,0 +1,98 @@
+---
+title: "Node catalog"
+description: "All 26 node types by group: ports and channels, run target, configuration keys and defaults. Generated from the engine's own catalog payload, not transcribed."
+---
+
+The catalog is the set of node types a definition may use. The engine serves it
+as a payload whose content hash (`catalogVersion`) changes whenever any node
+definition does; the editor uses that hash as an ETag. Everything below was
+read from that payload at `catalogVersion e481243f5ffe4678`.
+
+Ports are written `id:channel`, a `json` port as `id:json/tag`, and an optional
+input with a trailing `?`. **Target** says what a node needs from its host: `any`
+runs wherever the engine runs, `media` additionally needs ffmpeg and ONNX
+Runtime. Every host on these pages (docker, bare node, the device) supplies
+both.
+
+<Callout title="Configuration keys are validated, not merely documented">
+  Each node parses `data.config` against a schema at run time. Unknown keys are
+  rejected, missing keys take the defaults shown, and a value outside its range
+  fails the node's step with the schema's message. The defaults in the tables
+  are the schema's, so `{}` is a complete config wherever every key has one.
+</Callout>
+
+## Source
+
+| Type                    | Ports                                                        | Target | Configuration                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source.telemetry`      | out `telemetry:telemetry`                                    | any    | `metrics` (string[]): the signal keys this source provides, e.g. `gps.speed`, `imu.accel_x`. Filters the bound feed.                                                                                                                                                                                                                                            |
+| `source.video`          | out `video:video`                                            | any    | `streamKey` (string): restrict device bindings to one camera stream. Ignored for file inputs.                                                                                                                                                                                                                                                                   |
+| `connector.third_party` | in `positions:telemetry`, out `speed_limit:json/speed_limit` | any    | `provider` (`google_roads` \| `here` \| `osm`, default `google_roads`); `cacheTtlSeconds` (300); `maxLookupsPerRun` (500). Looks up the posted speed limit along the GPS stream. Google Roads needs the speed-limits licensing on its key, HERE the standard tier, OSM/Overpass no key but throttled to about one lookup a second. Needs a secret unless `osm`. |
+
+`connector.third_party` is in the source group because it produces data, but
+it is fed by an edge, not by an input binding. The two `source.*` nodes are the
+only ones a run manifest binds.
+
+## Video
+
+| Type                  | Ports                                   | Target | Configuration                                                                                                          |
+| --------------------- | --------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `video.decode_sample` | in `video:video`, out `frames:frames`   | media  | `fps` (2): frames sampled per second, at most 30; `maxWidth` (integer): downscale while decoding, default source size. |
+| `video.scale`         | in `frames:frames`, out `frames:frames` | media  | `width` (640); `height` (integer): default keeps the aspect ratio.                                                     |
+
+## Telemetry
+
+Every node here takes `telemetry` in and emits `telemetry` out, except the
+geofence, which emits a `condition`. All run on any target.
+
+| Type                         | Configuration                                                                                                                                                                                                                                                               |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry.derivative`       | `mode` (`rate` \| `speed_from_position`, default `rate`); `signal`: input signal, rate mode only; `outputSignal`: default `<signal>.rate`, or `speed_kph` in position mode. Position mode derives km/h from `gps.latitude`/`gps.longitude` (`gps.lat`/`gps.lon` also work). |
+| `telemetry.ema`              | `signal`: default all signals; `alpha` (0.3): higher follows the input faster.                                                                                                                                                                                              |
+| `telemetry.kalman`           | `signal`: e.g. `gps.speed`; `processNoise` (0.01); `measurementNoise` (1). One-dimensional.                                                                                                                                                                                 |
+| `telemetry.outlier_removal`  | `signal`: default all; `method` (`zscore` \| `iqr`, default `zscore`); `threshold` (3): z-score bound or IQR multiplier.                                                                                                                                                    |
+| `telemetry.resample`         | `intervalSeconds` (1); `method` (`linear` \| `hold` \| `nearest`, default `linear`).                                                                                                                                                                                        |
+| `telemetry.time_align`       | `toleranceMs` (200): samples within the window merge onto one tick. Aligns and merges several telemetry inputs.                                                                                                                                                             |
+| `telemetry.window_aggregate` | `windowSeconds` (60); `fn` (`mean` \| `min` \| `max` \| `sum` \| `count` \| `stddev`, default `mean`); `signal`: default all. Sliding window.                                                                                                                               |
+| `telemetry.geofence`         | out `condition:condition`. `polygon` (`{ lat, lng }[]`): the ring closes itself; `mode` (`inside` \| `outside`, default `inside`); `latSignal` (`gps.latitude`); `lngSignal` (`gps.longitude`).                                                                             |
+
+## Model
+
+All four take `frames:frames` in and run on the `media` target. The three ONNX
+models resolve by name from the model registry; the VLM calls Claude and needs
+the `anthropic-api-key` secret.
+
+| Type                     | Outputs                                                      | Configuration                                                                                                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model.object_detection` | `detections:json/detections`                                 | `model` (`yolov8n`); `minConfidence` (0.4); `classes` (string[]): keep only these class names, default all.                                                                                                                                                                                           |
+| `model.segmentation`     | `segments:json/segments`                                     | `model` (`yolov8n-seg`); `minConfidence` (0.4); `classes`. Per-object masks.                                                                                                                                                                                                                          |
+| `model.depth`            | `depth:json/depth`; optional in `detections:json/detections` | `backend` (`cpu-onnx` \| `gpu-endpoint`, default `cpu-onnx`); `model` (`depth-anything-v2-small`); `renderPreview` (true). `gpu-endpoint` exists in the schema and is not implemented on any target.                                                                                                  |
+| `model.vlm`              | `condition:condition`, `analysis:json/vlm`                   | `prompt`: a yes/no question about the frame; `model` (`claude-sonnet-5` \| `claude-haiku-4-5` \| `claude-opus-4-8`, default `claude-sonnet-5`); `maxFps` (0.5): keep low, cost scales with it; `maxWidth` (512); `minConfidence` (0): the condition is true only at or above this verdict confidence. |
+
+## Logic
+
+Every logic node emits `condition:condition` and runs on any target.
+
+| Type                   | Inputs                               | Configuration                                                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logic.threshold`      | `telemetry:telemetry`                | `signal`: default the input's only signal; `operator` (`gt` \| `gte` \| `lt` \| `lte`, default `gt`); `value` (0); `hysteresis`: release margin; `minDurationMs`: the signal must stay beyond the bound this long first.                           |
+| `logic.comparator`     | `signal:telemetry`, `reference:json` | `signal`; `operator` (default `gt`); `field` (`value`): the field on the reference record; `margin` (0): slack added to the reference. Compares a live signal against time-aligned records, e.g. speed against `speedLimitKph` from the connector. |
+| `logic.debounce`       | `condition:condition`                | `minDurationMs` (2000): sustained-true to pass; `cooldownMs` (0): stay false at least this long after clearing.                                                                                                                                    |
+| `logic.boolean`        | `conditions:condition` (many)        | `op` (`and` \| `or` \| `not`, default `and`).                                                                                                                                                                                                      |
+| `logic.detection_gate` | `detections:json/detections`         | `classes` (`[]` = any); `minConfidence` (0.5); `minCount` (1). True while enough matching objects are in frame.                                                                                                                                    |
+| `logic.proximity_gate` | `depth:json/depth`                   | `classes` (`[]`); `minConfidence` (0.5); `minProximity` (0.6, relative 0 to 1); `minCount` (1). True while a matching object is close enough, from depth-augmented detections.                                                                     |
+
+## Output
+
+| Type                   | Inputs                                                                                                           | Target | Configuration                                                                                                                                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output.event`         | `condition:condition`                                                                                            | any    | `kind` (`detection`): the event kind, e.g. `overspeed`; `attachClip` (false): honored on the media target when video is in the graph; `cooldownSeconds` (0). **Emits on rising edges**: a condition that turns true once and stays true produces exactly one event. |
+| `output.data_capture`  | `records:json` (any tag)                                                                                         | any    | `format` (`jsonl` \| `json`, default `jsonl`). Every record on the input becomes a line, or an element, of `outputs/<nodeId>/records.*`.                                                                                                                            |
+| `output.visualization` | `frames:frames`, plus at least one of `detections:json/detections`, `depth:json/depth`, `segments:json/segments` | media  | `overlays` (`boxes` \| `labels` \| `confidence` \| `depth_map` \| `masks`, default `["boxes", "labels"]`). Writes one annotated JPEG per frame to `frames/<nodeId>/`; the [`--emit-video`](/workflows/run-artifacts#annotated-video) flag muxes them.               |
+
+## The seventh group
+
+`NODE_GROUPS` also names a `custom` group with no members. It is the reserved
+home for user-code nodes (`function.javascript`, `function.python`), which are a
+design placeholder and have no executor. See
+[What this does not cover](/workflows/not-covered#no-function-nodes).

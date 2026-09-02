@@ -1,0 +1,229 @@
+---
+title: "Inputs and outputs"
+description: "Source bindings and their file formats, the run manifest, the artifact tree a run writes and why it mirrors S3, result.json and events.jsonl, models, secrets, and annotated video."
+---
+
+A run's contract is the same on every host: a **run manifest** in, an
+**artifact tree** out with `result.json` written last. The platform stores
+both under `workflows/v2/runs/<runId>/` in object storage. Locally the CLI
+builds the manifest from a template and your `--input` flags, and the tree
+lands in `out/<runId>/` with exactly the same keys.
+
+## Source bindings
+
+A binding tells a source node where its data comes from. Bindings are
+deliberately loose in the manifest schema (`{ kind, ...}`), and each source
+executor parses its own kinds, so a new kind never changes the manifest
+contract. The vocabulary is one shared set; the local host shell resolves the
+key fields as paths on disk, and the platform's shell resolves them against
+its storage, database and live plane.
+
+| Kind                     | Node               | Fields                                  | Local run (`xwe`)                                      | Platform run                     |
+| ------------------------ | ------------------ | --------------------------------------- | ------------------------------------------------------ | -------------------------------- |
+| `video_local`            | `source.video`     | `path`, `startedAt?` (ISO)              | yes, what `--input video=` produces                    | local files on the runner        |
+| `telemetry_csv`          | `source.telemetry` | `s3Key` (a local path here), `metrics?` | yes, what `--input telemetry=x.csv` produces           | uploaded CSV                     |
+| `telemetry_materialized` | `source.telemetry` | `s3Key` (a local path here)             | yes, from a `.jsonl` input                             | dispatcher-materialized history  |
+| `telemetry_inline`       | `source.telemetry` | `samples[]`                             | yes, by hand-written manifest                          | tests                            |
+| `video_file`             | `source.video`     | `s3Key`, `bucket?`, `startedAt?`        | `s3Key` resolves as a path                             | uploaded file                    |
+| `device_session`         | `source.video`     | `sessionId`, `segments[]`, ...          | segment keys resolve as paths                          | on-device recording              |
+| `telemetry_history`      | `source.telemetry` | `metrics?`, `window?`                   | **no**: fails with "not available on the local target" | device history from the database |
+| `webcam`                 | `source.video`     | `maxDurationSeconds?`                   | **no**: no live ingest                                 | the editor's webcam              |
+
+The `s3Key` field name reflects the platform's object storage. Locally it is a
+path, absolute or relative to the working directory, and the CLI never asks
+you to type it.
+
+### Telemetry CSV
+
+The frozen format for uploaded telemetry, and what `--input telemetry=`
+expects:
+
+```csv
+ts,gps.lat,gps.lon,gps.speed
+1786578960289,43.617204,-79.551741,78.9
+1786578961289,43.617385,-79.551838,77.2
+```
+
+A header row with a `ts` column (epoch milliseconds or ISO-8601) and one column
+per signal. Every other cell must be numeric; a non-numeric cell is skipped
+and counted, an unparseable `ts` fails the row. Plain commas, no quoting, at
+most 200,000 rows. Rows sort by `ts` on read, so file order does not matter.
+The node's `metrics` config filters columns; with `metrics` absent every column
+is a signal.
+
+### Telemetry JSONL
+
+One `{ "ts": <ms>, "signals": { "<name>": <number> } }` object per line. This is
+the shape the platform writes when it materializes a device's history window
+for a run, so a history window exported from the platform runs locally without
+conversion.
+
+### Video
+
+Any container ffmpeg can decode; the fixtures are h264 in MP4. `startedAt`
+anchors frame timestamps to wall-clock time so they line up with telemetry.
+Without it, frames are timed from zero.
+
+## The run manifest
+
+`xwe run --manifest` accepts one directly. It is the same document that
+describes a run on the platform:
+
+```json
+{
+  "manifestVersion": 2,
+  "runId": "local-overspeed-golden",
+  "mode": "batch",
+  "deviceId": null,
+  "window": {
+    "from": "2026-08-12T23:56:00.289Z",
+    "to": "2026-08-12T23:58:29.313Z"
+  },
+  "definition": { "schemaVersion": 2, "nodes": [], "edges": [] },
+  "inputs": [
+    {
+      "nodeId": "n1",
+      "binding": {
+        "kind": "telemetry_csv",
+        "s3Key": "fixtures/telemetry/window.csv"
+      }
+    }
+  ],
+  "output": {
+    "bucket": "local",
+    "prefix": "workflows/v2/runs/local-overspeed-golden/"
+  },
+  "limits": {}
+}
+```
+
+| Field                            | Notes                                                                                                                   |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `mode`                           | `batch`, `live` or `simulation`. Live mode switches frame channels to drop-oldest; `xwe` runs `batch`.                  |
+| `deviceId`, `window`             | Trigger context. Sources default to the window; file bindings ignore it.                                                |
+| `definition`                     | Embedded verbatim, `schemaVersion: 2`.                                                                                  |
+| `output.bucket`, `output.prefix` | Where artifacts go. Locally the bucket is the label `local` and the prefix's layout is reproduced under `out/<runId>/`. |
+| `orgId?`, `progress?`            | Platform context: the owning organization (for credential resolution) and the live progress topic. Ignored locally.     |
+| `limits.maxRuntimeSeconds?`      | The deadline. On expiry everything is cancelled and the run fails.                                                      |
+
+## The artifact tree
+
+```
+out/<runId>/
+  result.json                     written LAST; the run's status and summary
+  events.jsonl                    one event per line, only if any fired
+  outputs/<nodeId>/records.jsonl  one per output.data_capture node (records.json when format=json)
+  frames/<nodeId>/<seq>.jpg       one per annotated frame, per output.visualization node
+  video/<nodeId>.mp4              with --emit-video
+```
+
+Two rules hold on every host. **`result.json` is written last**, after every
+other artifact is durable, so its presence means the tree is complete. And
+**the layout is the platform's storage key layout under the run prefix**, so
+a local run directory and a platform run are interchangeable for tooling.
+
+### `result.json`
+
+```json
+{
+  "resultVersion": 2,
+  "engineVersion": 2,
+  "runId": "local-overspeed-golden",
+  "status": "succeeded",
+  "error": null,
+  "failedNodeId": null,
+  "steps": [
+    {
+      "seq": 0,
+      "nodeId": "n1",
+      "label": "GPS",
+      "status": "ok",
+      "output": "150 samples (csv: gps.lat, gps.lon, gps.speed)",
+      "durationMs": 2
+    }
+  ],
+  "events": [
+    {
+      "kind": "overspeed",
+      "occurredAt": "2026-08-12T23:56:01.289Z",
+      "confidence": 1,
+      "payloadSummary": "overspeed · observed 77.717",
+      "payload": {
+        "signal": "speed_kph",
+        "observed": 77.717,
+        "operator": "gt",
+        "threshold": 10
+      },
+      "clipKey": null
+    }
+  ],
+  "metrics": { "nodes": 4, "okSteps": 4, "events": 1, "messages": 449 },
+  "artifacts": {
+    "eventsKey": "workflows/v2/runs/local-overspeed-golden/events.jsonl",
+    "outputs": {}
+  }
+}
+```
+
+`steps` is one row per node in completion order with the executor's own
+one-line summary in `output`; a skipped node (downstream of a failure) has
+`status: "skipped"`. `events` is the same list as `events.jsonl`. `artifacts`
+points at the events file and at each capture node's records file with its
+count and format, as storage keys under the run prefix.
+
+Together, `events.jsonl` and the step summaries are the run's **trace**: what
+each node saw, what it produced, and what fired. There is no separate trace
+file.
+
+## Models
+
+The three ONNX nodes name a model (`yolov8n`, `yolov8n-seg`,
+`depth-anything-v2-small`) and the engine resolves it from a registry with one
+fixed layout, in object storage on the platform and on disk here:
+
+```
+<root>/<family>/<name>/<version>/manifest.json
+<root>/<family>/<name>/<version>/model.onnx
+```
+
+Families are `detection`, `segmentation` and `depth`. The highest numeric
+version wins. Roots are searched in order: every `--models-dir`, then
+`./fixtures/models`, then `~/.xorgate/models`; there is no network fetch. A
+missing model fails the node's step with the paths it tried.
+
+The manifest is the same document the platform's registry stores: `manifestVersion: 1`,
+the family, name and version, `backend: "cpu-onnx"`, the input tensor
+contract (`width`, `height`, `layout`, `colorSpace`, `normalize`, `letterbox`),
+and `classNames`. The fixtures carry `yolov8n`; the other two are pulled from
+the development registry the same way, as `fixtures/README.md` describes.
+
+## Secrets
+
+Executors ask for a secret by **logical name**; the target maps it to a value.
+Three names exist:
+
+| Logical name           | Used by                                               |
+| ---------------------- | ----------------------------------------------------- |
+| `google-roads-api-key` | `connector.third_party` with `provider: google_roads` |
+| `here-api-key`         | `connector.third_party` with `provider: here`         |
+| `anthropic-api-key`    | `model.vlm`                                           |
+
+Locally, a `--secrets` file (`{ "anthropic-api-key": "..." }`) wins, then the
+environment variable `XORGATE_SECRET_<NAME>` with the name upper-cased and
+dashes replaced by underscores (`XORGATE_SECRET_ANTHROPIC_API_KEY`). Nothing is
+cached to disk and nothing is required for a graph without those nodes.
+Per-organization credential resolution is a platform shell concern and does
+not exist in the local shell.
+
+## Annotated video
+
+`output.visualization` writes one annotated JPEG per frame; `--emit-video` turns
+each node's frame directory into `video/<nodeId>.mp4` after a successful run.
+The frames are streamed to ffmpeg in sequence order, one input JPEG per output
+frame, and the run fails loudly if the muxed count differs from the JPEG count.
+The frame rate is read from the `video.decode_sample` node feeding the
+visualization's `frames` input, through its schema, so an unset `fps` means 2.
+
+The encoding is h264 in MP4 (`yuv420p`), which any player opens. This is a
+feature of the CLI, not of the catalog: no node knows about it, which is what
+keeps the catalog free of host-specific concerns.

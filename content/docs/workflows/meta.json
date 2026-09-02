@@ -1,0 +1,13 @@
+{
+  "title": "Workflows",
+  "pages": [
+    "index",
+    "definitions",
+    "catalog",
+    "engine",
+    "cli",
+    "run-artifacts",
+    "performance",
+    "not-covered"
+  ]
+}

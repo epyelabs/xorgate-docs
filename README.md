@@ -26,7 +26,7 @@ API. Without it, the dev values in `lib/shared.ts` apply.
 | Path                           | What it is                                                                |
 | ------------------------------ | ------------------------------------------------------------------------- |
 | `content/docs/**`              | The documentation itself, MDX plus `meta.json` sidebar ordering           |
-| `content/docs/meta.json`       | Top-level section order, and the reserved Workflows/AI slot               |
+| `content/docs/meta.json`       | Top-level section order                                                   |
 | `lib/source.ts`                | Content source adapter (Fumadocs `loader()`)                              |
 | `lib/shared.ts`                | Site name, routes, and all build-time environment values                  |
 | `lib/layout.shared.tsx`        | Shared layout options (nav title, GitHub link)                            |
@@ -41,10 +41,13 @@ API. Without it, the dev values in `lib/shared.ts` apply.
 
 ## Sections
 
-The sidebar order lives in `content/docs/meta.json`. Six sections:
+The sidebar order lives in `content/docs/meta.json`. Seven sections:
 Getting started, Platform concepts, API reference, Backend SDK (JS), Frontend SDK
-(React), Device SDK. A seventh, Workflows/AI, is reserved in that file as a
-comment and deliberately unwritten.
+(React), Device SDK, and Workflows. The Workflows section documents the
+definition format, the node catalog and the engine
+(`engines/xorgate-workflow-engine`), and states the plan for the platform to run
+on that same engine; the platform's workflow API itself is still undocumented,
+which its `not-covered` page says.
 
 Getting started and API reference carry real prose today. The other four are
 placeholders with a "what lives here" paragraph, filled in by later phases of the
