@@ -1,5 +1,5 @@
 ---
-title: Remove a member (owner/admin only)
+title: Remove a member, or leave the organization
 full: true
 _openapi:
   preload:
@@ -11,8 +11,11 @@ _openapi:
     headings: []
     contents:
       - content: >-
-          Removing the last remaining owner is refused with a 403, so an
-          organization can never be left ownerless.
+          Owners and admins can remove any member. Any member can remove THEIR
+          OWN membership (leave); addressing someone else's with a lower role is
+          a 403. Removing the last remaining owner is refused with a 403 either
+          way, so an organization can never be left ownerless — hand ownership
+          over first, or delete the organization.
 
 
           Side effect: if this removal takes away the member's LAST organization

@@ -3,6 +3,10 @@
   "description": "Who the caller is, and which organizations they can act in.",
   "pages": [
     "index",
-    "get-me"
+    "get-me",
+    "update-me",
+    "delete-me",
+    "delete-my-avatar",
+    "upload-my-avatar"
   ]
 }

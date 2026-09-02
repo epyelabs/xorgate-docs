@@ -137,8 +137,13 @@ There is no membership update endpoint. Changing a role means remove then add.
 See
 [Users and organizations](/backend-sdk/resources/users-and-organizations).
 
-### Devices are not decommissioned, only deleted
+### Deleting is final, and it is thorough
 
-`devices.delete()` removes the rows and cascades, but leaves the AWS IoT thing
-and certificate in place. There is no soft delete and no restore anywhere in the
-API.
+`devices.delete()` removes the rows and cascades, and since the destroy
+mechanism (API 0.7) it also tears down the AWS side: the IoT thing and
+certificate, the KVS signaling channels, the uploaded media and telemetry
+objects, and the FK-less telemetry history. `workspaces.delete()` and
+`organizations.delete()` do the same for every device under them. There is no
+soft delete and no restore anywhere in the API, and no SDK method yet for
+`DELETE /me` (closing the caller's own account) — that is a console operation
+today; call the endpoint directly if you need it from code.

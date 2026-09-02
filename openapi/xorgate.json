@@ -3,7 +3,7 @@
   "info": {
     "title": "Xorgate Core API",
     "version": "0.7.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: five\noperations accept only an ID token, because they describe or act on a person (`GET /me`,\n`GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
   },
   "servers": [
     {
@@ -99,7 +99,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "A Cognito **ID** token (not an access token). Users are created just-in-time on first successful verification. This is what a signed-in browser session sends. A handful of operations accept ONLY this, because they describe or act on a person: `GET /me`, both `/organizations` collection operations, and the two live-access operations."
+        "description": "A Cognito **ID** token (not an access token). Users are created just-in-time on first successful verification. This is what a signed-in browser session sends. A handful of operations accept ONLY this, because they describe or act on a person: the four `/me` operations, both `/organizations` collection operations, and the two live-access operations."
       },
       "ApiKeyAuth": {
         "type": "http",
@@ -330,6 +330,12 @@
             "type": "string",
             "nullable": true
           },
+          "avatarUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Presigned GET for the profile picture, valid one hour, or null when the user has none. Minted per response — the bucket is private, so the URL is the only way to read the object and it cannot be cached past its expiry. Present on the `/me` operations only; elsewhere a user block is the row and carries no picture."
+          },
           "tier": {
             "type": "string",
             "enum": [
@@ -371,6 +377,12 @@
           },
           "slug": {
             "type": "string"
+          },
+          "logoUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Presigned GET for the organization logo, valid one hour, or null when it has none. Minted per response — the bucket is private, so the URL is the only way to read the object and it cannot be cached past its expiry. Clients that draw a placeholder fall back to the initials of `name`."
           },
           "created_at": {
             "type": "string",
@@ -738,6 +750,12 @@
           "description": {
             "type": "string",
             "nullable": true
+          },
+          "logoUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Presigned GET for the workspace logo, valid one hour, or null when it has none. Same contract as `Organization.logoUrl`."
           },
           "createdAt": {
             "type": "string",
@@ -2699,6 +2717,24 @@
       "NoContent": {
         "description": "Deleted. Empty body."
       },
+      "MeUser": {
+        "description": "The caller's profile after the write.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "user"
+              ],
+              "properties": {
+                "user": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      },
       "DeviceCommandAccepted": {
         "description": "Command published to the device. Delivery to the broker only. The device may still reject it as expired or already-executed, and the real outcome is observed via device status.",
         "content": {
@@ -2794,6 +2830,169 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteMe",
+        "summary": "Delete the caller's own account",
+        "description": "Closes the account for good: the Cognito user (so the email can sign up again from nothing), the profile row and picture, every organization membership, and the browser live-plane policy. Organizations the caller merely belonged to are untouched; device registrations they created keep a null creator.\n\nRefused with `409 OWNS_ORGANIZATIONS` while the caller is the ONLY owner of any organization — the response lists them under `details.organizations`. Hand ownership to another member first (`PATCH /memberships/{id}` with `role: \"owner\"`) or delete the organization (`DELETE /organizations/{id}`). Several owners are allowed, so an owner who is not the last one is not blocked.\n\nThe ID token that made this call stays verifiable until it expires, but every later request with it is refused with `401 ACCOUNT_DELETED` rather than re-creating the profile. There is no undo.\n\n**Cognito ID token only.** An `xg_` API key is refused with `401 USER_CREDENTIAL_REQUIRED`: this operation acts on a person, and a key has no user behind it.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "$ref": "#/components/responses/NoContent"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The caller is the sole owner of at least one organization (`OWNS_ORGANIZATIONS`); `details.organizations` lists `{id, name, slug}` for each.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateMe",
+        "summary": "Update the caller's own profile",
+        "description": "Sets the display name on the caller's `users` row. `null` clears it, and clients fall back to the email address. Nothing else about a user is editable here: the email is the Cognito sign-in and the tier and platform role are not self-service.\n\nThe name is NOT written back to the Cognito `name` attribute. That attribute seeds the row the first time a token is seen and has no reader afterwards; this row is the profile.\n\n**Cognito ID token only.** An `xg_` API key is refused with `401 USER_CREDENTIAL_REQUIRED`: this operation acts on a person, and a key has no user behind it.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "description": "Trimmed before storing. `null` clears the name."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeUser"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/me/avatar": {
+      "put": {
+        "operationId": "uploadMyAvatar",
+        "summary": "Replace the caller's profile picture",
+        "description": "The image arrives as base64 in the body rather than through a presigned PUT: clients downscale to a 512px square first, so the payload is tens of kilobytes and one round trip writes both the object and the row that points at it.\n\nThe declared `contentType` is checked against the bytes themselves — a payload whose magic number disagrees with its label is refused, because the declared type is what gets served back on the presigned GET. The stored object is private; the response carries a fresh `avatarUrl` for it.\n\n**Cognito ID token only.** An `xg_` API key is refused with `401 USER_CREDENTIAL_REQUIRED`: this operation acts on a person, and a key has no user behind it.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contentType",
+                  "data"
+                ],
+                "properties": {
+                  "contentType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp"
+                    ],
+                    "description": "Must match what the bytes actually are."
+                  },
+                  "data": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64 with no `data:` prefix. Decodes to at most 1.5 MB; larger is a 400."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeUser"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteMyAvatar",
+        "summary": "Remove the caller's profile picture",
+        "description": "Clears the picture; clients fall back to initials. Idempotent — a caller with no picture gets the same 200.\n\n**Cognito ID token only.** An `xg_` API key is refused with `401 USER_CREDENTIAL_REQUIRED`: this operation acts on a person, and a key has no user behind it.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeUser"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3050,13 +3249,133 @@
       "delete": {
         "operationId": "deleteOrganization",
         "summary": "Delete the organization (owner only)",
-        "description": "Cascades: workspaces, devices, API keys and memberships under this organization go with it. There is no undo and no soft-delete.",
+        "description": "Destroys the organization and everything under it: every workspace and every device (each torn down the way `DELETE /devices/{id}` is — IoT identity, video channels, uploaded media, telemetry), API keys and the session tokens minted from them, memberships, workflow templates, connector credentials in Secrets Manager, and the logos. Members whose only organization this was lose live-plane access. There is no undo and no soft-delete; a minimal deletion record (id, slug, counts, who, when) is kept.",
         "tags": [
           "Organizations"
         ],
         "responses": {
           "204": {
             "$ref": "#/components/responses/NoContent"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/organizations/{id}/logo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "put": {
+        "operationId": "uploadOrganizationLogo",
+        "summary": "Replace the organization logo (owner/admin only)",
+        "description": "The image arrives as base64 in the body rather than through a presigned PUT: clients fit it into a 512px square first, so the payload is tens of kilobytes and one round trip writes both the object and the row that points at it.\n\nThe declared `contentType` is checked against the bytes themselves — a payload whose magic number disagrees with its label is refused, because the declared type is what gets served back on the presigned GET. The stored object is private; the response carries a fresh `logoUrl` for it, and the previous object is deleted only after the row points at the new one.\n\nOrganization-wide, like every organization write: `{id}` must be the active organization, and a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
+        "tags": [
+          "Organizations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contentType",
+                  "data"
+                ],
+                "properties": {
+                  "contentType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp"
+                    ],
+                    "description": "Must match what the bytes actually are."
+                  },
+                  "data": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64 with no `data:` prefix. Decodes to at most 1.5 MB; larger is a 400."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logo replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "organization"
+                  ],
+                  "properties": {
+                    "organization": {
+                      "$ref": "#/components/schemas/Organization"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrganizationLogo",
+        "summary": "Remove the organization logo (owner/admin only)",
+        "description": "Clears the logo; clients fall back to the initials of the name. Idempotent — an organization with no logo answers 200 with `logoUrl: null`.",
+        "tags": [
+          "Organizations"
+        ],
+        "responses": {
+          "200": {
+            "description": "Logo removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "organization"
+                  ],
+                  "properties": {
+                    "organization": {
+                      "$ref": "#/components/schemas/Organization"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3159,7 +3478,7 @@
       "post": {
         "operationId": "addMembership",
         "summary": "Add a user to the active organization (owner/admin only)",
-        "description": "Adds a member by `userId` or `email`. If an `email` has no account yet, a Cognito account is provisioned and the invitee is emailed a temporary password to set on first sign-in. `invited` is true when a new account was created and emailed. Adding someone who is already a member is a 400, not a no-op.",
+        "description": "Adds a member by `userId` or `email`. If an `email` has no account yet, a Cognito account is provisioned and the invitee is emailed a temporary password to set on first sign-in; the invitation names this organization and the caller. `invited` is true when a new account was created and emailed. Someone who already has an account gets no credential, so they are emailed a notice that they were added instead. Either email is best-effort and never fails the request. Adding someone who is already a member is a 400, not a no-op.",
         "tags": [
           "Memberships"
         ],
@@ -3307,8 +3626,8 @@
       },
       "delete": {
         "operationId": "removeMembership",
-        "summary": "Remove a member (owner/admin only)",
-        "description": "Removing the last remaining owner is refused with a 403, so an organization can never be left ownerless.\n\nSide effect: if this removal takes away the member's LAST organization membership, their live-plane access is revoked too (see `DELETE /live/access`), and any live subscription they hold dies on its next reconnect. Members who still belong to another organization keep live access.",
+        "summary": "Remove a member, or leave the organization",
+        "description": "Owners and admins can remove any member. Any member can remove THEIR OWN membership (leave); addressing someone else's with a lower role is a 403. Removing the last remaining owner is refused with a 403 either way, so an organization can never be left ownerless — hand ownership over first, or delete the organization.\n\nSide effect: if this removal takes away the member's LAST organization membership, their live-plane access is revoked too (see `DELETE /live/access`), and any live subscription they hold dies on its next reconnect. Members who still belong to another organization keep live access.",
         "tags": [
           "Memberships"
         ],
@@ -3873,14 +4192,134 @@
       },
       "delete": {
         "operationId": "deleteWorkspace",
-        "summary": "Delete a workspace",
-        "description": "Cascades to the devices in it, and to their sessions and telemetry, and to any session token scoped to it. Organization-wide: a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
+        "summary": "Delete a workspace (owner/admin only)",
+        "description": "Deletes every device in the workspace the way `DELETE /devices/{id}` does — IoT identity, video channels, uploaded media and telemetry included — then the workspace, its logo, and any session token scoped to it. There is no undo. Organization-wide: a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
         "tags": [
           "Workspaces"
         ],
         "responses": {
           "204": {
             "$ref": "#/components/responses/NoContent"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}/logo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "put": {
+        "operationId": "uploadWorkspaceLogo",
+        "summary": "Replace the workspace logo",
+        "description": "Identical in every respect to `PUT /organizations/{id}/logo` — base64 body, declared type checked against the bytes, private object, presigned `logoUrl` on the response — one level down. Organization-wide, like every workspace write: a workspace-scoped session token gets `403 WORKSPACE_SCOPED`.",
+        "tags": [
+          "Workspaces"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contentType",
+                  "data"
+                ],
+                "properties": {
+                  "contentType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp"
+                    ],
+                    "description": "Must match what the bytes actually are."
+                  },
+                  "data": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64 with no `data:` prefix. Decodes to at most 1.5 MB; larger is a 400."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logo replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "workspace"
+                  ],
+                  "properties": {
+                    "workspace": {
+                      "$ref": "#/components/schemas/Workspace"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWorkspaceLogo",
+        "summary": "Remove the workspace logo",
+        "description": "Clears the logo; clients fall back to the initials of the name. Idempotent — a workspace with no logo answers 200 with `logoUrl: null`.",
+        "tags": [
+          "Workspaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "Logo removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "workspace"
+                  ],
+                  "properties": {
+                    "workspace": {
+                      "$ref": "#/components/schemas/Workspace"
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -4540,8 +4979,8 @@
       },
       "delete": {
         "operationId": "deleteDevice",
-        "summary": "Delete a device",
-        "description": "Removes the row and everything cascading off it (identity, video channels, sessions, telemetry). The AWS IoT thing and certificate are NOT torn down by this endpoint.",
+        "summary": "Delete a device (owner/admin only)",
+        "description": "Removes the device and everything it owns: the row and what cascades off it (identity, video channels, sessions, workflow attachments and runs), its telemetry history, AND the AWS side — the IoT thing and certificate, the KVS signaling channels, and the uploaded media and telemetry objects. The AWS teardown is best-effort: a device with a very large upload history may leave objects behind, which the bucket lifecycle expires (recorded media within 90 days). There is no undo. The device agent, if still running, loses its identity and must be re-enrolled with a new claim code.",
         "tags": [
           "Devices"
         ],
