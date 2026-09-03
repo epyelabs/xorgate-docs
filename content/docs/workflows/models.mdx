@@ -114,81 +114,314 @@ runs, which is the platform's behaviour too.
 A fine-tuned or entirely private model is a directory in the layout, not a
 special case. The engine never checks where a model came from; it checks that
 the manifest parses and that its `postprocess.kind` is one it implements.
-Three steps:
+This walkthrough takes a YOLOv8 detector fine-tuned on two classes,
+`forklift` and `pallet`, from training output to a running template, first
+with the CLI and then from code.
+
+### The layout you are producing
+
+```
+models/
+  detection/
+    acme-forklift/
+      1/
+        manifest.json
+        model.onnx
+```
+
+`models/` is any directory you choose to pass as a root. `detection` is the
+family the `model.object_detection` node asks for. `acme-forklift` is the
+name a template will carry. `1` is the version; a retrained model becomes
+`2/` next to it and templates that do not pin a version pick it up.
 
 <Steps>
 
 <Step>
 
-### Export to ONNX with a manifest
+### Export to ONNX and write the manifest
 
-The model must be an ONNX graph whose input and output tensors match a
-`postprocess.kind` the engine implements: `yolov8` for a YOLOv8-style
-detector, `yolov8-seg` for its segmentation head, `depth-anything` for a
-single relative-depth map. A YOLOv8 fine-tune keeps the output layout, so it
-needs no engine change; only `classNames` changes, to your classes in your
-training order. The export scripts that produce the first-party manifests
-(`export_yolo.py`, `export_depth.py`) are planned to ship in the engine
-repository under `tools/export/`, and they write both files:
+The engine reads the model's geometry, normalization, class names and
+post-processing parameters from the manifest, so the export step's job is to
+produce both files consistently. The export tool that produces the
+first-party models is planned to ship in the engine repository under
+`tools/export/`, and it accepts your own weights:
 
+```bash
+python tools/export/export_yolo.py \
+  --weights runs/train/forklift/weights/best.pt \
+  --name acme-forklift --version 1 \
+  --out ./models
 ```
-models/detection/acme-forklift/1/manifest.json
-models/detection/acme-forklift/1/model.onnx
+
+It exports `best.pt` to `model.onnx` at the training image size, reads the
+class names from the weights, and writes this manifest next to it:
+
+```json
+{
+  "manifestVersion": 1,
+  "family": "detection",
+  "name": "acme-forklift",
+  "version": 1,
+  "label": "Forklift detector (site A, 2026-09)",
+  "backend": "cpu-onnx",
+  "input": {
+    "width": 640,
+    "height": 640,
+    "layout": "nchw",
+    "colorSpace": "rgb",
+    "normalize": { "scale": 0.00392156862745098 },
+    "letterbox": { "enabled": true, "padValue": 114 }
+  },
+  "classNames": ["forklift", "pallet"],
+  "postprocess": { "kind": "yolov8", "nmsIouThreshold": 0.45 },
+  "files": {
+    "model.onnx": { "sha256": "9f2c…", "sizeBytes": 12212736 }
+  }
+}
 ```
+
+If you export another way (Ultralytics' own `yolo export format=onnx`, or a
+training framework's exporter), write this manifest by hand. The only fields
+that change between a stock YOLOv8 and a fine-tune are `name`, `label`,
+`classNames` and, if you trained at another size, `input.width` and
+`input.height`. `classNames` must be in the training's class-index order,
+because that is how the output tensor is decoded.
 
 </Step>
 
 <Step>
 
-### Check it before a template names it
+### Check the directory
 
 ```bash
 xwe models check ./models/detection/acme-forklift/1
 ```
 
-Parses the manifest, loads the model through ONNX Runtime, runs one letterboxed
-blank frame through it and confirms the output tensor has the shape the
-`postprocess.kind` expects for `classNames.length` classes. It also fills in
-`files.sha256` and `sizeBytes` when they are missing, so the directory is
-ready to serve from a registry. A shape mismatch is reported here, with both
-shapes, instead of as a failed step in the middle of a run.
+```
+manifest   ok   detection/acme-forklift v1, yolov8, 2 classes, 640x640 nchw rgb
+model      ok   model.onnx 11.6 MB, sha256 verified
+session    ok   onnxruntime-node 1.19.2, input "images" [1,3,640,640]
+output     ok   "output0" [1,6,8400] matches yolov8 with 2 classes (4 + 2)
+```
+
+The last line is the one that matters. A YOLOv8 head outputs
+`4 + classNames.length` rows; a manifest that lists two classes for a model
+trained on three fails here, with both numbers, instead of as a garbled
+detection list halfway through a run. `check` also fills in `files.sha256`
+and `sizeBytes` when the manifest lacks them, so a hand-written manifest
+becomes registry-ready.
 
 </Step>
 
 <Step>
 
-### Name it in the template
+### Name it in a template
+
+A template names the model in the detection node's config and, since the
+class names are now yours, uses them in the nodes downstream:
 
 ```json
 {
-  "type": "model.object_detection",
-  "data": { "config": { "model": "acme-forklift" } }
+  "schemaVersion": 2,
+  "nodes": [
+    {
+      "id": "src",
+      "type": "source.video",
+      "data": { "label": "Camera", "config": {} },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "dec",
+      "type": "video.decode_sample",
+      "data": { "label": "2 fps", "config": { "fps": 2 } },
+      "position": { "x": 200, "y": 0 }
+    },
+    {
+      "id": "det",
+      "type": "model.object_detection",
+      "data": {
+        "label": "Forklifts",
+        "config": { "model": "acme-forklift", "minConfidence": 0.5 }
+      },
+      "position": { "x": 400, "y": 0 }
+    },
+    {
+      "id": "gate",
+      "type": "logic.detection_gate",
+      "data": {
+        "label": "Forklift in frame",
+        "config": { "classes": ["forklift"], "minCount": 1 }
+      },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "evt",
+      "type": "output.event",
+      "data": {
+        "label": "Forklift seen",
+        "config": { "kind": "forklift_present" }
+      },
+      "position": { "x": 800, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "src", "target": "dec" },
+    { "id": "e2", "source": "dec", "target": "det" },
+    { "id": "e3", "source": "det", "target": "gate" },
+    { "id": "e4", "source": "gate", "target": "evt" }
+  ]
 }
 ```
 
-Point a run at the directory with `--models-dir ./models` or
-`localHost({ modelDirs })`, or copy it into the cache, or serve it from a
-private registry in the same layout and pull it. The node's step summary
-names the model and version it loaded.
+`"model": "acme-forklift@1"` pins the version; without the pin the highest
+version under any root wins.
+
+</Step>
+
+<Step>
+
+### Run it
+
+```bash
+xwe validate forklift.json
+xwe run forklift.json --input video=yard.mp4 --models-dir ./models --out out
+```
+
+```
+[xwe] model detection/acme-forklift v1 <- models/detection/acme-forklift/1/model.onnx
+[xwe] succeeded in 6.2s -> out/local-1789000000000/result.json
+  ok      src          video yard.mp4 (video_local)
+  ok      dec          50 frame(s) sampled at 2 fps from 1 video(s)
+  ok      det          37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
+  ok      gate         true on 22/50 detection frame(s)
+  ok      evt          emitted 3 event(s)
+  events: 3
+```
+
+The first line names the model and version the run loaded and the file it
+came from, which is the thing to read when a run used a model you did not
+expect. Without `--models-dir`, the cache (`~/.xorgate/models`) is searched,
+so `cp -r models/detection/acme-forklift ~/.xorgate/models/detection/` makes
+the model available to every run on the machine.
 
 </Step>
 
 </Steps>
 
-Two limits are worth knowing. A model whose output layout matches no existing
-`postprocess.kind` needs a decoder in the engine, which is a contribution to
-the engine or a `model.*` node in a [pack](/workflows/extending) that carries
-its own; the manifest's `kind` enum is the list of what exists. And the
-manifest's `family` is one of `detection`, `segmentation` and `depth` today
-because those are the three model nodes; a pack that adds a node for a new
-family (`classification`, say) needs the family accepted by the manifest
-schema, which is planned as an open string with the known values documented
-rather than an enum, so that packs can bring families without an engine
-release.
+### Sharing it: a private registry
 
-On the platform, a private model is the same directory uploaded to the
-organization's own registry prefix; that upload path is a platform feature
-and is not part of the engine.
+A registry is a static file server in the layout with an `index.json` at
+the root. Nothing else is required, so a team's registry can be a bucket, an
+internal web server, or a directory served during a test:
+
+```
+registry/
+  index.json
+  detection/acme-forklift/1/manifest.json
+  detection/acme-forklift/1/model.onnx
+```
+
+`index.json` is an array of the manifests, so `xwe models list` can show
+what is available without walking directories:
+
+```json
+[
+  {
+    "family": "detection",
+    "name": "acme-forklift",
+    "version": 1,
+    "label": "Forklift detector (site A, 2026-09)"
+  }
+]
+```
+
+Point pulls at it and everything on this page works against it:
+
+```bash
+export XWE_MODEL_REGISTRY=https://models.acme.internal
+xwe models list
+xwe models pull detection/acme-forklift
+xwe run forklift.json --input video=yard.mp4 --pull
+```
+
+`pull` verifies the manifest's `files.sha256` after download, which is why
+`check` fills it in.
+
+### From code
+
+The library resolves models exactly as the CLI does; the options are the same
+words:
+
+```ts
+import { createEngine } from "@xorgate/workflow-engine"
+import { localHost } from "@xorgate/workflow-engine/local"
+
+const engine = createEngine({
+  host: localHost({
+    modelDirs: ["./models"],                          // searched first
+    models: { registryUrl: "https://models.acme.internal", pull: true }, // then the cache, then this
+    outDir: "./out",
+  }),
+})
+
+const run = await engine.run({ template: "./forklift.json", inputs: { video: "./yard.mp4" } })
+for (const step of run.result.steps) console.log(step.nodeId, step.status, step.output)
+// det ok 37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
+```
+
+The check is available as a function too, for a build step or a test:
+
+```ts
+import { checkModelDir } from "@xorgate/workflow-engine/local"
+
+const report = await checkModelDir("./models/detection/acme-forklift/1")
+if (!report.ok) throw new Error(report.problems.join("\n"))
+```
+
+A host with its own storage does not use directories at all. Models reach
+the engine through one seam method, and a host that keeps weights in a
+bucket, a database or memory implements just that method. The engine caches
+the session per model for the run, so the method is called once per model
+per run:
+
+```ts
+import { runGraph } from "@xorgate/workflow-engine"
+import { modelManifestSchema } from "@xorgate/workflow-engine"
+
+const sources = {
+  ...fileSources,
+  async fetchModel({ family, name }) {
+    const prefix = `models/${family}/${name}/${await latestVersion(family, name)}/`
+    const manifest = modelManifestSchema.parse(JSON.parse(await bucket.text(prefix + "manifest.json")))
+    const modelPath = await bucket.downloadToTemp(prefix + "model.onnx")  // ONNX Runtime opens a file path
+    return { manifest, modelPath }
+  },
+}
+
+const outcome = await runGraph(spec, { sources, artifacts, secrets, progress })
+```
+
+That is the platform's own arrangement: its shell implements `fetchModel`
+over its object storage, and the engine does not know the difference.
+
+### Limits
+
+- **A model whose output layout matches no existing `postprocess.kind`**
+  (`yolov8`, `yolov8-seg`, `depth-anything`) needs a decoder. That is either
+  a contribution to the engine or a `model.*` node in a
+  [pack](/workflows/extending) that carries its own decoding; the manifest's
+  `kind` is the list of what exists.
+- **A new family** (`classification`, say) comes with the pack that adds a
+  node for it. The manifest's `family` is one of `detection`, `segmentation`
+  and `depth` today because those are the three model nodes; it is planned
+  to become an open string with the known values documented, so a pack can
+  bring a family without an engine release.
+- **Segmentation and depth fine-tunes** follow the same steps with
+  `yolov8-seg` (a `maskThreshold` joins `postprocess`) and `depth-anything`
+  (no class names, a single map output).
+- **On the platform**, a private model is the same directory uploaded to the
+  organization's own registry prefix. That upload path is a platform feature
+  and is not part of the engine.
 
 ## The manifest
 

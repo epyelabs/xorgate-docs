@@ -1,82 +1,249 @@
 ---
 title: "Code function nodes"
-description: "User code inside a template: function.javascript and function.python, the handler contract, versions, how the engine runs them in a sandboxed child process, local testing with xwe function test, and how they differ from node packs."
+description: "User code inside a template: function.javascript and function.python, the handler contract, worked examples over detections, versions, how the engine runs them in a sandboxed child process, local testing with xwe function test, and how they differ from node packs."
 ---
 
 <Callout type="warn" title="Design preview">
   Code function nodes are a design placeholder today: the `function` group is
-  reserved, the web application's editor for them is a mockup, and the engine
-  has no executor. This page is the planned shape, aligned with that mockup and
-  with the engine's distribution; nothing on it runs yet.
+  reserved and the engine has no executor. This page is the planned shape;
+  nothing on it runs yet.
 </Callout>
 
 A [pack](/workflows/extending) is code you compile, publish and load into the
 process, and it is trusted the way any dependency is. A **code function** is
-the other kind of extension: a few lines of JavaScript or Python typed into a
-node in the editor, saved inside the template, and run by the engine in a
-sandboxed child process wherever the template runs. Packs are for node
-authors; functions are for template authors who need one transformation the
-catalog does not have, without leaving the canvas.
+the other kind of extension: a few lines of JavaScript or Python stored inside
+a node of the template, and run by the engine in a sandboxed child process
+wherever the template runs. Packs are for node authors; functions are for
+template authors who need one transformation the catalog does not have.
 
 ## The two node types
 
-| Type                  | Group      | Ports                                      | Target | Configuration                                                                                                                   |
-| --------------------- | ---------- | ------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `function.javascript` | `function` | `event:json?` in, `result:json/result` out | `any`  | `handler` (`"handler"`), `timeoutMs` (3000, 100 to 30000), `memoryMb` (256, 128 to 2048), `code`, `versions`, `deployedVersion` |
-| `function.python`     | `function` | `event:json?` in, `result:json/result` out | `any`  | the same                                                                                                                        |
+| Type                  | Group      | Ports                                               | Target | Configuration                                                                                                                   |
+| --------------------- | ---------- | --------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `function.javascript` | `function` | in `event:json` (any tag), out `result:json/result` | `any`  | `handler` (`"handler"`), `timeoutMs` (3000, 100 to 30000), `memoryMb` (256, 128 to 2048), `code`, `versions`, `deployedVersion` |
+| `function.python`     | `function` | the same                                            | `any`  | the same                                                                                                                        |
 
-Both consume `json` messages of any tag on `event` and emit `json/result`.
-That is deliberately narrow: a function sits between a connector lookup, a
-VLM verdict, a captured record or another function and whatever reads the
-result. Frames, telemetry and detections stay on their own channels and are
-handled by catalog nodes; a function that needs a telemetry value gets it from
-a node that turns telemetry into a `json` message first (`output.data_capture`
-emits one per record).
-
-The group is `function`. The engine reserves that slot under the name `custom`
-today with no members; it is renamed when the two nodes land, which changes
-nothing for existing templates because no node uses it.
+A function consumes `json` messages of any tag and emits `json/result`. In
+the current catalog that means it can sit downstream of a detector
+(`json/detections`), a depth or segmentation model, the VLM's analysis
+(`json/vlm`), the connector (`json/speed_limit`) or another function, and
+its result can feed `output.data_capture` (which accepts any `json`) or
+another function. Frames, telemetry and conditions stay on their own channels
+and are handled by catalog nodes.
 
 ## The handler
 
+One function per event. Whatever it returns is emitted; `null`, `undefined`
+or `None` drops the event.
+
 ```js
-/**
- * Called once per JSON event arriving on the "event" input. Whatever the
- * handler returns is emitted on the "result" output; return null or
- * undefined to drop the event.
- */
 async function handler(event, context) {
-  context.log("received", event.tag, event.ts)
-  if (event.payload.confidence < 0.6) return null
-  return { ...event.payload, reviewedAt: new Date().toISOString() }
+  context.log("got", event.tag, "at", event.ts)
+  return { ...event.payload, seenAt: new Date(event.ts).toISOString() }
 }
 ```
 
 ```python
 def handler(event, context):
-    context.log("received", event["tag"], event["ts"])
-    if event["payload"]["confidence"] < 0.6:
-        return None
-    return {**event["payload"], "reviewed": True}
+    context.log("got", event["tag"], "at", event["ts"])
+    return {**event["payload"], "seen": True}
 ```
 
-| Argument                          | Contents                                                                                                                          |
+| Name                              | Contents                                                                                                                          |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `event`                           | `{ tag, ts, seq, payload }`: the incoming `json` message, with the tag its producer declared.                                     |
-| `context.log(...)`                | Appends to the invocation's log lines. They reach the run as `record` progress messages and the step summary counts them.         |
-| `context.nodeId`, `context.runId` | Identity, for correlating logs.                                                                                                   |
+| `event.tag`                       | The tag the producer declared: `detections`, `vlm`, `speed_limit`, `result`, and so on.                                           |
+| `event.ts`                        | Epoch milliseconds of the message.                                                                                                |
+| `event.seq`                       | The producer's per-node sequence number.                                                                                          |
+| `event.payload`                   | The record itself. For `detections`: `{ ts, frameSeq, boxes: [{ cls, confidence, xyxy }] }`.                                      |
+| `context.log(...args)`            | Appends one log line to the invocation. Lines reach the run as `record` progress messages tagged `log`, and the step counts them. |
+| `context.nodeId`, `context.runId` | For correlating logs.                                                                                                             |
 | `context.functionVersion`         | `"$LATEST"` or the deployed version number that is running.                                                                       |
-| `context.remainingTimeMs()`       | Time left before `timeoutMs` kills the invocation.                                                                                |
-| return value                      | Emitted as the `payload` of a `json/result` message stamped with the event's `ts`. `null`, `undefined` or `None` drops the event. |
+| `context.remainingTimeMs()`       | Time left before `timeoutMs` ends the invocation.                                                                                 |
+| return value                      | Emitted as the `payload` of a `json/result` message with the event's `ts`.                                                        |
 
-A thrown error or an uncaught exception fails the invocation, which fails the
-node's step and skips everything downstream, exactly like any other node. The
-error text and the invocation's logs are in the step's output.
+A thrown error, an uncaught exception, or a timeout fails the invocation,
+which fails the node's step and skips everything downstream, exactly like
+any other node. The error and the invocation's log lines are in the step's
+output.
+
+## Worked example: count forklifts per frame
+
+The detection graph on the [models page](/workflows/models#bringing-your-own-model)
+emits one `detections` record per frame with every box. Suppose you want a
+compact per-frame record instead: how many forklifts, and the widest one.
+That is a function between the detector and a capture node.
+
+```
+source.video -> video.decode_sample -> model.object_detection -> function.javascript -> output.data_capture
+```
+
+The handler:
+
+```js
+async function handler(event, context) {
+  const forklifts = event.payload.boxes.filter((b) => b.cls === "forklift")
+  if (forklifts.length === 0) return null // nothing to record for this frame
+  const widest = forklifts.reduce((a, b) => (width(b) > width(a) ? b : a))
+  return {
+    frameSeq: event.payload.frameSeq,
+    count: forklifts.length,
+    widestPx: Math.round(width(widest)),
+    confidence: widest.confidence,
+  }
+}
+
+function width(box) {
+  const [x1, , x2] = box.xyxy
+  return x2 - x1
+}
+```
+
+The template stores the code in the node's config. `code` is one JSON
+string, so the editor writes it with escaped newlines; the rest of the node
+is ordinary:
+
+```json
+{
+  "id": "fn",
+  "type": "function.javascript",
+  "data": {
+    "label": "Forklift summary",
+    "config": {
+      "handler": "handler",
+      "timeoutMs": 1000,
+      "memoryMb": 128,
+      "code": "async function handler(event, context) {\n  const forklifts = event.payload.boxes.filter((b) => b.cls === \"forklift\")\n  …\n}",
+      "versions": [],
+      "deployedVersion": null
+    }
+  },
+  "position": { "x": 600, "y": 0 }
+}
+```
+
+with edges `det -> fn` and `fn -> cap`, where `cap` is an
+`output.data_capture` node. Validation accepts the edge from the detector
+because the function's input is untagged, and the edge into the capture node
+because its input is untagged too.
+
+Run it:
+
+```bash
+xwe run forklift-summary.json --input video=yard.mp4 --models-dir ./models --out out
+```
+
+```
+[xwe] model detection/acme-forklift v1 <- models/detection/acme-forklift/1/model.onnx
+[xwe] succeeded in 6.4s -> out/local-1789000000000/result.json
+  ok      src          video yard.mp4 (video_local)
+  ok      dec          50 frame(s) sampled at 2 fps from 1 video(s)
+  ok      det          37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
+  ok      fn           50 invocation(s), 22 result(s), 28 dropped ($LATEST, javascript, ~1 ms)
+  ok      cap          22 record(s) (jsonl)
+  events: 0
+```
+
+and `out/local-1789000000000/outputs/cap/records.jsonl` holds one line per
+frame that had a forklift:
+
+```json
+{"frameSeq":3,"count":1,"widestPx":212,"confidence":0.81}
+{"frameSeq":4,"count":2,"widestPx":230,"confidence":0.84}
+```
+
+## Worked example: the same thing in Python
+
+```python
+def handler(event, context):
+    forklifts = [b for b in event["payload"]["boxes"] if b["cls"] == "forklift"]
+    if not forklifts:
+        return None
+    widest = max(forklifts, key=lambda b: b["xyxy"][2] - b["xyxy"][0])
+    return {
+        "frameSeq": event["payload"]["frameSeq"],
+        "count": len(forklifts),
+        "widestPx": round(widest["xyxy"][2] - widest["xyxy"][0]),
+        "confidence": widest["confidence"],
+    }
+```
+
+The node is `function.python` with the same config keys, and the step
+summary says `python`. The standard library is available (`json`, `math`,
+`statistics`, `datetime`, `re`); packages are not.
+
+## Worked example: chaining functions
+
+Functions compose because a result is a `json` message like any other. A
+second function downstream of the first sees `event.tag === "result"` and
+the first function's return value as `event.payload`:
+
+```js
+// fn2: keep a running maximum across frames and emit only when it grows
+let best = 0
+async function handler(event, context) {
+  if (event.payload.count <= best) return null
+  best = event.payload.count
+  context.log("new maximum", best, "at frame", event.payload.frameSeq)
+  return { frameSeq: event.payload.frameSeq, maxCount: best }
+}
+```
+
+Module-level state like `best` lives as long as the node's process, which is
+the run: functions are stateful within a run and start fresh on the next.
+That is enough for running maxima, debouncing and deduplication, and it is
+the reason a function gets one process per run rather than one per event.
+
+## Testing a function locally
+
+`xwe function test` runs one event through the node in the same sandboxed
+runtime a run would use, with the code the template holds:
+
+```bash
+cat > event.json <<'EOF2'
+{
+  "tag": "detections",
+  "ts": 1786578991867,
+  "payload": {
+    "ts": 1786578991867,
+    "frameSeq": 3,
+    "boxes": [
+      { "cls": "forklift", "confidence": 0.81, "xyxy": [120, 200, 332, 410] },
+      { "cls": "pallet", "confidence": 0.77, "xyxy": [400, 380, 520, 440] }
+    ]
+  }
+}
+EOF2
+xwe function test forklift-summary.json fn --event event.json
+```
+
+```
+ok      fn           function.javascript  $LATEST  2 ms
+result: {"frameSeq":3,"count":1,"widestPx":212,"confidence":0.81}
+logs: none
+```
+
+A handler that throws shows the trace and exits 1:
+
+```
+failed  fn           function.javascript  $LATEST  1 ms
+error: TypeError: Cannot read properties of undefined (reading 'filter')
+    at handler (index.js:2:37)
+logs: none
+```
+
+`--version 2` tests a published snapshot instead of the working copy. Exit
+code 2 means the node id or a file was wrong and nothing ran. From code:
+
+```ts
+const t = await engine.testFunction({ template: "./forklift-summary.json", nodeId: "fn", event })
+// t: { ok, result?, error?, logs: string[], durationMs, functionVersion }
+```
 
 ## Versions
 
-The editor keeps a working copy and a list of published snapshots in the
-node's configuration:
+The node's configuration holds a working copy and a list of published
+snapshots, which is how the editor lets you keep editing while a known-good
+version runs:
 
 | Field             | Meaning                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------- |
@@ -85,14 +252,10 @@ node's configuration:
 | `deployedVersion` | The snapshot that runs, or `null` for the working copy.                                     |
 
 The engine runs `deployedVersion` when it is set and present in `versions`,
-and the working copy otherwise. That is one rule for every host: a template
-exported from the editor with `deployedVersion: 2` runs version 2 under `xwe`
-too, and the step summary names the version it ran. Moving function code out
-of the template into a registry of its own, with a `functionRef` in the node
-instead of inline `code`, is a platform-side change described in the
-platform's own plan and is not part of the engine's contract yet; when it
-lands, the engine resolves the ref through a seam the same way it resolves a
-model.
+and the working copy otherwise. One rule on every host: a template exported
+with `deployedVersion: 2` runs version 2 under `xwe` too, and the step
+summary says `v2` instead of `$LATEST`. A template edited by hand can leave
+`versions` empty and `deployedVersion` null; the working copy runs.
 
 ## How the engine runs a function
 
@@ -101,63 +264,26 @@ instance gets **one child process per run**, started when the first event
 arrives and reused for every event after it, speaking one JSON object per
 line over stdio:
 
-| Boundary      | JavaScript                                                                                              | Python                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Runtime       | the `node` the engine runs on, with Node's permission model enabled and no filesystem or network grants | `python3` from `PATH` (the image includes it; `xwe doctor` reports it) |
-| Module access | none: no `require`, no `import`, only the language's built-ins                                          | the standard library only; no `pip` packages                           |
-| Time          | `timeoutMs` per invocation; on expiry the process is killed and the step fails                          | the same                                                               |
-| Memory        | `memoryMb` as the heap limit                                                                            | `memoryMb` as an address-space limit                                   |
-| Network       | none                                                                                                    | none                                                                   |
-| Filesystem    | none                                                                                                    | none                                                                   |
-| Output        | the return value, serialized as JSON                                                                    | the same                                                               |
+| Boundary      | JavaScript                                                                                              | Python                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Runtime       | the `node` the engine runs on, with Node's permission model enabled and no filesystem or network grants | `python3` from `PATH`; the image includes it and `xwe doctor` reports it |
+| Module access | none: no `require`, no `import`, only the language's built-ins                                          | the standard library only; no `pip` packages                             |
+| Time          | `timeoutMs` per invocation; on expiry the process is killed and the step fails                          | the same                                                                 |
+| Memory        | `memoryMb` as the heap limit                                                                            | `memoryMb` as an address-space limit                                     |
+| Network       | none                                                                                                    | none                                                                     |
+| Filesystem    | none                                                                                                    | none                                                                     |
+| Environment   | scrubbed: no `XORGATE_SECRET_*`, no secrets file                                                        | the same                                                                 |
 
 The container image is the intended outer boundary for hosts that run
 templates from people they do not trust; the per-process limits above are the
-inner one. A function that needs the network or a package is a sign that it
-should be a pack, or a connector node, instead.
-
-## Testing a function locally
-
-The editor's **Test** tab sends one event to the function and shows the
-result, logs and duration. The CLI does the same thing over the same runtime
-the run would use:
-
-```bash
-xwe function test graph.json n5 --event event.json
-```
-
-```
-ok      n5           function.javascript  $LATEST  12 ms
-result: { "kind": "overspeed", "observed": 77.7, "reviewedAt": "2026-09-03T14:00:00.000Z" }
-logs:
-  received overspeed 1786578961289
-```
-
-`--event` is a file holding one `{ tag, ts, payload }` object (`seq` is
-stamped). `--version <n>` tests a published snapshot instead of the working
-copy. Exit code 1 means the handler threw or timed out, 2 means the node id or
-the file is wrong. The library equivalent is `engine.testFunction({ template,
-nodeId, event })`.
-
-## In the web application
-
-The platform's editor opens a function node in its own editor with four tabs:
-**Code** (the working copy, with the runtime label and file name), **Test**
-(an event in, the result and logs out), **Monitor** (invocations, errors,
-p50 and p95 duration over a window) and **Versions** (deploy the working copy
-as the next version, set a version live, restore one into the working copy).
-Today that editor is a mockup that runs JavaScript in the browser and
-simulates Python; the plan is for its Test tab to call the same engine that
-runs the template, and for Monitor to read the run steps the engine already
-records. The platform's function endpoints are not documented here, for the
-same reason the rest of the workflow API is not: see
-[What this does not cover](/workflows/not-covered).
+inner one. A function that needs the network, a package, a model or a secret
+is a sign that it should be a pack or a connector node instead.
 
 ## Functions or packs
 
 | Question                       | Code function                      | Node pack                              |
 | ------------------------------ | ---------------------------------- | -------------------------------------- |
-| Who writes it                  | the template author, in the editor | a developer, in a repository           |
+| Who writes it                  | the template author                | a developer, in a repository           |
 | Where the code lives           | inside the template                | in an npm package the host loads       |
 | Trust                          | untrusted: sandboxed child process | trusted: runs in the engine's process  |
 | Dependencies                   | none                               | anything npm has                       |
@@ -169,3 +295,6 @@ same reason the rest of the workflow API is not: see
 When a function grows a dependency, a second port, or a need for a secret,
 it has become a pack. The handler contract is designed so the move is a copy:
 a pack executor that wraps the same `handler(event, context)` is a few lines.
+A `condition` output, so a function can drive `output.event` directly, is
+the obvious next step and is not in the first version; today that path is a
+function feeding a capture node, or a pack.
