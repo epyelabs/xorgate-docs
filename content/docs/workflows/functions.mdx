@@ -193,6 +193,101 @@ the run: functions are stateful within a run and start fresh on the next.
 That is enough for running maxima, debouncing and deduplication, and it is
 the reason a function gets one process per run rather than one per event.
 
+## Worked example: the whole thing from code
+
+Everything above, driven from your own program instead of the shell. The
+handler lives in its own file so it can be edited and linted like any other
+source; the program puts its text into the node's config, validates the
+template, tests the function on one event, runs the template, and reads the
+records back.
+
+```ts
+import { readFile } from "node:fs/promises"
+import { createEngine, validateDefinition } from "@xorgate/workflow-engine"
+import { localHost } from "@xorgate/workflow-engine/local"
+
+// 1. The template, with the handler's source placed into the function node.
+//    `code` is an ordinary string in the node's config, so keeping the handler
+//    in a file and reading it in is the natural way to author it from code.
+const template = JSON.parse(await readFile("./forklift-summary.json", "utf8"))
+const fn = template.nodes.find((n) => n.id === "fn")
+fn.data.config.code = await readFile("./functions/forklift-summary.js", "utf8")
+
+// 2. Validate before anything runs: the function node is checked like any
+//    other (config against its schema, edges against its ports).
+const validation = validateDefinition(template)
+if (!validation.ok) {
+  for (const issue of validation.issues) console.error(issue.code, issue.nodeId ?? "", issue.message)
+  process.exit(2)
+}
+
+// 3. One engine, one host. The function runtime is part of the engine; the
+//    host only supplies files, models, secrets and where artifacts go.
+const engine = createEngine({
+  host: localHost({ modelDirs: ["./models"], outDir: "./out" }),
+})
+
+// 4. Test the function alone, on one detections event, before spending a
+//    run on it. Same sandboxed runtime, same code the run would use.
+const test = await engine.testFunction({
+  template,
+  nodeId: "fn",
+  event: {
+    tag: "detections",
+    ts: 1786578991867,
+    payload: {
+      ts: 1786578991867,
+      frameSeq: 3,
+      boxes: [{ cls: "forklift", confidence: 0.81, xyxy: [120, 200, 332, 410] }],
+    },
+  },
+})
+if (!test.ok) throw new Error(`handler failed: ${test.error}`)
+console.log("test result", test.result) // { frameSeq: 3, count: 1, widestPx: 212, confidence: 0.81 }
+
+// 5. Run the template. Function log lines arrive as `record` progress
+//    messages tagged `log`, as the run proceeds.
+const run = await engine.run({
+  template,
+  inputs: { video: "./yard.mp4" },
+  progress: (m) => {
+    if (m.t === "record" && m.tag === "log") console.log(`[${m.nodeId}]`, m.payload.line)
+    if (m.t === "step") console.log(m.status, m.nodeId, m.output)
+  },
+})
+
+// 6. Read the results: from memory, or from the artifact tree on disk.
+if (run.result.status !== "succeeded") {
+  throw new Error(`run failed at ${run.result.failedNodeId}: ${run.result.error}`)
+}
+const records = run.outcome.captures["cap"] // the capture node's records, in memory
+console.log(records.length, "frames with a forklift; widest:", Math.max(...records.map((r) => r.widestPx)))
+console.log("on disk:", `${run.runDir}/outputs/cap/records.jsonl`)
+```
+
+What it prints:
+
+```
+test result { frameSeq: 3, count: 1, widestPx: 212, confidence: 0.81 }
+ok src video ./yard.mp4 (video_local)
+ok dec 50 frame(s) sampled at 2 fps from 1 video(s)
+ok det 37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
+ok fn 50 invocation(s), 22 result(s), 28 dropped ($LATEST, javascript, ~1 ms)
+ok cap 22 record(s) (jsonl)
+22 frames with a forklift; widest: 230
+on disk: out/local-1789000000000/outputs/cap/records.jsonl
+```
+
+The same program with `function.python` changes one line: the file it reads
+is `forklift-summary.py`. Nothing about the engine, the host or the run
+changes, because the runtime is chosen by the node type.
+
+Two things this program does not do, on purpose. It does not `eval` the
+handler itself: the engine's child-process runtime is the only place the
+code runs, in the test and in the run alike. And it does not need the
+platform: no account, no network, no credentials, which is the point of
+running the engine as a library.
+
 ## Testing a function locally
 
 `xwe function test` runs one event through the node in the same sandboxed
@@ -232,12 +327,10 @@ logs: none
 ```
 
 `--version 2` tests a published snapshot instead of the working copy. Exit
-code 2 means the node id or a file was wrong and nothing ran. From code:
-
-```ts
-const t = await engine.testFunction({ template: "./forklift-summary.json", nodeId: "fn", event })
-// t: { ok, result?, error?, logs: string[], durationMs, functionVersion }
-```
+code 2 means the node id or a file was wrong and nothing ran. From code it is
+`engine.testFunction`, resolving to
+`{ ok, result?, error?, logs, durationMs, functionVersion }`, as the worked
+example above shows.
 
 ## Versions
 
