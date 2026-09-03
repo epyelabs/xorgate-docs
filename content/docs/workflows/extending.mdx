@@ -61,7 +61,7 @@ What the definition promises:
 | Field               | Rule                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `type`              | `namespace.name`, lowercase. The namespace is yours; `source`, `video`, `telemetry`, `model`, `logic`, `output`, `connector` and `function` belong to the core. |
-| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `custom`. It places the node in the editor palette.                                          |
+| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `function` (today spelled `custom`, empty). It places the node in the editor palette.        |
 | `inputs`, `outputs` | Ports with a [channel](/workflows/definitions#channels), a cardinality and `required`. A `json` output must declare its `tag`.                                  |
 | `config`            | A zod schema. It is parsed at run time, unknown keys are rejected, and it is serialized to JSON Schema for the editor's config form.                            |
 | `requires`          | Capability tokens (`secret:<name>`, `metric:<name>`, `video`) so `validate` can say what a graph needs before it runs.                                          |
@@ -158,6 +158,15 @@ uses a pack's node needs that pack, at a compatible version, on the host that
 runs it. `validate` reports an unknown node type with the pack namespace it
 looks like it belongs to.
 
+## The other kind of extension
+
+A pack is trusted code loaded into the process. Code you would rather not
+trust, or code a template author writes in the editor without a repository,
+is a [code function node](/workflows/functions): user JavaScript or Python
+stored inside the template and run by the engine in a sandboxed child
+process. The two are siblings, and the function page ends with a table of
+when to use which.
+
 ## What a pack cannot do
 
 - Add a channel. The six channels are the engine's; a pack picks from them.
@@ -165,5 +174,5 @@ looks like it belongs to.
   can declare a new `kind`, but only a host that implements it can run it.
 - Reach outside `ctx`. There is no sandbox around a pack: a pack is code you
   chose to load into your process, with your process's permissions, the same
-  as any npm dependency. Untrusted user code is what the reserved `function`
-  group is for, and it stays a design placeholder for now.
+  as any npm dependency. Untrusted user code is what
+  [code function nodes](/workflows/functions) are for.

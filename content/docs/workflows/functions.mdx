@@ -1,0 +1,171 @@
+---
+title: "Code function nodes"
+description: "User code inside a template: function.javascript and function.python, the handler contract, versions, how the engine runs them in a sandboxed child process, local testing with xwe function test, and how they differ from node packs."
+---
+
+<Callout type="warn" title="Design preview">
+  Code function nodes are a design placeholder today: the `function` group is
+  reserved, the web application's editor for them is a mockup, and the engine
+  has no executor. This page is the planned shape, aligned with that mockup and
+  with the engine's distribution; nothing on it runs yet.
+</Callout>
+
+A [pack](/workflows/extending) is code you compile, publish and load into the
+process, and it is trusted the way any dependency is. A **code function** is
+the other kind of extension: a few lines of JavaScript or Python typed into a
+node in the editor, saved inside the template, and run by the engine in a
+sandboxed child process wherever the template runs. Packs are for node
+authors; functions are for template authors who need one transformation the
+catalog does not have, without leaving the canvas.
+
+## The two node types
+
+| Type                  | Group      | Ports                                      | Target | Configuration                                                                                                                   |
+| --------------------- | ---------- | ------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `function.javascript` | `function` | `event:json?` in, `result:json/result` out | `any`  | `handler` (`"handler"`), `timeoutMs` (3000, 100 to 30000), `memoryMb` (256, 128 to 2048), `code`, `versions`, `deployedVersion` |
+| `function.python`     | `function` | `event:json?` in, `result:json/result` out | `any`  | the same                                                                                                                        |
+
+Both consume `json` messages of any tag on `event` and emit `json/result`.
+That is deliberately narrow: a function sits between a connector lookup, a
+VLM verdict, a captured record or another function and whatever reads the
+result. Frames, telemetry and detections stay on their own channels and are
+handled by catalog nodes; a function that needs a telemetry value gets it from
+a node that turns telemetry into a `json` message first (`output.data_capture`
+emits one per record).
+
+The group is `function`. The engine reserves that slot under the name `custom`
+today with no members; it is renamed when the two nodes land, which changes
+nothing for existing templates because no node uses it.
+
+## The handler
+
+```js
+/**
+ * Called once per JSON event arriving on the "event" input. Whatever the
+ * handler returns is emitted on the "result" output; return null or
+ * undefined to drop the event.
+ */
+async function handler(event, context) {
+  context.log("received", event.tag, event.ts)
+  if (event.payload.confidence < 0.6) return null
+  return { ...event.payload, reviewedAt: new Date().toISOString() }
+}
+```
+
+```python
+def handler(event, context):
+    context.log("received", event["tag"], event["ts"])
+    if event["payload"]["confidence"] < 0.6:
+        return None
+    return {**event["payload"], "reviewed": True}
+```
+
+| Argument                          | Contents                                                                                                                          |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `event`                           | `{ tag, ts, seq, payload }`: the incoming `json` message, with the tag its producer declared.                                     |
+| `context.log(...)`                | Appends to the invocation's log lines. They reach the run as `record` progress messages and the step summary counts them.         |
+| `context.nodeId`, `context.runId` | Identity, for correlating logs.                                                                                                   |
+| `context.functionVersion`         | `"$LATEST"` or the deployed version number that is running.                                                                       |
+| `context.remainingTimeMs()`       | Time left before `timeoutMs` kills the invocation.                                                                                |
+| return value                      | Emitted as the `payload` of a `json/result` message stamped with the event's `ts`. `null`, `undefined` or `None` drops the event. |
+
+A thrown error or an uncaught exception fails the invocation, which fails the
+node's step and skips everything downstream, exactly like any other node. The
+error text and the invocation's logs are in the step's output.
+
+## Versions
+
+The editor keeps a working copy and a list of published snapshots in the
+node's configuration:
+
+| Field             | Meaning                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `code`            | The working copy, `$LATEST`.                                                                |
+| `versions`        | Published snapshots, newest first: `{ version, code, handler, publishedAt, description? }`. |
+| `deployedVersion` | The snapshot that runs, or `null` for the working copy.                                     |
+
+The engine runs `deployedVersion` when it is set and present in `versions`,
+and the working copy otherwise. That is one rule for every host: a template
+exported from the editor with `deployedVersion: 2` runs version 2 under `xwe`
+too, and the step summary names the version it ran. Moving function code out
+of the template into a registry of its own, with a `functionRef` in the node
+instead of inline `code`, is a platform-side change described in the
+platform's own plan and is not part of the engine's contract yet; when it
+lands, the engine resolves the ref through a seam the same way it resolves a
+model.
+
+## How the engine runs a function
+
+Untrusted code never runs in the engine's process. Each function node
+instance gets **one child process per run**, started when the first event
+arrives and reused for every event after it, speaking one JSON object per
+line over stdio:
+
+| Boundary      | JavaScript                                                                                              | Python                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Runtime       | the `node` the engine runs on, with Node's permission model enabled and no filesystem or network grants | `python3` from `PATH` (the image includes it; `xwe doctor` reports it) |
+| Module access | none: no `require`, no `import`, only the language's built-ins                                          | the standard library only; no `pip` packages                           |
+| Time          | `timeoutMs` per invocation; on expiry the process is killed and the step fails                          | the same                                                               |
+| Memory        | `memoryMb` as the heap limit                                                                            | `memoryMb` as an address-space limit                                   |
+| Network       | none                                                                                                    | none                                                                   |
+| Filesystem    | none                                                                                                    | none                                                                   |
+| Output        | the return value, serialized as JSON                                                                    | the same                                                               |
+
+The container image is the intended outer boundary for hosts that run
+templates from people they do not trust; the per-process limits above are the
+inner one. A function that needs the network or a package is a sign that it
+should be a pack, or a connector node, instead.
+
+## Testing a function locally
+
+The editor's **Test** tab sends one event to the function and shows the
+result, logs and duration. The CLI does the same thing over the same runtime
+the run would use:
+
+```bash
+xwe function test graph.json n5 --event event.json
+```
+
+```
+ok      n5           function.javascript  $LATEST  12 ms
+result: { "kind": "overspeed", "observed": 77.7, "reviewedAt": "2026-09-03T14:00:00.000Z" }
+logs:
+  received overspeed 1786578961289
+```
+
+`--event` is a file holding one `{ tag, ts, payload }` object (`seq` is
+stamped). `--version <n>` tests a published snapshot instead of the working
+copy. Exit code 1 means the handler threw or timed out, 2 means the node id or
+the file is wrong. The library equivalent is `engine.testFunction({ template,
+nodeId, event })`.
+
+## In the web application
+
+The platform's editor opens a function node in its own editor with four tabs:
+**Code** (the working copy, with the runtime label and file name), **Test**
+(an event in, the result and logs out), **Monitor** (invocations, errors,
+p50 and p95 duration over a window) and **Versions** (deploy the working copy
+as the next version, set a version live, restore one into the working copy).
+Today that editor is a mockup that runs JavaScript in the browser and
+simulates Python; the plan is for its Test tab to call the same engine that
+runs the template, and for Monitor to read the run steps the engine already
+records. The platform's function endpoints are not documented here, for the
+same reason the rest of the workflow API is not: see
+[What this does not cover](/workflows/not-covered).
+
+## Functions or packs
+
+| Question                       | Code function                      | Node pack                              |
+| ------------------------------ | ---------------------------------- | -------------------------------------- |
+| Who writes it                  | the template author, in the editor | a developer, in a repository           |
+| Where the code lives           | inside the template                | in an npm package the host loads       |
+| Trust                          | untrusted: sandboxed child process | trusted: runs in the engine's process  |
+| Dependencies                   | none                               | anything npm has                       |
+| Channels                       | `json` in, `json` out              | any channel, any port shape            |
+| Needs a model, a secret, HTTP  | no                                 | through `ctx`, like a core node        |
+| Runs on a host that lacks it   | anywhere `node` or `python3` runs  | only where the pack is installed       |
+| Appears in the catalog payload | as the two fixed types             | as its own nodes, with the pack's hash |
+
+When a function grows a dependency, a second port, or a need for a secret,
+it has become a pack. The handler contract is designed so the move is a copy:
+a pack executor that wraps the same `handler(event, context)` is a few lines.

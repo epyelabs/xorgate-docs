@@ -109,6 +109,87 @@ The catalog's config schema is unchanged (the field is a string); the resolver
 splits on `@`. A template without a pin runs the newest version wherever it
 runs, which is the platform's behaviour too.
 
+## Bringing your own model
+
+A fine-tuned or entirely private model is a directory in the layout, not a
+special case. The engine never checks where a model came from; it checks that
+the manifest parses and that its `postprocess.kind` is one it implements.
+Three steps:
+
+<Steps>
+
+<Step>
+
+### Export to ONNX with a manifest
+
+The model must be an ONNX graph whose input and output tensors match a
+`postprocess.kind` the engine implements: `yolov8` for a YOLOv8-style
+detector, `yolov8-seg` for its segmentation head, `depth-anything` for a
+single relative-depth map. A YOLOv8 fine-tune keeps the output layout, so it
+needs no engine change; only `classNames` changes, to your classes in your
+training order. The export scripts that produce the first-party manifests
+(`export_yolo.py`, `export_depth.py`) are planned to ship in the engine
+repository under `tools/export/`, and they write both files:
+
+```
+models/detection/acme-forklift/1/manifest.json
+models/detection/acme-forklift/1/model.onnx
+```
+
+</Step>
+
+<Step>
+
+### Check it before a template names it
+
+```bash
+xwe models check ./models/detection/acme-forklift/1
+```
+
+Parses the manifest, loads the model through ONNX Runtime, runs one letterboxed
+blank frame through it and confirms the output tensor has the shape the
+`postprocess.kind` expects for `classNames.length` classes. It also fills in
+`files.sha256` and `sizeBytes` when they are missing, so the directory is
+ready to serve from a registry. A shape mismatch is reported here, with both
+shapes, instead of as a failed step in the middle of a run.
+
+</Step>
+
+<Step>
+
+### Name it in the template
+
+```json
+{
+  "type": "model.object_detection",
+  "data": { "config": { "model": "acme-forklift" } }
+}
+```
+
+Point a run at the directory with `--models-dir ./models` or
+`localHost({ modelDirs })`, or copy it into the cache, or serve it from a
+private registry in the same layout and pull it. The node's step summary
+names the model and version it loaded.
+
+</Step>
+
+</Steps>
+
+Two limits are worth knowing. A model whose output layout matches no existing
+`postprocess.kind` needs a decoder in the engine, which is a contribution to
+the engine or a `model.*` node in a [pack](/workflows/extending) that carries
+its own; the manifest's `kind` enum is the list of what exists. And the
+manifest's `family` is one of `detection`, `segmentation` and `depth` today
+because those are the three model nodes; a pack that adds a node for a new
+family (`classification`, say) needs the family accepted by the manifest
+schema, which is planned as an open string with the known values documented
+rather than an enum, so that packs can bring families without an engine
+release.
+
+On the platform, a private model is the same directory uploaded to the
+organization's own registry prefix; that upload path is a platform feature
+and is not part of the engine.
+
 ## The manifest
 
 The manifest is the same document the platform's registry stores, and it is

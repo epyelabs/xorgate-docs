@@ -9,6 +9,7 @@
     "library",
     "models",
     "extending",
+    "functions",
     "cli",
     "run-artifacts",
     "performance",

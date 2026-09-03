@@ -13,6 +13,8 @@ xwe run <template.json> --input <key>=<path> ... [options]
 xwe run --manifest <manifest.json> [options]
 xwe models list | pull <family>/<name>[@<version>] | path <family>/<name>   # planned
 xwe doctor                                                                 # planned
+xwe models check <dir>                                                     # planned
+xwe function test <template.json> <nodeId> --event <event.json>            # planned
 ```
 
 <Callout type="warn" title="Design preview">
@@ -141,6 +143,14 @@ xwe models path detection/yolov8n        # what a run would load, and from which
 
 `XWE_MODEL_REGISTRY` overrides the registry URL and `XWE_MODELS_DIR` the cache
 root. `pull` exits 1 when a checksum does not match and keeps nothing.
+
+## `function test`
+
+**Planned.** Runs one event through a [code function node](/workflows/functions)
+in the same sandboxed runtime a run would use, and prints the result, logs
+and duration. `--version <n>` tests a published snapshot instead of the
+working copy. Exit 1 when the handler threw or timed out, 2 when the node id
+or a file is wrong.
 
 ## `doctor`
 
