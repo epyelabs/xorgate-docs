@@ -1,0 +1,169 @@
+---
+title: "Extending the catalog"
+description: "Writing a node with defineNode, packaging nodes as a pack, loading packs into the engine and the CLI, and what catalogVersion means once two hosts do not run the same set of nodes."
+---
+
+<Callout type="warn" title="Design preview">
+  `defineNode`, the executor contract and the node groups on this page are how
+  the 26 core nodes are written today. Node packs, `createCatalog`,
+  `createEngine({packs})` and `xwe run --pack` are planned and not published
+  yet.
+</Callout>
+
+The 26 nodes in the [catalog](/workflows/catalog) are ordinary modules: a
+declarative definition and an executor, validated once when the catalog is
+built. A node you write is the same thing, in your own package, and the
+engine treats it exactly like a core node once it is registered. This is where
+a catalog of hundreds of nodes lives: not in the engine's repository, but in
+packs owned by whoever needs them.
+
+## A node
+
+```ts
+import { z } from "zod"
+import { defineNode, requireInput, telemetrySamples } from "@xorgate/workflow-engine"
+import type { EngineInChannel, EngineRunCtx } from "@xorgate/workflow-engine"
+
+const configSchema = z.object({
+  signal: z.string().min(1).describe("Signal to scale"),
+  factor: z.number().default(1).describe("Multiplier"),
+})
+
+export const def = defineNode({
+  type: "acme.scale",
+  version: 1,
+  group: "telemetry",
+  label: "Scale",
+  description: "Multiplies one signal by a constant.",
+  ui: { icon: "move-diagonal" },
+  inputs: [{ id: "telemetry", label: "Telemetry", channel: "telemetry", cardinality: "one", required: true }],
+  outputs: [{ id: "telemetry", label: "Telemetry", channel: "telemetry", cardinality: "many", required: false }],
+  config: configSchema,
+  requires: [],
+  runtime: { target: "any" },
+})
+
+export const executor = async function* (inputs: EngineInChannel[], config: unknown, ctx: EngineRunCtx) {
+  const cfg = configSchema.parse(config)
+  let count = 0
+  for await (const sample of telemetrySamples(requireInput(inputs, "telemetry"))) {
+    const signals = { ...sample.signals }
+    if (cfg.signal in signals) signals[cfg.signal] *= cfg.factor
+    count += 1
+    yield { ch: "telemetry" as const, ts: sample.ts, payload: { signals } }
+  }
+  ctx.setSummary(`scaled ${count} samples (${cfg.signal} × ${cfg.factor})`)
+}
+```
+
+What the definition promises:
+
+| Field               | Rule                                                                                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`              | `namespace.name`, lowercase. The namespace is yours; `source`, `video`, `telemetry`, `model`, `logic`, `output`, `connector` and `function` belong to the core. |
+| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `custom`. It places the node in the editor palette.                                          |
+| `inputs`, `outputs` | Ports with a [channel](/workflows/definitions#channels), a cardinality and `required`. A `json` output must declare its `tag`.                                  |
+| `config`            | A zod schema. It is parsed at run time, unknown keys are rejected, and it is serialized to JSON Schema for the editor's config form.                            |
+| `requires`          | Capability tokens (`secret:<name>`, `metric:<name>`, `video`) so `validate` can say what a graph needs before it runs.                                          |
+| `runtime`           | `target: "any"` runs wherever the engine runs; `"media"` says the node needs ffmpeg or ONNX Runtime. `modelRef.family` for model nodes.                         |
+
+What the executor promises: it is an async generator; it reads its inputs
+through bounded channels and therefore applies backpressure by awaiting; it
+yields messages on a channel with a timestamp; it throws to fail its step; and
+it reports through `ctx` (`setSummary`, `log`, `emitEvent`, `captureRecord`)
+rather than through side effects. A node that needs a file, a model, a secret
+or HTTP asks `ctx.sources`, `ctx.secrets` and `ctx.http` for them, which is
+what keeps it runnable on every host.
+
+## A pack
+
+A pack is a versioned list of nodes:
+
+```ts
+import type { NodePack } from "@xorgate/workflow-engine"
+import * as scale from "./nodes/scale"
+import * as thermalGate from "./nodes/thermal-gate"
+
+export const pack: NodePack = {
+  name: "@acme/xwe-nodes-thermal",
+  version: "1.2.0",
+  nodes: [scale, thermalGate],
+}
+```
+
+Publish it as an npm package whose default export (or a named `pack` export)
+is the pack. It depends on `@xorgate/workflow-engine` as a peer, so there is
+one engine in the process. The core catalog is itself seven packs, one per
+group, which is what lets a host compose the engine without the pieces it
+cannot run.
+
+## Loading packs
+
+```ts
+import { createEngine, createCatalog, corePacks } from "@xorgate/workflow-engine"
+import { pack as thermal } from "@acme/xwe-nodes-thermal"
+
+const engine = createEngine({
+  host,
+  catalog: createCatalog([...corePacks, thermal]),
+})
+```
+
+`createEngine({ packs: [thermal] })` is the shorthand for "core plus these".
+The CLI takes the same thing as a module specifier, resolved from the working
+directory, repeatable:
+
+```bash
+xwe run graph.json --pack @acme/xwe-nodes-thermal --pack ./local-pack.js --input telemetry=window.csv
+xwe validate graph.json --pack @acme/xwe-nodes-thermal
+```
+
+Building a catalog validates every definition the way the core is validated:
+a malformed definition, a duplicate `type`, a duplicate port id within one
+direction, or a `json` output without a tag throws at build time with the
+offending node named, before any run. A pack cannot replace a core node, and
+a pack cannot change a core node's defaults: a second definition of a type
+that already exists is the duplicate error, not an override.
+
+## What `catalogVersion` means with packs
+
+The serialized catalog payload's `catalogVersion` is a content hash of every
+node definition the host registered, in order. With no packs it is the core
+hash the [catalog page](/workflows/catalog) quotes, and two hosts that print
+the same value run the same nodes with the same defaults. With packs the
+value changes, by design, and the payload says why:
+
+```json
+{
+  "catalogVersion": "3b9f1c0e7a2d4f60",
+  "schemaVersion": 2,
+  "packs": [
+    { "name": "core", "version": "0.1.0", "hash": "e481243f5ffe4678" },
+    {
+      "name": "@acme/xwe-nodes-thermal",
+      "version": "1.2.0",
+      "hash": "91c2a7d0b4e35f18"
+    }
+  ],
+  "nodes": []
+}
+```
+
+`packs` is additive to the payload; a consumer that only knows
+`catalogVersion` keeps working. A consumer that reads `packs` can say "the
+core matches, this host also has extras", which is the question that matters
+when a template authored against one host runs on another: a template that
+uses only core nodes runs anywhere the core hash matches, and a template that
+uses a pack's node needs that pack, at a compatible version, on the host that
+runs it. `validate` reports an unknown node type with the pack namespace it
+looks like it belongs to.
+
+## What a pack cannot do
+
+- Add a channel. The six channels are the engine's; a pack picks from them.
+- Add a binding kind that the host does not resolve. A source node in a pack
+  can declare a new `kind`, but only a host that implements it can run it.
+- Reach outside `ctx`. There is no sandbox around a pack: a pack is code you
+  chose to load into your process, with your process's permissions, the same
+  as any npm dependency. Untrusted user code is what the reserved `function`
+  group is for, and it stays a design placeholder for now.

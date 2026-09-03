@@ -93,10 +93,18 @@ Module 5 run happened on a module with the agent live, which proves they can
 share a host, not that anything coordinates them: no shared media bridge, no
 scheduling around recording, no fleet distribution of templates.
 
-### Not distributed
+### Distribution is planned, not shipped
 
-No npm package, no container registry, no licensing or metering. Run from a
-checkout.
+No npm package and no container registry exist yet; run from a checkout. The
+planned distribution, `@xorgate/workflow-engine` with the `xwe` command
+inside it and a multi-arch image on GHCR, is written up under
+[Installing the engine](/workflows/installation),
+[Using the engine as a library](/workflows/library),
+[Models and the registry](/workflows/models) and
+[Extending the catalog](/workflows/extending), each marked as a design
+preview until the artifact it describes is published and re-verified. The
+engine's license will be MIT, the same as the SDKs. There is still no
+licensing or metering of runs, and none is planned.
 
 ## Bindings that only resolve on the platform
 

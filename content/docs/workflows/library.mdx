@@ -1,0 +1,170 @@
+---
+title: "Using the engine as a library"
+description: "createEngine and the local host in five lines, what a run returns, the low-level runGraph entry for hosts with their own storage, the four host seams as the integration contract, and the conformance kit."
+---
+
+<Callout type="warn" title="Design preview">
+  This page describes the planned library surface of `@xorgate/workflow-engine`.
+  Nothing on it is published yet; today the engine runs from a checkout as
+  described under [The engine](/workflows/engine#running-it). Imports and
+  signatures here are the target and may change before release.
+</Callout>
+
+The `xwe` command is a thin shell over the library. Everything it does, your
+code can do with the same package, and the package is designed so that you
+need nothing from the xorgate platform to do it: no account, no API key, no
+network, unless a node in your graph asks for one.
+
+## Five lines
+
+```ts
+import { createEngine } from "@xorgate/workflow-engine"
+import { localHost } from "@xorgate/workflow-engine/local"
+
+const engine = createEngine({
+  host: localHost({ modelDirs: ["./models"], outDir: "./out" }),
+})
+const run = await engine.run({
+  template: "./templates/perimeter-person-detect.json",
+  inputs: { video: "./drive.mp4" },
+})
+
+console.log(run.result.status, run.result.events.length, run.runDir)
+```
+
+This is exactly `xwe run templates/perimeter-person-detect.json --input
+video=drive.mp4 --models-dir models --out out`: the same manifest is built,
+the same engine runs it, and the same artifact tree lands in `out/<runId>/`
+with `result.json` written last.
+
+### `engine.run(options)`
+
+| Option        | Type                              | Meaning                                                                                                 |
+| ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `template`    | path, or a parsed template object | A bare definition or an API snapshot; v1 graphs are upgraded. Mutually exclusive with `manifest`.       |
+| `manifest`    | path, or a parsed run manifest    | A prebuilt [run manifest](/workflows/run-artifacts#the-run-manifest), bindings included.                |
+| `inputs`      | `Record<string, string>`          | Source bindings by key, the same keys as `--input`: `video`, `telemetry`, or a node id, to a file path. |
+| `runId?`      | string                            | Default `local-<epoch ms>`. Also the output directory name.                                             |
+| `window?`     | `{ from: string; to: string }`    | ISO-8601 run window. File bindings carry their own timestamps, so rarely needed.                        |
+| `secrets?`    | `Record<string, string>`          | Logical name to value. Wins over `XORGATE_SECRET_*` in the environment.                                 |
+| `emitVideo?`  | boolean                           | After a successful run, mux each visualization node's frames into `video/<nodeId>.mp4`.                 |
+| `progress?`   | `(message) => void`               | Receives the same messages `--progress json` prints, as objects, as the run proceeds.                   |
+| `deadlineMs?` | number                            | Wall-clock budget. On expiry everything is cancelled and the run fails.                                 |
+
+It resolves to `{ result, runDir, outcome }`: `result` is the parsed
+[`result.json`](/workflows/run-artifacts#resultjson), `runDir` the directory it
+was written to, and `outcome` the engine's in-memory outcome (steps, events,
+captured records) for callers that do not want to read the tree back.
+
+A failed run **resolves**, with `result.status === "failed"` and
+`result.failedNodeId` set, because `result.json` was still written. The promise
+rejects only for usage errors that prevented anything from running: a
+template that does not parse, an input key that binds no source, a missing
+file argument. That is the library's version of the CLI's exit codes 1 and 2.
+
+### `validate`
+
+```ts
+import { validateDefinition, inspectTemplate } from "@xorgate/workflow-engine"
+
+const result = validateDefinition(template) // { ok, issues: [{ code, nodeId?, edgeId?, message }] }
+const needs = inspectTemplate(template)     // { inputs: [{ key, nodeId, type, label }], requires: [...] }
+```
+
+The same publish validation the platform's editor runs, and the same
+"what would a run of this need" report `xwe validate` prints.
+
+## Bring your own storage: `runGraph`
+
+`createEngine` with `localHost` reads files and writes a directory. A service
+that keeps video in object storage, secrets in a vault and wants progress on
+a message bus does not need the local host at all. The engine core is
+storage-free by design; it reads and writes only through four small
+interfaces, the **host seams**, and `runGraph` takes them directly:
+
+```ts
+import { runGraph } from "@xorgate/workflow-engine"
+
+const outcome = await runGraph(
+  {
+    runId,
+    mode: "batch",
+    deviceId: null,
+    window: null,
+    definition,                 // schemaVersion 2
+    bindings: { n1: { kind: "video_file", s3Key: "uploads/drive.mp4" } },
+  },
+  {
+    sources,                    // EngineSourceReader
+    artifacts,                  // EngineArtifactSink
+    secrets,                    // EngineSecretReader
+    progress,                   // EngineProgressSink
+    httpFetch: fetch,           // connector nodes' HTTP layer; inject to mock
+    deadlineMs: 15 * 60_000,
+  },
+)
+```
+
+This is precisely how the platform's own shell is meant to consume the
+engine: the same call, with seams over its storage, database, secrets and
+topics. A host that implements the seams gets every node in the catalog, every
+binding kind it chooses to resolve, and the frozen artifact contracts.
+
+### The four seams
+
+| Seam                 | Methods                                                                                                                      | The local host implements it as                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `EngineSourceReader` | `fetchVideo`, `fetchText`, `fetchModel`, `readTelemetryWindow`, `openLiveFrames`, `releaseVideo`, all optional but the first | paths on disk, the [model resolver chain](/workflows/models), no history, no live |
+| `EngineArtifactSink` | `putFrame(nodeId, seq, jpeg)`                                                                                                | `out/<runId>/frames/<nodeId>/<seq>.jpg`                                           |
+| `EngineSecretReader` | `getSecret(logicalName)`                                                                                                     | a secrets object, then `XORGATE_SECRET_*`                                         |
+| `EngineProgressSink` | `runStatus`, `step`, `event`, `record`                                                                                       | NDJSON on stdout, or your callback                                                |
+
+A seam method a host leaves out makes the nodes that need it fail their step
+with a message naming the seam; nothing else in the graph notices. That is how
+a media-less host runs telemetry graphs with no ffmpeg and no ONNX Runtime
+installed at all.
+
+Writing the artifact tree from an outcome is a host concern too, and the local
+host's writer is exported so a custom host can reuse the exact ordering rules
+(`events.jsonl` and records first, `result.json` last):
+
+```ts
+import { writeRunArtifacts, buildResult } from "@xorgate/workflow-engine/local"
+```
+
+## Proving a host: the conformance kit
+
+A host is correct when it produces the same outcomes as the reference host on
+the same inputs. The package ships that check as a function, driven by the same
+golden fixtures the engine's own test suite uses:
+
+```ts
+import { runConformance } from "@xorgate/workflow-engine/testing"
+
+const report = await runConformance({ host: myHost, fixturesDir: "./fixtures" })
+// report.cases: overspeed (1 event at the pinned timestamp), detection (50 frames,
+// 81 ± tolerance detections), visualization (an MP4 that decodes to 50 frames),
+// missing-input (exit path with result.json still written)
+```
+
+The fixtures are the ones described under [The engine](/workflows/engine#the-fixtures),
+pulled with `xwe fixtures pull` or from the repository. The platform's shell
+will run the same kit when it consumes the engine, which is what makes "a
+template behaves identically wherever it runs" a tested claim rather than a
+design goal.
+
+## Module format and what import costs
+
+The package ships ESM and CJS builds with declaration files, under an
+`exports` map with three entry points:
+
+| Import                             | Contents                                                                                                                                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`), every schema and every seam type |
+| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                              |
+| `@xorgate/workflow-engine/testing` | `runConformance`                                                                                                                                                                                                |
+
+Importing any of them loads no native module: ONNX Runtime and the Anthropic
+SDK are required lazily by the executors that use them, on the first run that
+reaches such a node. A process that only validates templates or serves the
+catalog payload never pays for either.

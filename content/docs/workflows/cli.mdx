@@ -11,7 +11,15 @@ exits with a code you can act on.
 xwe validate <template.json>
 xwe run <template.json> --input <key>=<path> ... [options]
 xwe run --manifest <manifest.json> [options]
+xwe models list | pull <family>/<name>[@<version>] | path <family>/<name>   # planned
+xwe doctor                                                                 # planned
 ```
+
+<Callout type="warn" title="Design preview">
+  `validate` and `run` are shipped and verified. `models`, `doctor`, `--pull`
+  and `--pack` are planned with the engine's distribution and are marked as such
+  below; see [Installing the engine](/workflows/installation).
+</Callout>
 
 ## `validate`
 
@@ -55,6 +63,8 @@ expects.
 | `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                            |
 | `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                 |
 | `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                          |
+| `--pull`               | **Planned.** Fetch a model the graph names from the registry into the cache when it is not on disk. See [Models](/workflows/models).      |
+| `--pack <module>`      | **Planned.** Register a node pack before running, resolved from the working directory. Repeatable. See [Extending](/workflows/extending). |
 
 ### Input keys
 
@@ -117,6 +127,29 @@ the CLI's; a platform shell publishes the same messages over its own transport:
 `record` covers `json` ports only: connector lookups, VLM verdicts, and the
 like. Detections travel on their own channel and are counted in the detection
 node's step summary rather than streamed.
+
+## `models`
+
+**Planned.** Three subcommands over the [model registry](/workflows/models):
+
+```bash
+xwe models list                          # the registry index, marking what is cached locally
+xwe models pull detection/yolov8n        # newest version into ~/.xorgate/models, checksum verified
+xwe models pull detection/yolov8n@1      # a specific version
+xwe models path detection/yolov8n        # what a run would load, and from which root
+```
+
+`XWE_MODEL_REGISTRY` overrides the registry URL and `XWE_MODELS_DIR` the cache
+root. `pull` exits 1 when a checksum does not match and keeps nothing.
+
+## `doctor`
+
+**Planned.** Prints the node version, the ffmpeg it would use, whether the
+ONNX Runtime binding and the Anthropic SDK are installed, the model roots and
+what they contain, whether the registry is reachable, and the catalog hash
+with any packs. Exits non-zero when something a run needs is missing, with the
+fix on the same line. The output is on
+[Installing the engine](/workflows/installation#checking-a-machine-xwe-doctor).
 
 ## Exit codes
 

@@ -31,7 +31,9 @@ its storage, database and live plane.
 
 The `s3Key` field name reflects the platform's object storage. Locally it is a
 path, absolute or relative to the working directory, and the CLI never asks
-you to type it.
+you to type it. A hand-written local manifest will also be able to say `path`
+instead, as an alias the local host accepts and the platform's kinds never
+see; that alias is planned with the library and not shipped yet.
 
 ### Telemetry CSV
 
@@ -179,23 +181,12 @@ file.
 
 The three ONNX nodes name a model (`yolov8n`, `yolov8n-seg`,
 `depth-anything-v2-small`) and the engine resolves it from a registry with one
-fixed layout, in object storage on the platform and on disk here:
-
-```
-<root>/<family>/<name>/<version>/manifest.json
-<root>/<family>/<name>/<version>/model.onnx
-```
-
-Families are `detection`, `segmentation` and `depth`. The highest numeric
-version wins. Roots are searched in order: every `--models-dir`, then
-`./fixtures/models`, then `~/.xorgate/models`; there is no network fetch. A
-missing model fails the node's step with the paths it tried.
-
-The manifest is the same document the platform's registry stores: `manifestVersion: 1`,
-the family, name and version, `backend: "cpu-onnx"`, the input tensor
-contract (`width`, `height`, `layout`, `colorSpace`, `normalize`, `letterbox`),
-and `classNames`. The fixtures carry `yolov8n`; the other two are pulled from
-the development registry the same way, as `fixtures/README.md` describes.
+fixed layout, `<root>/<family>/<name>/<version>/{manifest.json,model.onnx}`,
+in object storage on the platform and on disk here. Today the roots are every
+`--models-dir`, then `./fixtures/models`, then `~/.xorgate/models`, with no
+network fetch. The layout, the manifest, the planned resolver chain, the cache,
+`xwe models pull`, integrity and the license of each first-party model are on
+[Models and the registry](/workflows/models).
 
 ## Secrets
 

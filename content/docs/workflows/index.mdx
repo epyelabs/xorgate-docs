@@ -18,11 +18,15 @@ identically wherever it runs.
 
 <Callout title="What is, and is not, documented here">
   This section covers the definition format, the 26-node catalog, and the engine
-  with its `xwe` CLI. The platform side (workflow templates, device attachments,
-  runs and simulations as REST resources) is **not** in the API reference or
-  either SDK yet, and the platform does not yet execute its runs through this
-  engine. [What this does not cover](/workflows/not-covered) says exactly where
-  the line is.
+  with its `xwe` CLI. Four pages ([installing](/workflows/installation), [the
+  library](/workflows/library), [models](/workflows/models) and
+  [extending](/workflows/extending)) describe the engine's planned distribution
+  as a package and image; each opens with a **Design preview** callout until the
+  behaviour it describes ships. The platform side (workflow templates, device
+  attachments, runs and simulations as REST resources) is **not** in the API
+  reference or either SDK yet, and the platform does not yet execute its runs
+  through this engine. [What this does not cover](/workflows/not-covered) says
+  exactly where the line is.
 </Callout>
 
 ## The shape of a workflow
@@ -100,6 +104,12 @@ differ only in where the bindings point and where the tree lands.
 | Models     | a local mirror of the model registry layout | the model registry                                                                |
 | Secrets    | environment variables or a JSON file        | per-organization credentials, then platform credentials                           |
 
+The engine reaches those hosts as one npm package, `@xorgate/workflow-engine`,
+that carries both `xwe` and a library entry point, and as one multi-arch
+container image; [Installing the engine](/workflows/installation) is the
+planned shape of that, and [Using the engine as a library](/workflows/library)
+is what embedding it in your own service looks like.
+
 The local artifact tree already uses the platform's storage key layout, the
 binding kinds are shared, and the catalog is one catalog. That is deliberate:
 when the platform consumes the engine, nothing about a template, a manifest or
@@ -124,6 +134,26 @@ shape, and the catalog node definitions.
     title="The engine"
     href="/workflows/engine"
     description="What xorgate-workflow-engine is, where it is headed, what it needs from a host, and how to run it with docker or bare node."
+  />
+  <Card
+    title="Installing the engine"
+    href="/workflows/installation"
+    description="Design preview: the package, the global CLI, the container image, what an install pulls down, and xwe doctor."
+  />
+  <Card
+    title="Using the engine as a library"
+    href="/workflows/library"
+    description="Design preview: createEngine in five lines, runGraph for your own storage, the four host seams, and the conformance kit."
+  />
+  <Card
+    title="Models and the registry"
+    href="/workflows/models"
+    description="The registry layout and manifest, and the planned resolver chain, xwe models pull, integrity, and model licenses."
+  />
+  <Card
+    title="Extending the catalog"
+    href="/workflows/extending"
+    description="Writing a node, and the planned node packs, createCatalog, --pack, and what catalogVersion means across hosts."
   />
   <Card
     title="CLI reference"

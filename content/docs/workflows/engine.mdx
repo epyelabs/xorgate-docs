@@ -15,8 +15,10 @@ on each.
 <Callout title="Not on a registry yet">
   The engine is not published to npm or a container registry. You run it from a
   checkout, or build the image from the checkout's `Dockerfile`. Everything on
-  these pages was verified against that checkout, on a laptop, in docker, and on
-  a Compute Module 5.
+  this page was verified against that checkout, on a laptop, in docker, and on a
+  Compute Module 5. The planned distribution, `@xorgate/workflow-engine` on npm
+  and `ghcr.io/epyelabs/xwe`, is described under [Installing the
+  engine](/workflows/installation) as a design preview.
 </Callout>
 
 ## Where it is headed
@@ -59,7 +61,18 @@ The engine core (`src/engine/`, `src/catalog/`) is storage-free by design.
 Every source reads through a seam, every artifact leaves through a seam, and a
 host supplies the seam implementations. `src/local/` is the host shell for
 files on disk; the platform's shell will supply the same seams over its own
-storage, secrets and progress transport.
+storage, secrets and progress transport. The seams are the library's
+integration contract, described under
+[Using the engine as a library](/workflows/library#the-four-seams).
+
+Two planned changes to this layout are worth knowing about when reading the
+source: the fixtures directory keeps only the small files (templates, CSV,
+manifests) and pulls the video and the model on demand, so that nothing in
+the repository grows with the number of models; and the catalog becomes a set
+of **packs** built into a catalog instance rather than one static list, so
+that nodes outside the repository register the same way the core ones do. See
+[Models and the registry](/workflows/models) and
+[Extending the catalog](/workflows/extending).
 
 ## Requirements
 
@@ -73,6 +86,10 @@ storage, secrets and progress transport.
 - **Models on disk** for any `model.*` node other than the VLM, in the registry
   layout described under [Inputs and outputs](/workflows/run-artifacts#models).
 - **A secret** only for the connector (except `osm`) and `model.vlm`.
+
+The planned `xwe doctor` prints each of these for the machine it runs on, with
+the fix when one is missing; see
+[Installing the engine](/workflows/installation#checking-a-machine-xwe-doctor).
 
 ## Running it
 

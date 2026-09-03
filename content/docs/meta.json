@@ -5,7 +5,11 @@
     "device-sdk (Phase 5). The workflows section (the definition format, the",
     "node catalog and the portable engine) filled its reserved slot on",
     "2026-08-31; the cloud workflow API itself is still undocumented, see",
-    "workflows/not-covered."
+    "workflows/not-covered.",
+    "2026-09-03: the workflows section gained installation, library, models and",
+    "extending as design previews of the engine's distribution (plan:",
+    "xorgate/plans/workflow-engine-distribution). A top-level 'Workflow Engine'",
+    "section for the standalone product was considered and deferred (its Q7)."
   ],
   "title": "Documentation",
   "pages": [

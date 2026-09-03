@@ -1,0 +1,165 @@
+---
+title: "Models and the registry"
+description: "Where model.* nodes get their weights: the registry layout, the resolver chain and local cache, xwe models pull, integrity, version pinning, the manifest, and the license of every first-party model."
+---
+
+<Callout type="warn" title="Design preview">
+  The registry layout, the manifest and the local directory search on this page
+  are how the engine works today. The public registry, `xwe models`, the cache,
+  integrity fields and `--pull` are planned and not published yet.
+</Callout>
+
+Models are never part of the engine. The package does not contain one, the
+container image does not bake one in, and the repository does not commit any.
+A `model.*` node names a model and the host resolves it, from disk or from a
+registry, in one fixed layout that is the same on the platform and on your
+machine.
+
+## The layout
+
+```
+<root>/<family>/<name>/<version>/manifest.json
+<root>/<family>/<name>/<version>/model.onnx
+```
+
+Families are `detection`, `segmentation` and `depth`, matching the three ONNX
+node types; `name` is what node config carries (`"model": "yolov8n"`);
+`version` is a positive integer directory. The platform's registry is this
+layout under a prefix in its object storage, the public registry is this
+layout over HTTPS, and a directory on disk is this layout as folders. Tooling
+written against one reads the others.
+
+## Where a model comes from
+
+The local host searches a chain of roots in order and takes the first hit,
+highest version first within it:
+
+| Root                              | Set by                                                                                                   | Default                     |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------- |
+| explicit directories              | `--models-dir <dir>` (repeatable), `localHost({ modelDirs })`                                            | none                        |
+| the cache                         | `XWE_MODELS_DIR`                                                                                         | `~/.xorgate/models`         |
+| the registry, **only when asked** | `--pull`, `XWE_MODELS_PULL=1`, `localHost({ models: { pull: true } })`; `XWE_MODEL_REGISTRY` for the URL | `https://models.xorgate.io` |
+
+A model that is in none of them fails the node's step with the roots it
+searched and the command that would fix it:
+
+```
+xwe: run failed at node n3: model detection/yolov8n not found under ./models, ~/.xorgate/models
+  (run `xwe models pull detection/yolov8n`, or pass --pull)
+```
+
+Pulling is explicit by default on purpose. A CI job or an edge device should
+never start a download because a template named a model; it should have been
+provisioned, and the error says how.
+
+## `xwe models`
+
+```bash
+xwe models list                              # the registry index, marking what is cached
+xwe models pull detection/yolov8n            # newest version into the cache
+xwe models pull detection/yolov8n@1          # a specific version
+xwe models path detection/yolov8n            # what a run would load, and from which root
+```
+
+`pull` downloads `manifest.json` and `model.onnx` into the cache root, verifies
+the checksum the manifest declares, and refuses to keep a file that does not
+match. `list` reads the registry's `index.json`, which is the same list the
+platform's model picker shows. Everything works against any registry that
+serves the layout, so a private mirror is one environment variable away:
+
+```bash
+XWE_MODEL_REGISTRY=https://models.example.internal xwe models pull detection/yolov8n
+```
+
+In the container, mount a volume at the cache path so pulls survive the
+container (`-v xwe-models:/root/.xorgate/models`).
+
+## Integrity
+
+The manifest carries a checksum for each file next to it. The field is
+additive to `manifestVersion: 1`: every manifest that exists today still
+parses, and a manifest without it is pulled with a warning instead of a
+verification.
+
+```json
+{
+  "manifestVersion": 1,
+  "family": "detection",
+  "name": "yolov8n",
+  "version": 1,
+  "files": {
+    "model.onnx": { "sha256": "…", "sizeBytes": 13468672 }
+  }
+}
+```
+
+The engine verifies on pull, not on every run. A model already on disk is
+trusted the way any other local file is.
+
+## Pinning a version
+
+Node config names a model, and the highest version found wins. A template
+that must not move pins the version in the same string:
+
+```json
+{ "config": { "model": "yolov8n@1" } }
+```
+
+The catalog's config schema is unchanged (the field is a string); the resolver
+splits on `@`. A template without a pin runs the newest version wherever it
+runs, which is the platform's behaviour too.
+
+## The manifest
+
+The manifest is the same document the platform's registry stores, and it is
+what makes a model usable without code: input geometry, normalization, class
+names and post-processing parameters are read from it, not hard-coded per
+model.
+
+| Field                                 | Meaning                                                                                                                                 |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `family`, `name`, `version`, `label?` | Identity. `label` is the human name pickers show.                                                                                       |
+| `backend`                             | `cpu-onnx` is the only one implemented. `gpu-endpoint` is accepted by the schema and refused at run time.                               |
+| `input`                               | `width`, `height`, `layout` (`nchw`), `colorSpace` (`rgb`), `normalize` (`scale`, `mean?`, `std?`), `letterbox` (`enabled`, `padValue`) |
+| `classNames`                          | Class index to name, for detection and segmentation.                                                                                    |
+| `postprocess`                         | `kind` (`yolov8`, `yolov8-seg`, `depth-anything`, `rtdetr`), `nmsIouThreshold`, `maskThreshold`                                         |
+| `quantization?`                       | `fp32`, `fp16` or `int8`, informational.                                                                                                |
+| `files?`                              | Checksums, above.                                                                                                                       |
+
+The export pipeline that converts a model to ONNX is the only writer of
+manifests on the platform side. A model you export yourself needs a manifest
+in this shape and a `postprocess.kind` the engine implements; `rtdetr`
+manifests parse but the node refuses them until its decoder lands.
+
+## First-party models and their licenses
+
+<Callout type="warn" title="Read the license before you ship">
+  The engine is MIT licensed. The models are not the engine. Each carries its
+  own license, and the two default detectors are AGPL-3.0, which has
+  consequences for a proprietary product or a hosted service that uses them. The
+  engine resolves whatever model a template names, so swapping in a model under
+  a license you can live with is a template change, not an engine change.
+</Callout>
+
+| Model                     | Family         | Source                    | License                       | Status in the engine                       |
+| ------------------------- | -------------- | ------------------------- | ----------------------------- | ------------------------------------------ |
+| `yolov8n`                 | `detection`    | Ultralytics YOLOv8        | AGPL-3.0                      | the catalog default; the golden fixture    |
+| `yolov8s`                 | `detection`    | Ultralytics YOLOv8        | AGPL-3.0                      | runs                                       |
+| `yolov8n-seg`             | `segmentation` | Ultralytics YOLOv8        | AGPL-3.0                      | the catalog default                        |
+| `depth-anything-v2-small` | `depth`        | Depth Anything V2 (small) | Apache-2.0                    | the catalog default                        |
+| `rtdetr`                  | `detection`    | RT-DETR                   | Apache-2.0 (original release) | manifest accepted, decoder not implemented |
+
+A permissively licensed default detector is on the roadmap. Changing a
+catalog default changes the catalog hash and the meaning of every published
+template that relies on the default, so it is a platform decision rather than
+a quiet engine change.
+
+## The platform registry and the public one
+
+The platform keeps its registry under `models/` in its object storage, written
+by the export pipeline, listed by `GET /model-registry`, and read by its own
+engine shell through the same `fetchModel` seam the local host implements. The
+public registry at `models.xorgate.io` is a mirror of the first-party subset
+of that registry, in the same layout, with `index.json` at the root. Nothing
+about a model differs between the two; the only difference is who can reach
+them.
