@@ -164,7 +164,7 @@ The package ships ESM and CJS builds with declaration files, under an
 | `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                              |
 | `@xorgate/workflow-engine/testing` | `runConformance`                                                                                                                                                                                                |
 
-Importing any of them loads no native module: ONNX Runtime and the Anthropic
-SDK are required lazily by the executors that use them, on the first run that
+Importing any of them loads no native module: ONNX Runtime and the VLM
+provider client are required lazily by the executors that use them, on the first run that
 reaches such a node. A process that only validates templates or serves the
 catalog payload never pays for either.

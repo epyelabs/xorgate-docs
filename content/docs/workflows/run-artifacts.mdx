@@ -1,6 +1,6 @@
 ---
 title: "Inputs and outputs"
-description: "Source bindings and their file formats, the run manifest, the artifact tree a run writes and why it mirrors S3, result.json and events.jsonl, models, secrets, and annotated video."
+description: "Source bindings and their file formats, the run manifest, the artifact tree a run writes and why it mirrors the platform's storage layout, result.json and events.jsonl, models, secrets, and annotated video."
 ---
 
 A run's contract is the same on every host: a **run manifest** in, an
@@ -197,7 +197,11 @@ Three names exist:
 | ---------------------- | ----------------------------------------------------- |
 | `google-roads-api-key` | `connector.third_party` with `provider: google_roads` |
 | `here-api-key`         | `connector.third_party` with `provider: here`         |
-| `anthropic-api-key`    | `model.vlm`                                           |
+| `anthropic-api-key`    | `model.vlm`, for its initial provider                 |
+
+Logical names are per provider. The VLM's current provider is the first of
+several planned, and each new provider adds its own name here rather than
+changing an existing one.
 
 Locally, a `--secrets` file (`{ "anthropic-api-key": "..." }`) wins, then the
 environment variable `XORGATE_SECRET_<NAME>` with the name upper-cased and

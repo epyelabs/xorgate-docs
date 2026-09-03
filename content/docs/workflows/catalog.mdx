@@ -59,8 +59,10 @@ geofence, which emits a `condition`. All run on any target.
 ## Model
 
 All four take `frames:frames` in and run on the `media` target. The three ONNX
-models resolve by name from the model registry; the VLM calls Claude and needs
-the `anthropic-api-key` secret.
+models resolve by name from the model registry; the VLM calls a hosted
+vision-language model API and needs that provider's API key as a
+[secret](/workflows/run-artifacts#secrets). The `model` values listed are the
+initial provider's; more providers are planned.
 
 | Type                     | Outputs                                                      | Configuration                                                                                                                                                                                                                                                                                         |
 | ------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

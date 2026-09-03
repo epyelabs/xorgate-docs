@@ -76,7 +76,7 @@ The engine therefore declares its two heavy dependencies as **optional**:
 | Dependency                             | Needed by                                                     | Declared as | Loaded                               |
 | -------------------------------------- | ------------------------------------------------------------- | ----------- | ------------------------------------ |
 | `onnxruntime-node`                     | `model.object_detection`, `model.segmentation`, `model.depth` | optional    | at run time, by the first model node |
-| `@anthropic-ai/sdk`                    | `model.vlm`                                                   | optional    | at run time, by the VLM node         |
+| the VLM provider client                | `model.vlm`                                                   | optional    | at run time, by the VLM node         |
 | `zod`, `jpeg-js`, `zod-to-json-schema` | everything                                                    | required    | at import                            |
 
 A plain `npm install` includes the optional dependencies, so the CLI runs
@@ -145,7 +145,7 @@ required piece is missing:
 xwe 0.1.0 (node 20.20.2, darwin arm64)
   ffmpeg            /opt/homebrew/bin/ffmpeg (7.1)
   onnxruntime-node  1.19.2, cpu binding loaded
-  @anthropic-ai/sdk 0.111.0
+  vlm providers     1 client installed
   models            ~/.xorgate/models (2 cached: detection/yolov8n@1, depth/depth-anything-v2-small@1)
   registry          https://models.xorgate.io (index: 4 models)
   catalog           26 nodes, core e481243f5ffe4678, no packs

@@ -5,9 +5,9 @@ description: "What xorgate-workflow-engine is, where it is headed, what it needs
 
 `xorgate-workflow-engine` is the workflow execution engine, developed as its own
 repository (`engines/xorgate-workflow-engine`). It runs a definition over local
-files and writes the platform's artifact layout, with **no AWS dependency at
-all**: the package has no `@aws-sdk` anywhere in its lockfile, and its smoke
-test fails if one appears. That independence is the point. An engine that
+files and writes the platform's artifact layout, with **no cloud dependency
+at all**: the package depends on no cloud provider's SDK, and its smoke test
+fails if one appears. That independence is the point. An engine that
 needs nothing from its host can be handed to a laptop, a container, an edge
 device, or the platform's own runners, and run the same template the same way
 on each.
@@ -147,7 +147,7 @@ The expected output of that first run, on any host:
 Two scripts, both offline:
 
 ```bash
-npm run smoke   # imports runGraph, counts 26 catalog nodes, prints the catalog hash, asserts no AWS packages
+npm run smoke   # imports runGraph, counts 26 catalog nodes, prints the catalog hash, asserts no cloud SDK packages
 npm test        # builds, then runs the golden suite
 ```
 
