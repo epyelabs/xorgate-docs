@@ -87,17 +87,19 @@ affected. The catalog, validation and the serialized catalog payload never
 touch either package, which is why importing the library is cheap on every
 host.
 
-The numbers below are the targets the release is measured against; the
-measured values replace them when the package ships.
+The numbers below were measured on the current build by the package's own
+tarball check (`npm run verify:tarball`: pack, install into a fresh project,
+run), on macOS arm64 with npm 11. They are re-measured for every release.
 
-| Artifact                                   | Target                                           |
-| ------------------------------------------ | ------------------------------------------------ |
-| npm tarball (`dist`, README, LICENSE only) | under 0.5 MB                                     |
-| `node_modules` after `--omit=optional`     | under 5 MB                                       |
-| `node_modules` after a default install     | dominated by ONNX Runtime, roughly 300 MB        |
-| container image, per architecture          | ONNX Runtime trimmed to the image's own platform |
+| Artifact                                   | Measured                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| npm tarball (`dist`, README, LICENSE only) | 137 kB packed, 0.9 MB unpacked, 238 files                                       |
+| `node_modules` after `--omit=optional`     | 4.6 MB                                                                          |
+| `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB   |
+| container image, per architecture          | ONNX Runtime trimmed to the image's own platform; measured when the image ships |
 
-The tarball never contains fixtures, models, video, or the source tree.
+The tarball never contains fixtures, models, video, or the source tree; the
+same check asserts it on every run.
 
 ### ffmpeg
 
@@ -153,7 +155,10 @@ xwe 0.1.0 (node 20.20.2, darwin arm64)
 
 Each line names the fix when something is absent (`ffmpeg: not found; set
 FFMPEG_PATH or install it`), which is the first thing to run when a model or
-video node fails on a new machine.
+video node fails on a new machine. When more than one model root is in the
+search chain (`--models-dir`, the cache), each root gets its own line under
+`models`. The `registry` line reads `not configured` until the registry
+client ships.
 
 ## Requirements, in one place
 
