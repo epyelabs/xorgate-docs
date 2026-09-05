@@ -161,6 +161,59 @@ hosts; the visualization template must emit an MP4 that decodes back to exactly
 50 frames at 2 fps; and a missing input must exit 1 naming the failing node
 while still writing `result.json`.
 
+## Compatibility
+
+<Callout type="warn" title="Design preview">
+  This policy takes effect with the first published release. The contract table
+  is verified against the checkout; the version rules describe how the package
+  will move once it is on a registry.
+</Callout>
+
+The engine is a set of contracts with code behind them, and the package
+version is about the contracts. `docs/compatibility.md` in the repository is
+the full table with the file each contract lives in; the short form:
+
+| Contract            | Identity                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workflow definition | `schemaVersion: 2`; v1 graphs are upgraded on the way in                                                                                         |
+| Run manifest        | `manifestVersion: 2`                                                                                                                             |
+| `result.json`       | `resultVersion: 2`, `engineVersion: 2`; written last in the artifact tree                                                                        |
+| Catalog payload     | `schemaVersion: 2`; `catalogVersion` is the content hash of the node definitions, `e481243f5ffe4678` for the core catalog; `packs[]` is additive |
+| Model manifest      | v1; the `files` block is additive; `family` is an open string                                                                                    |
+| Host seams          | `EngineSourceReader`, `EngineArtifactSink`, `EngineSecretReader`, `EngineProgressSink`, and `EngineHost.bind` over them                          |
+| Progress messages   | `status`, `step`, `event`, `record`, each stamped `at`; the same objects as NDJSON on stdout and as callbacks                                    |
+| CLI                 | the commands, their flags, and the exit codes `0`, `1`, `2`                                                                                      |
+| Node packs          | `NodePack`, `createCatalog`, `corePacks`, the namespace rules                                                                                    |
+| Environment         | `XWE_MODELS_DIR`, `XWE_MODELS_PULL`, `XWE_MODEL_REGISTRY`, `XORGATE_SECRET_<LOGICAL_NAME>`, `FFMPEG_PATH`                                        |
+| Node.js             | 20 or newer                                                                                                                                      |
+
+The version number follows semantic versioning over that table. A breaking
+change to any contract is a major: a field removed or retyped, a seam method
+renamed, a progress message type removed, an exit code reassigned, a core
+node or port removed, a config schema narrowed so an existing template stops
+validating. An additive change is a minor: a new optional field, a new
+optional seam method, a new message type or field, a new command or flag, a
+new core node. A new node moves the core `catalogVersion`, and the changelog
+names the old and new hashes. A fix that changes what an executor produces on
+the same input is a patch, and the changelog names the affected node types
+under an "Executor behaviour" heading so a host can decide whether to
+re-baseline.
+
+Schema versions move only on majors, so a document written by an older
+release keeps parsing on every newer release of the same major, and a
+document written by a newer minor may carry fields an older release ignores.
+The latitude semantic versioning grants a `0.x` package is not used: the
+rules apply from the first release, and `1.0.0` is meant to change nothing but
+the number.
+
+Not contracts, and free to change in any release: the wording of log lines
+and of step summaries (the [conformance kit](/workflows/library#proving-a-host-the-conformance-kit)
+matches their leading counts, not their prose), the module layout under
+`dist/` (deep imports are not supported), the exact bytes of frames and
+videos, and detection counts within the documented tolerance.
+`catalogVersion` is the drift detector, not a version number: two hosts with
+the same hash execute the same node definitions.
+
 ## The fixtures
 
 Real data, grabbed read-only from the development platform, with provenance

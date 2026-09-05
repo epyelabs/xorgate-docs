@@ -62,6 +62,15 @@ rejects only for usage errors that prevented anything from running: a
 template that does not parse, an input key that binds no source, a missing
 file argument. That is the library's version of the CLI's exit codes 1 and 2.
 
+`createEngine` also takes `log`: a level (`silent`, the default, `error`,
+`info` or `debug`) that writes `[engine]` lines on stderr up to that level,
+or a function `(message, level) => void` that receives every message and
+filters itself. It is the same setting as the CLI's `--log-level`; `debug`
+adds the engine's own trace (the bindings, the graph order, one line per node
+with its timing). Whatever the level, a secret value read through the secrets
+seam is replaced with `[redacted]` in every summary, error, event, record,
+progress message and log line before it leaves the engine.
+
 ### `validate`
 
 ```ts
@@ -142,15 +151,38 @@ golden fixtures the engine's own test suite uses:
 import { runConformance } from "@xorgate/workflow-engine/testing"
 
 const report = await runConformance({ host: myHost, fixturesDir: "./fixtures" })
-// report.cases: overspeed (1 event at the pinned timestamp), detection (50 frames,
-// 81 ± tolerance detections), visualization (an MP4 that decodes to 50 frames),
-// missing-input (exit path with result.json still written)
+// report.ok, and one entry per case in report.cases (measured against the local host):
+//   overspeed      1 overspeed event at 2026-08-12T23:56:01.289Z, observed 77.7 km/h, 4 ok steps
+//   detection      50 frames, 81 detections (81 ± 15), 0 events
+//   visualization  50 annotated frames, 50 reached the artifact sink, video/viz.mp4 decodes to 50 h264 frames at 2 fps
+//   missing-input  failed at n1 (ENOENT: ... does-not-exist.csv), result.json on disk with status failed
 ```
+
+Each case is `{ name, ok, detail, runId, runDir, durationMs }`. A failing case
+says what was wrong in `detail` (a host without `fetchModel` reports
+`status failed at n3: This engine target cannot load registry models (no
+media support)` on the detection case), and the kit throws only for its own
+options: no host, or a fixtures directory without the templates. `cases`
+selects a subset, `runIdPrefix` names the runs (default
+`conformance-<epoch>`), `deadlineMs` bounds each case, and `log` receives one
+line per case as it finishes.
+
+What the kit asks of the host: the fixture files are bound by path, so `bind`
+must be able to read them; the two video cases need the `detection/yolov8n`
+model to resolve through the host's `fetchModel` (for the local host,
+`modelDirs: ["./fixtures/models"]`); and ffmpeg must be on the machine, both
+for the run and for the kit to decode the muxed MP4 back. Frames are counted
+at the artifact sink, so a host over object storage proves the visualization
+case without the kit reading its storage; the MP4 check runs when the host
+wrote one under `<runDir>/video/` and is skipped for a `runDir` that is not a
+local directory.
 
 The fixtures are the ones described under [The engine](/workflows/engine#the-fixtures).
 The large ones are not committed: a checkout fetches them with
 `npm run fixtures:pull`, which verifies the checksums pinned in
-`fixtures/fixtures.json`. The platform's shell
+`fixtures/fixtures.json`. The engine's own `npm test` runs the kit against the
+local host in both module formats, and against a host stripped of its model
+and artifact seams to prove that failures are reported. The platform's shell
 will run the same kit when it consumes the engine, which is what makes "a
 template behaves identically wherever it runs" a tested claim rather than a
 design goal.
@@ -160,11 +192,11 @@ design goal.
 The package ships ESM and CJS builds with declaration files, under an
 `exports` map with three entry points:
 
-| Import                             | Contents                                                                                                                                                                                                                                                                                   |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`, `corePacks`) and the executor helpers (`requireInput`, `telemetrySamples`), every schema and every seam type |
-| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                                                                                                         |
-| `@xorgate/workflow-engine/testing` | `runConformance`                                                                                                                                                                                                                                                                           |
+| Import                             | Contents                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`, `corePacks`) and the executor helpers (`requireInput`, `telemetrySamples`), every schema and every seam type, `LOG_LEVELS`, `scrubSecretEnv` |
+| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                                                                                                                                         |
+| `@xorgate/workflow-engine/testing` | `runConformance`, `CONFORMANCE_CASE_NAMES`, `CONFORMANCE_EXPECTATIONS` (the pinned values the cases assert)                                                                                                                                                                                                                |
 
 Importing any of them loads no native module: ONNX Runtime and the VLM
 provider client are required lazily by the executors that use them, on the first run that

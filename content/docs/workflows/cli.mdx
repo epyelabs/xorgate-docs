@@ -15,12 +15,13 @@ xwe models list | pull <family>/<name>[@<version>] | path <family>/<name>   # pl
 xwe doctor                                                                 # planned
 xwe models check <dir>                                                     # planned
 xwe function test <template.json> <nodeId> --event <event.json>            # planned
+xwe <command> ... --log-level silent|error|info|debug                      # planned, any command
 ```
 
 <Callout type="warn" title="Design preview">
-  `validate` and `run` are shipped and verified. `models`, `doctor`, `--pull`
-  and `--pack` are planned with the engine's distribution and are marked as such
-  below; see [Installing the engine](/workflows/installation).
+  `validate` and `run` are shipped and verified. `models`, `doctor`, `--pull`,
+  `--pack` and `--log-level` are planned with the engine's distribution and are
+  marked as such below; see [Installing the engine](/workflows/installation).
 </Callout>
 
 ## `validate`
@@ -53,20 +54,21 @@ expects.
 
 ## `run`
 
-| Flag                   | Meaning                                                                                                                                                                                                                                                                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                                                                                                                                                                                                            |
-| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest).                                                                                                                                                                                             |
-| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                                                                                                                                                                                                                 |
-| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                                                                                                                                                                                                                      |
-| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                                                                                                                                                                                                               |
-| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`). The checkout's fixture model is one such root: `--models-dir fixtures/models`.                                                                                                                                 |
-| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment.                                                                                                                                                                                                                                                            |
-| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                                                                                                                                                                                                                        |
-| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                                                                                                                                                                                                             |
-| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                                                                                                                                                                                                                      |
-| `--pull`               | **Planned.** Fetch a model the graph names from the registry into the cache when it is not on disk (`XWE_MODELS_PULL=1` does the same). See [Models](/workflows/models).                                                                                                                                                              |
-| `--pack <module>`      | **Planned.** Register a node pack before running: a package name or a path, resolved from the working directory the way `require` is; the module's `pack` or default export is the pack. Repeatable, also on `validate`. Prints `[xwe] pack <name> v<version> (<n> nodes) <- <file>` per pack. See [Extending](/workflows/extending). |
+| Flag                   | Meaning                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                                                                                                                                                                                                                    |
+| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest).                                                                                                                                                                                                     |
+| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                                                                                                                                                                                                                         |
+| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                                                                                                                                                                                                                              |
+| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                                                                                                                                                                                                                       |
+| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`). The checkout's fixture model is one such root: `--models-dir fixtures/models`.                                                                                                                                         |
+| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment. A file that does not parse is reported by name only; a value never appears in any artifact or output line, and child processes never see it.                                                                                                                       |
+| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                                                                                                                                                                                                                                |
+| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                                                                                                                                                                                                                     |
+| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                                                                                                                                                                                                                              |
+| `--pull`               | **Planned.** Fetch a model the graph names from the registry into the cache when it is not on disk (`XWE_MODELS_PULL=1` does the same). See [Models](/workflows/models).                                                                                                                                                                      |
+| `--pack <module>`      | **Planned.** Register a node pack before running: a package name or a path, resolved from the working directory the way `require` is; the module's `pack` or default export is the pack. Repeatable, also on `validate`. Prints `[xwe] pack <name> v<version> (<n> nodes) <- <file>` per pack. See [Extending](/workflows/extending).         |
+| `--log-level <level>`  | **Planned.** On every command. `silent` prints nothing on stderr (the exit code and `result.json` carry the outcome); `error` prints failures only; `info`, the default, prints what this page shows; `debug` adds the engine's trace: the bindings, the graph order, one `[engine]` line per node with its timing. stdout is never affected. |
 
 ### Input keys
 
@@ -113,6 +115,27 @@ A failed run names the node:
 xwe: run failed at node n1: ENOENT: no such file or directory, open '.../missing.csv'
 ```
 
+With `--log-level debug` the engine's own trace comes first, and with
+`--log-level error` only the `xwe:` failure line is left (`silent` prints
+nothing on stderr at all):
+
+```
+[engine] run demo: 4 node(s), bindings n1=telemetry_csv
+[engine] run demo: artifacts -> out/demo
+[engine] graph: 4 node(s), 3 edge(s), order n1 -> n2 -> n3 -> n4
+[engine] n1: ok in 2 ms, 150 message(s)
+[engine] n2: ok in 2 ms, 150 message(s)
+[engine] n3: ok in 2 ms, 149 message(s)
+[engine] n4: ok in 2 ms, 0 message(s)
+[engine] run demo: succeeded in 4 ms
+[xwe] succeeded in 0.0s -> out/demo/result.json
+  ok      n1           150 samples (csv: gps.lat, gps.lon, gps.speed)
+  ok      n2           derived 149 speed_kph values (speed_from_position)
+  ok      n3           true on 149/149 samples (gt 10)
+  ok      n4           emitted 1 event(s)
+  events: 1
+```
+
 ### The progress stream
 
 With `--progress json`, stdout carries the engine's progress messages, one
@@ -129,6 +152,13 @@ the CLI's; a platform shell publishes the same messages over its own transport:
 `record` covers `json` ports only: connector lookups, VLM verdicts, and the
 like. Detections travel on their own channel and are counted in the detection
 node's step summary rather than streamed.
+
+The message set is stable: the four types and the fields above are a
+published contract, never removed or retyped within a major version, and only
+ever added to (see [Compatibility](/workflows/engine#compatibility)). A secret
+value read through the secrets seam never reaches a message: it is replaced
+with `[redacted]` in `output`, `error` and every payload before the message
+is emitted, on stdout and through `engine.run({ progress })` alike.
 
 ## `models`
 
@@ -190,4 +220,7 @@ fix on the same line. The output is on
 | `2`  | Usage or configuration: an unbindable input key, a template that does not parse, a missing file argument. Nothing was run.                                      |
 
 The distinction between 1 and 2 is the useful one for scripting: 2 means the
-invocation was wrong, 1 means the graph was.
+invocation was wrong, 1 means the graph was. The three codes are stable: a
+code is never reassigned within a major version, and `--log-level` changes
+what is printed, never the code (see
+[Compatibility](/workflows/engine#compatibility)).
