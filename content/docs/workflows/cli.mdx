@@ -148,14 +148,16 @@ checksum does not match and keeps nothing; `pull` of a version already in the
 cache downloads nothing. `check` prints four lines (manifest, model, session,
 output), fills in the manifest's checksum when it is missing (`--no-fill` to
 only read), and exits 1 when any line fails; the lines are on
-[Models](/workflows/models#check-the-directory). Measured against a local
-mirror (`npx serve -l 3100 registry-mirror`):
+[Models](/workflows/models#check-the-directory). Measured against the public
+registry with an empty cache:
 
 ```
-$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models list
-registry http://localhost:3100 (1 model)
-  detection/yolov8n@1  yolov8n  12.3 MB
-$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+$ xwe models list
+registry https://models.xorgate.io (3 models)
+  depth/depth-anything-v2-small@1  Depth Anything V2 Small  94.5 MB
+  detection/yolov8n@1              yolov8n                  12.3 MB
+  segmentation/yolov8n-seg@1       yolov8n-seg              13.2 MB
+$ xwe models pull detection/yolov8n
 pulled detection/yolov8n@1 -> ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB, sha256 verified)
 $ xwe models path detection/yolov8n
 /home/dev/.xorgate/models/detection/yolov8n/1/model.onnx

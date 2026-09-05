@@ -6,9 +6,9 @@ description: "Where model.* nodes get their weights: the registry layout, the re
 <Callout type="warn" title="Design preview">
   The registry layout, the manifest, the resolver chain, `xwe models`, the
   cache, the integrity fields and `--pull` are how the engine works on its main
-  branch. Nothing is published yet: the package is unreleased and the public
-  registry does not exist, so until it does, pulls need `XWE_MODEL_REGISTRY`
-  pointed at a mirror you serve yourself (see "Sharing it: a private registry").
+  branch, and the public registry at `models.xorgate.io` is live with the three
+  first-party models. The package itself is not published yet, so `xwe` still
+  runs from a checkout.
 </Callout>
 
 Models are never part of the engine. The package does not contain one, the
@@ -67,17 +67,18 @@ xwe models check ./models/detection/acme-forklift/1   # validate a model directo
 `pull` downloads `manifest.json` and `model.onnx` into the cache root, verifies
 the checksum the manifest declares, and refuses to keep a file that does not
 match. `list` reads the registry's `index.json`, which is the same list the
-platform's model picker shows. Measured against the engine's fixture model
-served from a local mirror (`npx serve -l 3100 registry-mirror`; the public
-registry answers the same way once it exists):
+platform's model picker shows. Measured against the public registry with an
+empty cache:
 
 ```
-$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models list
-registry http://localhost:3100 (1 model)
-  detection/yolov8n@1  yolov8n  12.3 MB
-$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+$ xwe models list
+registry https://models.xorgate.io (3 models)
+  depth/depth-anything-v2-small@1  Depth Anything V2 Small  94.5 MB
+  detection/yolov8n@1              yolov8n                  12.3 MB
+  segmentation/yolov8n-seg@1       yolov8n-seg              13.2 MB
+$ xwe models pull detection/yolov8n
 pulled detection/yolov8n@1 -> ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB, sha256 verified)
-$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+$ xwe models pull detection/yolov8n
 detection/yolov8n@1 already in ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB)
 $ xwe models path detection/yolov8n
 /home/dev/.xorgate/models/detection/yolov8n/1/model.onnx

@@ -148,8 +148,8 @@ xwe 0.1.0 (node 20.20.2, darwin arm64)
   ffmpeg            /opt/homebrew/bin/ffmpeg (7.1)
   onnxruntime-node  1.19.2, cpu binding loaded
   vlm providers     1 client installed
-  models            ~/.xorgate/models (2 cached: detection/yolov8n@1, depth/depth-anything-v2-small@1)
-  registry          https://models.xorgate.io (index: 4 models)
+  models            ~/.xorgate/models (2 cached: depth/depth-anything-v2-small@1, detection/yolov8n@1)
+  registry          https://models.xorgate.io (index: 3 models)
   catalog           26 nodes, core e481243f5ffe4678, no packs
 ```
 
@@ -159,8 +159,8 @@ video node fails on a new machine. When more than one model root is in the
 search chain (`--models-dir`, the cache), each root gets its own line under
 `models`. The `registry` line reads the registry's `index.json`
 (`XWE_MODEL_REGISTRY`, default the public registry) and reports how many
-models it lists, or why it could not be read (for example `unreachable:
-ENOTFOUND` while the public registry does not exist yet). It never fails the
+models it lists, or why it could not be read (`unreachable: ENOTFOUND` on a
+machine without network access). It never fails the
 check: a run needs the registry only when it pulls.
 
 ## Requirements, in one place
