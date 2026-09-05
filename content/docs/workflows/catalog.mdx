@@ -94,8 +94,12 @@ Every logic node emits `condition:condition` and runs on any target.
 
 ## The seventh group
 
-`NODE_GROUPS` also names a `custom` group with no members. It is the reserved
-home for user-code nodes (`function.javascript`, `function.python`), which are a
-design placeholder and have no executor. Their planned shape, as the group
-`function`, is on [Code function nodes](/workflows/functions); see also
-[What this does not cover](/workflows/not-covered#no-function-nodes).
+`NODE_GROUPS` also names a `function` group with no members (it was spelled
+`custom` before the engine's distribution work; no node ever used it, so the
+rename changes nothing in this payload). It is the reserved home for
+user-code nodes (`function.javascript`, `function.python`), which are a design
+placeholder and have no executor. Their planned shape is on
+[Code function nodes](/workflows/functions); see also
+[What this does not cover](/workflows/not-covered#no-function-nodes). The
+`function` namespace is reserved with the six above and `connector`: a
+[node pack](/workflows/extending) cannot define a type in any of them.

@@ -447,10 +447,11 @@ over its object storage, and the engine does not know the difference.
   [pack](/workflows/extending) that carries its own decoding; the manifest's
   `kind` is the list of what exists.
 - **A new family** (`classification`, say) comes with the pack that adds a
-  node for it. The manifest's `family` is one of `detection`, `segmentation`
-  and `depth` today because those are the three model nodes; it is planned
-  to become an open string with the known values documented, so a pack can
-  bring a family without an engine release.
+  node for it. The manifest's `family` is an open string that matches the
+  directory under the registry root and the node's `runtime.modelRef.family`;
+  `detection`, `segmentation` and `depth` are the documented values
+  (`MODEL_FAMILIES`) because those are the three core model nodes, and a pack
+  brings its own family without an engine release.
 - **Segmentation and depth fine-tunes** follow the same steps with
   `yolov8-seg` (a `maskThreshold` joins `postprocess`) and `depth-anything`
   (no class names, a single map output).

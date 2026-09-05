@@ -91,12 +91,12 @@ The numbers below were measured on the current build by the package's own
 tarball check (`npm run verify:tarball`: pack, install into a fresh project,
 run), on macOS arm64 with npm 11. They are re-measured for every release.
 
-| Artifact                                   | Measured                                                                        |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| npm tarball (`dist`, README, LICENSE only) | 137 kB packed, 0.9 MB unpacked, 238 files                                       |
-| `node_modules` after `--omit=optional`     | 4.6 MB                                                                          |
-| `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB   |
-| container image, per architecture          | ONNX Runtime trimmed to the image's own platform; measured when the image ships |
+| Artifact                                   | Measured                                                                                                                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm tarball (`dist`, README, LICENSE only) | 137 kB packed, 0.9 MB unpacked, 238 files                                                                                                                                    |
+| `node_modules` after `--omit=optional`     | 4.6 MB                                                                                                                                                                       |
+| `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB                                                                                                |
+| container image, per architecture          | ONNX Runtime trimmed to the image's own binding: 940 MB on arm64 (1.31 GB before the trim), 1.03 GB on amd64 (1.78 GB before); ffmpeg and its libraries are most of the rest |
 
 The tarball never contains fixtures, models, video, or the source tree; the
 same check asserts it on every run.

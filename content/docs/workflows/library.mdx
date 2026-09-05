@@ -160,11 +160,11 @@ design goal.
 The package ships ESM and CJS builds with declaration files, under an
 `exports` map with three entry points:
 
-| Import                             | Contents                                                                                                                                                                                                        |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`), every schema and every seam type |
-| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                              |
-| `@xorgate/workflow-engine/testing` | `runConformance`                                                                                                                                                                                                |
+| Import                             | Contents                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`, `corePacks`) and the executor helpers (`requireInput`, `telemetrySamples`), every schema and every seam type |
+| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                                                                                                         |
+| `@xorgate/workflow-engine/testing` | `runConformance`                                                                                                                                                                                                                                                                           |
 
 Importing any of them loads no native module: ONNX Runtime and the VLM
 provider client are required lazily by the executors that use them, on the first run that
