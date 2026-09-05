@@ -18,11 +18,12 @@ identically wherever it runs.
 
 <Callout title="What is, and is not, documented here">
   This section covers the definition format, the 26-node catalog, and the engine
-  with its `xwe` CLI. Four pages ([installing](/workflows/installation), [the
-  library](/workflows/library), [models](/workflows/models) and
-  [extending](/workflows/extending)) describe the engine's planned distribution
-  as a package and image; each opens with a **Design preview** callout until the
-  behaviour it describes ships. The platform side (workflow templates, device
+  with its `xwe` CLI, published as `@xorgate/workflow-engine` 0.1.0 on npm and
+  as the image `ghcr.io/epyelabs/xwe` ([installing](/workflows/installation),
+  [the library](/workflows/library), [models](/workflows/models),
+  [extending](/workflows/extending)). One page, [code function
+  nodes](/workflows/functions), describes a 0.2.0 feature and opens with a
+  **Design preview** callout. The platform side (workflow templates, device
   attachments, runs and simulations as REST resources) is **not** in the API
   reference or either SDK yet, and the platform does not yet execute its runs
   through this engine. [What this does not cover](/workflows/not-covered) says
@@ -106,9 +107,9 @@ differ only in where the bindings point and where the tree lands.
 
 The engine reaches those hosts as one npm package, `@xorgate/workflow-engine`,
 that carries both `xwe` and a library entry point, and as one multi-arch
-container image; [Installing the engine](/workflows/installation) is the
-planned shape of that, and [Using the engine as a library](/workflows/library)
-is what embedding it in your own service looks like.
+container image; [Installing the engine](/workflows/installation) is how to
+get either, and [Using the engine as a library](/workflows/library) is what
+embedding it in your own service looks like.
 
 The local artifact tree already uses the platform's storage key layout, the
 binding kinds are shared, and the catalog is one catalog. That is deliberate:
@@ -138,12 +139,12 @@ shape, and the catalog node definitions.
   <Card
     title="Installing the engine"
     href="/workflows/installation"
-    description="Design preview: the package, the global CLI, the container image, what an install pulls down, and xwe doctor."
+    description="The package, the global CLI, the container image, what an install pulls down, and xwe doctor."
   />
   <Card
     title="Using the engine as a library"
     href="/workflows/library"
-    description="Design preview: createEngine in five lines, runGraph for your own storage, the four host seams, and the conformance kit."
+    description="createEngine in five lines, runGraph for your own storage, the four host seams, and the conformance kit."
   />
   <Card
     title="Models and the registry"
@@ -153,7 +154,7 @@ shape, and the catalog node definitions.
   <Card
     title="Extending the catalog"
     href="/workflows/extending"
-    description="Writing a node, and the planned node packs, createCatalog, --pack, and what catalogVersion means across hosts."
+    description="Writing a node, node packs, createCatalog, --pack, and what catalogVersion means across hosts."
   />
   <Card
     title="Code function nodes"
@@ -163,7 +164,7 @@ shape, and the catalog node definitions.
   <Card
     title="CLI reference"
     href="/workflows/cli"
-    description="xwe run and xwe validate, every flag, and the exit codes."
+    description="xwe validate, run, models and doctor, every flag, the progress stream, and the exit codes."
   />
   <Card
     title="Inputs and outputs"

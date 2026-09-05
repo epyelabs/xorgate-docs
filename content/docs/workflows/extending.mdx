@@ -3,21 +3,14 @@ title: "Extending the catalog"
 description: "Writing a node with defineNode, packaging nodes as a pack, loading packs into the engine and the CLI, and what catalogVersion means once two hosts do not run the same set of nodes."
 ---
 
-<Callout type="warn" title="Design preview">
-  `defineNode`, the executor contract and the node groups on this page are how
-  the 26 core nodes are written today. Node packs, `createCatalog`,
-  `createEngine({packs})` and `xwe run --pack` are implemented on the engine's
-  main branch and not published yet; the output below is measured from that
-  branch. The example pack lives in the repository under
-  `examples/packs/acme-scale/`.
-</Callout>
-
 The 26 nodes in the [catalog](/workflows/catalog) are ordinary modules: a
 declarative definition and an executor, validated once when the catalog is
 built. A node you write is the same thing, in your own package, and the
 engine treats it exactly like a core node once it is registered. This is where
 a catalog of hundreds of nodes lives: not in the engine's repository, but in
-packs owned by whoever needs them.
+packs owned by whoever needs them. The example pack this page builds lives in
+the engine repository under `examples/packs/acme-scale/`, and the output
+below is measured with it.
 
 ## A node
 

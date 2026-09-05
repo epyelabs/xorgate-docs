@@ -3,13 +3,6 @@ title: "Installing the engine"
 description: "The three ways to get xorgate-workflow-engine: the xwe CLI installed globally, the library added to a project, or the container image. What an install pulls down, and how to check a machine with xwe doctor."
 ---
 
-<Callout type="warn" title="Design preview">
-  This page describes the planned distribution of the engine. Nothing on it is
-  published yet; today the engine runs from a checkout as described under [The
-  engine](/workflows/engine#running-it). Commands and imports here are the
-  target and may change before release.
-</Callout>
-
 `xorgate-workflow-engine` ships as one npm package, **`@xorgate/workflow-engine`**,
 that contains both the library and the `xwe` command, and as one container
 image, **`ghcr.io/epyelabs/xwe`**, that contains the command with ffmpeg and
@@ -87,14 +80,15 @@ affected. The catalog, validation and the serialized catalog payload never
 touch either package, which is why importing the library is cheap on every
 host.
 
-The numbers below were measured on the current build by the package's own
-tarball check (`npm run verify:tarball`: pack, install into a fresh project,
-run), on macOS arm64 with npm 11. They are re-measured for every release.
+The numbers below were measured for 0.1.0 by the package's own tarball check
+(`npm run verify:tarball`: pack, install into a fresh project, run), on macOS
+arm64 with npm 11, and confirmed against the published tarball. They are
+re-measured for every release.
 
 | Artifact                                   | Measured                                                                                                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm tarball (`dist`, README, LICENSE only) | 137 kB packed, 0.9 MB unpacked, 238 files                                                                                                                                    |
-| `node_modules` after `--omit=optional`     | 4.6 MB                                                                                                                                                                       |
+| npm tarball (`dist`, README, LICENSE only) | 185 kB packed, 1.2 MB unpacked, 282 files                                                                                                                                    |
+| `node_modules` after `--omit=optional`     | 4.8 MB                                                                                                                                                                       |
 | `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB                                                                                                |
 | container image, per architecture          | ONNX Runtime trimmed to the image's own binding: 940 MB on arm64 (1.31 GB before the trim), 1.03 GB on amd64 (1.78 GB before); ffmpeg and its libraries are most of the rest |
 
@@ -141,14 +135,15 @@ docker run --rm -v "$PWD":/work -v xwe-models:/root/.xorgate/models \
 ## Checking a machine: `xwe doctor`
 
 `xwe doctor` reports everything a run depends on and exits non-zero when a
-required piece is missing:
+required piece is missing. From the 0.1.0 image, after one `models pull` into
+a mounted cache:
 
 ```
-xwe 0.1.0 (node 20.20.2, darwin arm64)
-  ffmpeg            /opt/homebrew/bin/ffmpeg (7.1)
-  onnxruntime-node  1.19.2, cpu binding loaded
+xwe 0.1.0 (node 20.20.2, linux arm64)
+  ffmpeg            /usr/bin/ffmpeg (5.1.9-0+deb12u1)
+  onnxruntime-node  1.29.0, cpu binding loaded
   vlm providers     1 client installed
-  models            ~/.xorgate/models (2 cached: depth/depth-anything-v2-small@1, detection/yolov8n@1)
+  models            ~/.xorgate/models (1 cached: detection/yolov8n@1)
   registry          https://models.xorgate.io (index: 3 models)
   catalog           26 nodes, core e481243f5ffe4678, no packs
 ```

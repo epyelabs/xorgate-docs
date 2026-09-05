@@ -3,14 +3,6 @@ title: "Models and the registry"
 description: "Where model.* nodes get their weights: the registry layout, the resolver chain and local cache, xwe models pull, integrity, version pinning, the manifest, and the license of every first-party model."
 ---
 
-<Callout type="warn" title="Design preview">
-  The registry layout, the manifest, the resolver chain, `xwe models`, the
-  cache, the integrity fields and `--pull` are how the engine works on its main
-  branch, and the public registry at `models.xorgate.io` is live with the three
-  first-party models. The package itself is not published yet, so `xwe` still
-  runs from a checkout.
-</Callout>
-
 Models are never part of the engine. The package does not contain one, the
 container image does not bake one in, and the repository does not commit any.
 A `model.*` node names a model and the host resolves it, from disk or from a
@@ -171,8 +163,8 @@ name a template will carry. `1` is the version; a retrained model becomes
 The engine reads the model's geometry, normalization, class names and
 post-processing parameters from the manifest, so the export step's job is to
 produce both files consistently. The export tool that produces the
-first-party models is planned to ship in the engine repository under
-`tools/export/`, and it accepts your own weights:
+first-party models ships in the engine repository under `tools/export/` (not
+in the package), and it accepts your own weights:
 
 ```bash
 python tools/export/export_yolo.py \

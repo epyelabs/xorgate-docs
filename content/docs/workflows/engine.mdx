@@ -12,13 +12,12 @@ needs nothing from its host can be handed to a laptop, a container, an edge
 device, or the platform's own runners, and run the same template the same way
 on each.
 
-<Callout title="Not on a registry yet">
-  The engine is not published to npm or a container registry. You run it from a
-  checkout, or build the image from the checkout's `Dockerfile`. Everything on
-  this page was verified against that checkout, on a laptop, in docker, and on a
-  Compute Module 5. The planned distribution, `@xorgate/workflow-engine` on npm
-  and `ghcr.io/epyelabs/xwe`, is described under [Installing the
-  engine](/workflows/installation) as a design preview.
+<Callout title="Published">
+  `npm install -g @xorgate/workflow-engine` puts `xwe` on your path; `docker
+  pull ghcr.io/epyelabs/xwe` gets the image with ffmpeg and ONNX Runtime inside.
+  Both are version 0.1.0, built from the repository's `v0.1.0` tag. [Installing
+  the engine](/workflows/installation) has every install route; this page is the
+  repository itself, for running from a checkout and for reading the code.
 </Callout>
 
 ## Where it is headed
@@ -65,18 +64,18 @@ storage, secrets and progress transport. The seams are the library's
 integration contract, described under
 [Using the engine as a library](/workflows/library#the-four-seams).
 
-Two planned changes to this layout are worth knowing about when reading the
-source: the fixtures directory keeps only the small files (templates, CSV,
-manifests) and pulls the video and the model on demand, so that nothing in
-the repository grows with the number of models; and the catalog becomes a set
-of **packs** built into a catalog instance rather than one static list, so
-that nodes outside the repository register the same way the core ones do. See
+Two things about this layout are worth knowing when reading the source: the
+fixtures directory keeps only the small files (templates, CSV, manifests) and
+pulls the video and the model on demand, so that nothing in the repository
+grows with the number of models; and the catalog is a set of **packs** built
+into a catalog instance rather than one static list, so that nodes outside
+the repository register the same way the core ones do. See
 [Models and the registry](/workflows/models) and
 [Extending the catalog](/workflows/extending).
 
 ## Requirements
 
-- **Node 20 or newer.** The build is CommonJS.
+- **Node 20 or newer.** The build ships ESM and CommonJS.
 - **ffmpeg.** Every video node spawns it. Resolution order is `FFMPEG_PATH`,
   then `ffmpeg` on `PATH`, then the `ffmpeg-static` development dependency if
   installed. The docker image installs it from apt.
@@ -88,8 +87,8 @@ that nodes outside the repository register the same way the core ones do. See
   a `--models-dir` root, or the cache that `xwe models pull` fills.
 - **A secret** only for the connector (except `osm`) and `model.vlm`.
 
-The planned `xwe doctor` prints each of these for the machine it runs on, with
-the fix when one is missing; see
+`xwe doctor` prints each of these for the machine it runs on, with the fix
+when one is missing; see
 [Installing the engine](/workflows/installation#checking-a-machine-xwe-doctor).
 
 ## Running it
@@ -163,14 +162,8 @@ while still writing `result.json`.
 
 ## Compatibility
 
-<Callout type="warn" title="Design preview">
-  This policy takes effect with the first published release. The contract table
-  is verified against the checkout; the version rules describe how the package
-  will move once it is on a registry.
-</Callout>
-
 The engine is a set of contracts with code behind them, and the package
-version is about the contracts. `docs/compatibility.md` in the repository is
+version is about the contracts. The policy applies from 0.1.0. `docs/compatibility.md` in the repository is
 the full table with the file each contract lives in; the short form:
 
 | Contract            | Identity                                                                                                                                         |

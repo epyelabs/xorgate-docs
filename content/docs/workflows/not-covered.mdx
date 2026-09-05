@@ -95,18 +95,18 @@ Module 5 run happened on a module with the agent live, which proves they can
 share a host, not that anything coordinates them: no shared media bridge, no
 scheduling around recording, no fleet distribution of templates.
 
-### Distribution is planned, not shipped
+### What is distributed, and what is not
 
-No npm package and no container registry exist yet; run from a checkout. The
-planned distribution, `@xorgate/workflow-engine` with the `xwe` command
-inside it and a multi-arch image on GHCR, is written up under
+The engine is published as `@xorgate/workflow-engine` 0.1.0 on npm, with the
+`xwe` command inside it, and as the multi-arch image `ghcr.io/epyelabs/xwe`;
 [Installing the engine](/workflows/installation),
 [Using the engine as a library](/workflows/library),
 [Models and the registry](/workflows/models) and
-[Extending the catalog](/workflows/extending), each marked as a design
-preview until the artifact it describes is published and re-verified. The
-engine's license will be MIT, the same as the SDKs. There is still no
-licensing or metering of runs, and none is planned.
+[Extending the catalog](/workflows/extending) describe those artifacts as
+verified. The license is MIT, the same as the SDKs. There is no licensing or
+metering of runs, and none is planned. Code function nodes are the one
+documented feature not in 0.1.0 (see [Code function
+nodes](/workflows/functions)).
 
 ## Bindings that only resolve on the platform
 

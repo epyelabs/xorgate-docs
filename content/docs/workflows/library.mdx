@@ -3,13 +3,6 @@ title: "Using the engine as a library"
 description: "createEngine and the local host in five lines, what a run returns, the low-level runGraph entry for hosts with their own storage, the four host seams as the integration contract, and the conformance kit."
 ---
 
-<Callout type="warn" title="Design preview">
-  This page describes the planned library surface of `@xorgate/workflow-engine`.
-  Nothing on it is published yet; today the engine runs from a checkout as
-  described under [The engine](/workflows/engine#running-it). Imports and
-  signatures here are the target and may change before release.
-</Callout>
-
 The `xwe` command is a thin shell over the library. Everything it does, your
 code can do with the same package, and the package is designed so that you
 need nothing from the xorgate platform to do it: no account, no API key, no
