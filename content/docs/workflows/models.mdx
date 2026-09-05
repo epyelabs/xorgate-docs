@@ -4,9 +4,11 @@ description: "Where model.* nodes get their weights: the registry layout, the re
 ---
 
 <Callout type="warn" title="Design preview">
-  The registry layout, the manifest and the local directory search on this page
-  are how the engine works today. The public registry, `xwe models`, the cache,
-  integrity fields and `--pull` are planned and not published yet.
+  The registry layout, the manifest, the resolver chain, `xwe models`, the
+  cache, the integrity fields and `--pull` are how the engine works on its main
+  branch. Nothing is published yet: the package is unreleased and the public
+  registry does not exist, so until it does, pulls need `XWE_MODEL_REGISTRY`
+  pointed at a mirror you serve yourself (see "Sharing it: a private registry").
 </Callout>
 
 Models are never part of the engine. The package does not contain one, the
@@ -59,12 +61,37 @@ xwe models list                              # the registry index, marking what 
 xwe models pull detection/yolov8n            # newest version into the cache
 xwe models pull detection/yolov8n@1          # a specific version
 xwe models path detection/yolov8n            # what a run would load, and from which root
+xwe models check ./models/detection/acme-forklift/1   # validate a model directory (below)
 ```
 
 `pull` downloads `manifest.json` and `model.onnx` into the cache root, verifies
 the checksum the manifest declares, and refuses to keep a file that does not
 match. `list` reads the registry's `index.json`, which is the same list the
-platform's model picker shows. Everything works against any registry that
+platform's model picker shows. Measured against the engine's fixture model
+served from a local mirror (`npx serve -l 3100 registry-mirror`; the public
+registry answers the same way once it exists):
+
+```
+$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models list
+registry http://localhost:3100 (1 model)
+  detection/yolov8n@1  yolov8n  12.3 MB
+$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+pulled detection/yolov8n@1 -> ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB, sha256 verified)
+$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+detection/yolov8n@1 already in ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB)
+$ xwe models path detection/yolov8n
+/home/dev/.xorgate/models/detection/yolov8n/1/model.onnx
+  detection/yolov8n v1, from the cache (~/.xorgate/models)
+```
+
+A download whose bytes do not match the manifest is deleted and named:
+
+```
+$ xwe models pull detection/yolov8n
+xwe: detection/yolov8n@1: model.onnx sha256 mismatch (manifest 8d29aa6e6235…, downloaded e3167333d6fa…); nothing kept
+```
+
+Everything works against any registry that
 serves the layout, so a private mirror is one environment variable away:
 
 ```bash
@@ -207,9 +234,16 @@ output     ok   "output0" [1,6,8400] matches yolov8 with 2 classes (4 + 2)
 The last line is the one that matters. A YOLOv8 head outputs
 `4 + classNames.length` rows; a manifest that lists two classes for a model
 trained on three fails here, with both numbers, instead of as a garbled
-detection list halfway through a run. `check` also fills in `files.sha256`
-and `sizeBytes` when the manifest lacks them, so a hand-written manifest
-becomes registry-ready.
+detection list halfway through a run:
+
+```
+output     fail "output0" [1,7,8400] does not match yolov8 with 2 classes: expected 4 + 2 = 6 rows, got 7 (a model with 3 classes?)
+```
+
+`check` also fills in `files.sha256` and `sizeBytes` when the manifest lacks
+them (the `model` line then reads `sha256 recorded in manifest.json`), so a
+hand-written manifest becomes registry-ready; `--no-fill` only reads. It
+exits 1 when any line fails, so it fits a build step as it is.
 
 </Step>
 

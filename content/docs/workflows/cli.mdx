@@ -53,20 +53,20 @@ expects.
 
 ## `run`
 
-| Flag                   | Meaning                                                                                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                |
-| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest). |
-| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                     |
-| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                          |
-| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                   |
-| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the defaults `./fixtures/models` and `~/.xorgate/models`.                     |
-| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment.                                                                |
-| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                            |
-| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                 |
-| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                          |
-| `--pull`               | **Planned.** Fetch a model the graph names from the registry into the cache when it is not on disk. See [Models](/workflows/models).      |
-| `--pack <module>`      | **Planned.** Register a node pack before running, resolved from the working directory. Repeatable. See [Extending](/workflows/extending). |
+| Flag                   | Meaning                                                                                                                                                                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                                                                            |
+| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest).                                                             |
+| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                                                                                 |
+| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                                                                                      |
+| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                                                                               |
+| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`). The checkout's fixture model is one such root: `--models-dir fixtures/models`. |
+| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment.                                                                                                                            |
+| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                                                                                        |
+| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                                                                             |
+| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                                                                                      |
+| `--pull`               | **Planned.** Fetch a model the graph names from the registry into the cache when it is not on disk (`XWE_MODELS_PULL=1` does the same). See [Models](/workflows/models).                              |
+| `--pack <module>`      | **Planned.** Register a node pack before running, resolved from the working directory. Repeatable. See [Extending](/workflows/extending).                                                             |
 
 ### Input keys
 
@@ -132,17 +132,35 @@ node's step summary rather than streamed.
 
 ## `models`
 
-**Planned.** Three subcommands over the [model registry](/workflows/models):
+**Planned.** Four subcommands over the [model registry](/workflows/models):
 
 ```bash
 xwe models list                          # the registry index, marking what is cached locally
 xwe models pull detection/yolov8n        # newest version into ~/.xorgate/models, checksum verified
 xwe models pull detection/yolov8n@1      # a specific version
 xwe models path detection/yolov8n        # what a run would load, and from which root
+xwe models check ./models/detection/acme-forklift/1   # validate a model directory
 ```
 
 `XWE_MODEL_REGISTRY` overrides the registry URL and `XWE_MODELS_DIR` the cache
-root. `pull` exits 1 when a checksum does not match and keeps nothing.
+root; `--models-dir` adds roots for `list` and `path`. `pull` exits 1 when a
+checksum does not match and keeps nothing; `pull` of a version already in the
+cache downloads nothing. `check` prints four lines (manifest, model, session,
+output), fills in the manifest's checksum when it is missing (`--no-fill` to
+only read), and exits 1 when any line fails; the lines are on
+[Models](/workflows/models#check-the-directory). Measured against a local
+mirror (`npx serve -l 3100 registry-mirror`):
+
+```
+$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models list
+registry http://localhost:3100 (1 model)
+  detection/yolov8n@1  yolov8n  12.3 MB
+$ XWE_MODEL_REGISTRY=http://localhost:3100 xwe models pull detection/yolov8n
+pulled detection/yolov8n@1 -> ~/.xorgate/models/detection/yolov8n/1 (model.onnx 12.3 MB, sha256 verified)
+$ xwe models path detection/yolov8n
+/home/dev/.xorgate/models/detection/yolov8n/1/model.onnx
+  detection/yolov8n v1, from the cache (~/.xorgate/models)
+```
 
 ## `function test`
 

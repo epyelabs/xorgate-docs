@@ -182,11 +182,12 @@ file.
 The three ONNX nodes name a model (`yolov8n`, `yolov8n-seg`,
 `depth-anything-v2-small`) and the engine resolves it from a registry with one
 fixed layout, `<root>/<family>/<name>/<version>/{manifest.json,model.onnx}`,
-in object storage on the platform and on disk here. Today the roots are every
-`--models-dir`, then `./fixtures/models`, then `~/.xorgate/models`, with no
-network fetch. The layout, the manifest, the planned resolver chain, the cache,
-`xwe models pull`, integrity and the license of each first-party model are on
-[Models and the registry](/workflows/models).
+in object storage on the platform and on disk here. The roots are every
+`--models-dir`, then the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`),
+then the registry (`XWE_MODEL_REGISTRY`) only when a run asks for it with
+`--pull` or `XWE_MODELS_PULL=1`. The layout, the manifest, the resolver chain,
+the cache, `xwe models pull`, integrity and the license of each first-party
+model are on [Models and the registry](/workflows/models).
 
 ## Secrets
 

@@ -147,8 +147,10 @@ const report = await runConformance({ host: myHost, fixturesDir: "./fixtures" })
 // missing-input (exit path with result.json still written)
 ```
 
-The fixtures are the ones described under [The engine](/workflows/engine#the-fixtures),
-pulled with `xwe fixtures pull` or from the repository. The platform's shell
+The fixtures are the ones described under [The engine](/workflows/engine#the-fixtures).
+The large ones are not committed: a checkout fetches them with
+`npm run fixtures:pull`, which verifies the checksums pinned in
+`fixtures/fixtures.json`. The platform's shell
 will run the same kit when it consumes the engine, which is what makes "a
 template behaves identically wherever it runs" a tested claim rather than a
 design goal.
