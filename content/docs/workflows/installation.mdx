@@ -150,7 +150,10 @@ xwe 0.1.0 (node 20.20.2, linux arm64)
 
 Each line names the fix when something is absent (`ffmpeg: not found; set
 FFMPEG_PATH or install it`), which is the first thing to run when a model or
-video node fails on a new machine. When more than one model root is in the
+video node fails on a new machine. From 0.2.0 a `python3` line follows
+`vlm providers` (`/usr/bin/python3 (3.11.2)` in the image) for
+[`function.python`](/workflows/functions) nodes; like the registry line it
+never fails the check. When more than one model root is in the
 search chain (`--models-dir`, the cache), each root gets its own line under
 `models`. The `registry` line reads the registry's `index.json`
 (`XWE_MODEL_REGISTRY`, default the public registry) and reports how many

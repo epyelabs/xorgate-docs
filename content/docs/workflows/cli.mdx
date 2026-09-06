@@ -14,13 +14,14 @@ xwe run --manifest <manifest.json> [options]
 xwe models list | pull <family>/<name>[@<version>] | path <family>/<name>[@<version>] | check <dir>
 xwe doctor [--models-dir <dir>]...
 xwe <command> ... --log-level silent|error|info|debug                      # any command
-xwe function test <template.json> <nodeId> --event <event.json>            # planned, 0.2.0
+xwe function test <template.json> <nodeId> --event <event.json> [--version <n>]   # 0.2.0, on main
 ```
 
 <Callout type="warn" title="Design preview">
   Everything on this page is shipped in 0.1.0 and verified against the published
-  package, except `function test`, which arrives with [code function
-  nodes](/workflows/functions) in 0.2.0.
+  package, except `function test`, which is implemented on the engine's main
+  branch for 0.2.0 with [code function nodes](/workflows/functions) and is not
+  in a published package yet; its output below is measured from that branch.
 </Callout>
 
 ## `validate`
@@ -195,16 +196,35 @@ $ xwe models path detection/yolov8n
 
 ## `function test`
 
-**Planned.** Runs one event through a [code function node](/workflows/functions)
-in the same sandboxed runtime a run would use, and prints the result, logs
-and duration. `--version <n>` tests a published snapshot instead of the
-working copy. Exit 1 when the handler threw or timed out, 2 when the node id
-or a file is wrong.
+Runs one event through a [code function node](/workflows/functions) in the
+same sandboxed runtime a run would use, with the code the template holds, and
+prints the result, the log lines and the handler's duration. On the engine's
+main branch for 0.2.0, not in a published package yet.
+
+```bash
+xwe function test forklift-summary.json fn --event event.json
+```
+
+```
+ok      fn           function.javascript  $LATEST  0 ms
+result: {"frameSeq":3,"count":1,"widestPx":212,"confidence":0.81}
+logs: none
+```
+
+A handler that throws prints the error and the frames inside its own code,
+and exits 1; a dropped event prints `result: null (dropped)`; log lines are
+listed under `logs:`. `--version <n>` runs a published snapshot instead of
+the working copy, and the report's third column says `v2` instead of
+`$LATEST`. Exit 2 when the template, the node id (the message lists the
+node ids), the event file or the version is wrong and nothing ran, and when
+`python3` is not on `PATH` for a Python node. The event file is
+`{ "tag"?, "ts"?, "seq"?, "payload" }`; only `payload` is required.
 
 ## `doctor`
 
 Prints the node version, the ffmpeg it would use, whether the
-ONNX Runtime binding and the VLM provider client are installed, the model roots and
+ONNX Runtime binding and the VLM provider client are installed, the `python3`
+that `function.python` nodes would use (from 0.2.0), the model roots and
 what they contain, whether the registry is reachable, and the catalog hash
 with any packs. Exits non-zero when something a run needs is missing, with the
 fix on the same line. The output is on

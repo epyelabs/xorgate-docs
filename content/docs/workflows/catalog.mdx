@@ -1,12 +1,14 @@
 ---
 title: "Node catalog"
-description: "All 26 node types by group: ports and channels, run target, configuration keys and defaults. Generated from the engine's own catalog payload, not transcribed."
+description: "All 28 node types by group: ports and channels, run target, configuration keys and defaults. Generated from the engine's own catalog payload, not transcribed."
 ---
 
 The catalog is the set of node types a definition may use. The engine serves it
 as a payload whose content hash (`catalogVersion`) changes whenever any node
 definition does; the editor uses that hash as an ETag. Everything below was
-read from that payload at `catalogVersion e481243f5ffe4678`.
+read from that payload at `catalogVersion 08c8c39436928e5e` (the engine's
+main branch for 0.2.0; the published 0.1.0 serves 26 nodes at
+`e481243f5ffe4678`, and the 26 definitions the two share are identical).
 
 Ports are written `id:channel`, a `json` port as `id:json/tag`, and an optional
 input with a trailing `?`. **Target** says what a node needs from its host: `any`
@@ -92,14 +94,21 @@ Every logic node emits `condition:condition` and runs on any target.
 | `output.data_capture`  | `records:json` (any tag)                                                                                         | any    | `format` (`jsonl` \| `json`, default `jsonl`). Every record on the input becomes a line, or an element, of `outputs/<nodeId>/records.*`.                                                                                                                            |
 | `output.visualization` | `frames:frames`, plus at least one of `detections:json/detections`, `depth:json/depth`, `segments:json/segments` | media  | `overlays` (`boxes` \| `labels` \| `confidence` \| `depth_map` \| `masks`, default `["boxes", "labels"]`). Writes one annotated JPEG per frame to `frames/<nodeId>/`; the [`--emit-video`](/workflows/run-artifacts#annotated-video) flag muxes them.               |
 
-## The seventh group
+## Function
 
-`NODE_GROUPS` also names a `function` group with no members (it was spelled
-`custom` before the engine's distribution work; no node ever used it, so the
-rename changes nothing in this payload). It is the reserved home for
-user-code nodes (`function.javascript`, `function.python`), which are a design
-placeholder and have no executor. Their planned shape is on
-[Code function nodes](/workflows/functions); see also
-[What this does not cover](/workflows/not-covered#no-function-nodes). The
-`function` namespace is reserved with the six above and `connector`: a
+<Callout type="warn" title="Design preview">
+  The two nodes below are implemented on the engine's main branch for 0.2.0 and
+  verified by its golden suite; the published 0.1.0 package does not have them.
+  See [Code function nodes](/workflows/functions).
+</Callout>
+
+| Type                  | Ports                                                | Target | Configuration                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | ---------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `function.javascript` | in `event:json?` (any tag), out `result:json/result` | any    | `handler` (`handler`): the function invoked per event; `timeoutMs` (3000, 100 to 30000): per-invocation deadline, on expiry the process is killed and the step fails; `memoryMb` (256, 128 to 2048): the heap limit; `code` (a starter handler): the working copy, `$LATEST`, at most 256 KB; `versions` (`[]`): published snapshots `{ version, code, handler, publishedAt, description? }`; `deployedVersion` (`null`): the snapshot that runs, or the working copy. |
+| `function.python`     | the same                                             | any    | the same; `memoryMb` is an address-space limit.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+Both consume `json` messages of any tag and emit `json/result`; both run the
+handler in a sandboxed child process. `event` is optional in validation (a
+function with nothing wired to it runs zero invocations). The `function`
+namespace is reserved with the six above and `connector`: a
 [node pack](/workflows/extending) cannot define a type in any of them.

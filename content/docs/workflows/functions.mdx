@@ -4,9 +4,11 @@ description: "User code inside a template: function.javascript and function.pyth
 ---
 
 <Callout type="warn" title="Design preview">
-  Code function nodes are a design placeholder today: the `function` group is
-  reserved and the engine has no executor. This page is the planned shape;
-  nothing on it runs yet.
+  Code function nodes are implemented on the engine's main branch for 0.2.0 and
+  verified by its golden suite, on a laptop and inside the container image;
+  every output on this page is measured from that branch. The published 0.1.0
+  package and image do not have them. This callout goes when 0.2.0 is on npm and
+  verified from a clean install.
 </Callout>
 
 A [pack](/workflows/extending) is code you compile, publish and load into the
@@ -49,22 +51,33 @@ def handler(event, context):
     return {**event["payload"], "seen": True}
 ```
 
-| Name                              | Contents                                                                                                                          |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `event.tag`                       | The tag the producer declared: `detections`, `vlm`, `speed_limit`, `result`, and so on.                                           |
-| `event.ts`                        | Epoch milliseconds of the message.                                                                                                |
-| `event.seq`                       | The producer's per-node sequence number.                                                                                          |
-| `event.payload`                   | The record itself. For `detections`: `{ ts, frameSeq, boxes: [{ cls, confidence, xyxy }] }`.                                      |
-| `context.log(...args)`            | Appends one log line to the invocation. Lines reach the run as `record` progress messages tagged `log`, and the step counts them. |
-| `context.nodeId`, `context.runId` | For correlating logs.                                                                                                             |
-| `context.functionVersion`         | `"$LATEST"` or the deployed version number that is running.                                                                       |
-| `context.remainingTimeMs()`       | Time left before `timeoutMs` ends the invocation.                                                                                 |
-| return value                      | Emitted as the `payload` of a `json/result` message with the event's `ts`.                                                        |
+| Name                              | Contents                                                                                                                                                                            |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event.tag`                       | The tag the producer declared: `detections`, `vlm`, `speed_limit`, `result`, and so on.                                                                                             |
+| `event.ts`                        | Epoch milliseconds of the message.                                                                                                                                                  |
+| `event.seq`                       | The producer's per-node sequence number.                                                                                                                                            |
+| `event.payload`                   | The record itself. For `detections`: `{ ts, frameSeq, boxes: [{ cls, confidence, xyxy }] }`.                                                                                        |
+| `context.log(...args)`            | Appends one log line to the invocation (`console.log` and `print()` do the same). Lines reach the run as `record` progress messages tagged `log`, and the step summary counts them. |
+| `context.nodeId`, `context.runId` | For correlating logs.                                                                                                                                                               |
+| `context.functionVersion`         | `"$LATEST"` or the deployed version number that is running.                                                                                                                         |
+| `context.remainingTimeMs()`       | Time left before `timeoutMs` ends the invocation.                                                                                                                                   |
+| return value                      | Emitted as the `payload` of a `json/result` message with the event's `ts`.                                                                                                          |
 
 A thrown error, an uncaught exception, or a timeout fails the invocation,
 which fails the node's step and skips everything downstream, exactly like
-any other node. The error and the invocation's log lines are in the step's
-output.
+any other node. The error, the frames inside your code and the invocation's
+log lines are in the step's output:
+
+```
+invocation 1 failed: TypeError: Cannot read properties of undefined (reading 'filter')
+    at handler (index.js:3:40)
+logs:
+  about to fail on frame 0
+```
+
+A function with several producers wired to `event` handles their messages
+in arrival order (not merged by timestamp), so a producer that goes quiet
+never stalls the others.
 
 ## Worked example: count forklifts per frame
 
@@ -134,21 +147,24 @@ xwe run forklift-summary.json --input video=yard.mp4 --models-dir ./models --out
 
 ```
 [xwe] model detection/acme-forklift v1 <- models/detection/acme-forklift/1/model.onnx
-[xwe] succeeded in 6.4s -> out/local-1789000000000/result.json
+[xwe] succeeded in 1.7s -> out/local-1789000000000/result.json
   ok      src          video yard.mp4 (video_local)
   ok      dec          50 frame(s) sampled at 2 fps from 1 video(s)
-  ok      det          37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
-  ok      fn           50 invocation(s), 22 result(s), 28 dropped ($LATEST, javascript, ~1 ms)
-  ok      cap          22 record(s) (jsonl)
+  ok      det          81 detection(s) over 50 frame(s) (acme-forklift v1, ~30 ms/frame)
+  ok      fn           50 invocation(s), 33 result(s), 17 dropped ($LATEST, javascript, ~0 ms)
+  ok      cap          captured 33 record(s)
   events: 0
 ```
 
-and `out/local-1789000000000/outputs/cap/records.jsonl` holds one line per
-frame that had a forklift:
+(the counts are from the engine's golden footage with `"car"` in place of
+`"forklift"`; `~0 ms` is the handler's own time per invocation, under a
+millisecond here). `out/local-1789000000000/outputs/cap/records.jsonl`
+holds one line per frame that had a forklift, in the capture node's
+`{ ts, tag, record }` shape, with the event's `ts` and the `result` tag:
 
 ```json
-{"frameSeq":3,"count":1,"widestPx":212,"confidence":0.81}
-{"frameSeq":4,"count":2,"widestPx":230,"confidence":0.84}
+{"ts":1788658741055,"tag":"result","record":{"frameSeq":0,"count":1,"widestPx":196,"confidence":0.7959}}
+{"ts":1788658741555,"tag":"result","record":{"frameSeq":1,"count":2,"widestPx":124,"confidence":0.7451}}
 ```
 
 ## Worked example: the same thing in Python
@@ -169,7 +185,12 @@ def handler(event, context):
 
 The node is `function.python` with the same config keys, and the step
 summary says `python`. The standard library is available (`json`, `math`,
-`statistics`, `datetime`, `re`); packages are not.
+`statistics`, `datetime`, `re`); packages are not, and neither are the
+modules that reach files, processes or the network (`os`, `pathlib`,
+`subprocess`, `socket`, `asyncio`, `sys`, and their relatives), which raise
+`PermissionError` on import. `round()` rounds half to even, so `widestPx`
+can differ from the JavaScript version by one on a `.5` width; the engine's
+golden suite runs both over the same footage and checks exactly that.
 
 ## Worked example: chaining functions
 
@@ -192,6 +213,27 @@ Module-level state like `best` lives as long as the node's process, which is
 the run: functions are stateful within a run and start fresh on the next.
 That is enough for running maxima, debouncing and deduplication, and it is
 the reason a function gets one process per run rather than one per event.
+Over the golden footage the chain above prints
+
+```
+  ok      fn           50 invocation(s), 33 result(s), 17 dropped ($LATEST, javascript, ~0 ms)
+  ok      fn2          33 invocation(s), 5 result(s), 28 dropped, 5 log line(s) ($LATEST, javascript, ~0 ms)
+```
+
+and with `--progress json` each `context.log` call is one line of the stream:
+
+```json
+{
+  "at": "2026-09-06T01:00:39.490Z",
+  "t": "record",
+  "nodeId": "fn2",
+  "port": "log",
+  "tag": "log",
+  "ts": 1788656438677,
+  "seq": 0,
+  "payload": { "line": "new maximum 1 at frame 0", "invocation": 1 }
+}
+```
 
 ## Worked example: the whole thing from code
 
@@ -260,8 +302,8 @@ const run = await engine.run({
 if (run.result.status !== "succeeded") {
   throw new Error(`run failed at ${run.result.failedNodeId}: ${run.result.error}`)
 }
-const records = run.outcome.captures["cap"] // the capture node's records, in memory
-console.log(records.length, "frames with a forklift; widest:", Math.max(...records.map((r) => r.widestPx)))
+const records = run.outcome.captures["cap"] // the capture node's records, in memory: { ts, tag, record }
+console.log(records.length, "frames with a forklift; widest:", Math.max(...records.map((r) => r.record.widestPx)))
 console.log("on disk:", `${run.runDir}/outputs/cap/records.jsonl`)
 ```
 
@@ -271,12 +313,19 @@ What it prints:
 test result { frameSeq: 3, count: 1, widestPx: 212, confidence: 0.81 }
 ok src video ./yard.mp4 (video_local)
 ok dec 50 frame(s) sampled at 2 fps from 1 video(s)
-ok det 37 detection(s) over 50 frame(s) (acme-forklift v1, ~41 ms/frame)
-ok fn 50 invocation(s), 22 result(s), 28 dropped ($LATEST, javascript, ~1 ms)
-ok cap 22 record(s) (jsonl)
-22 frames with a forklift; widest: 230
+ok det 81 detection(s) over 50 frame(s) (acme-forklift v1, ~30 ms/frame)
+ok fn 50 invocation(s), 33 result(s), 17 dropped ($LATEST, javascript, ~0 ms)
+ok cap captured 33 record(s)
+33 frames with a forklift; widest: 297
 on disk: out/local-1789000000000/outputs/cap/records.jsonl
 ```
+
+`engine.testFunction` also resolves for a handler that throws (`ok: false`,
+the error and its trace in `error`, the log lines in `logs`) and rejects
+with `XweUsageError` (`exitCode: 2`) when the node id, the version or the
+event is wrong and nothing ran; the result carries `nodeId`, `type`,
+`language` and `runtime` (`node 20.20.2`, `python 3.11.2`) next to the
+documented fields.
 
 The same program with `function.python` changes one line: the file it reads
 is `forklift-summary.py`. Nothing about the engine, the host or the run
@@ -312,25 +361,30 @@ xwe function test forklift-summary.json fn --event event.json
 ```
 
 ```
-ok      fn           function.javascript  $LATEST  2 ms
+ok      fn           function.javascript  $LATEST  0 ms
 result: {"frameSeq":3,"count":1,"widestPx":212,"confidence":0.81}
 logs: none
 ```
 
-A handler that throws shows the trace and exits 1:
+A handler that throws shows the trace and exits 1 (here on an event without
+`boxes`):
 
 ```
-failed  fn           function.javascript  $LATEST  1 ms
+failed  fn           function.javascript  $LATEST  0 ms
 error: TypeError: Cannot read properties of undefined (reading 'filter')
-    at handler (index.js:2:37)
+    at handler (index.js:2:41)
 logs: none
 ```
 
+The Python node reports `at handler (handler.py:2)` the same way. A dropped
+event prints `result: null (dropped)`; log lines are listed under `logs:`.
 `--version 2` tests a published snapshot instead of the working copy. Exit
-code 2 means the node id or a file was wrong and nothing ran. From code it is
+code 2 means the node id (the message lists the template's node ids), a
+file or the version was wrong and nothing ran. From code it is
 `engine.testFunction`, resolving to
 `{ ok, result?, error?, logs, durationMs, functionVersion }`, as the worked
-example above shows.
+example above shows. The template in these examples, in both languages, and
+the event are in the engine repository under `examples/functions/`.
 
 ## Versions
 
@@ -357,20 +411,25 @@ instance gets **one child process per run**, started when the first event
 arrives and reused for every event after it, speaking one JSON object per
 line over stdio:
 
-| Boundary      | JavaScript                                                                                              | Python                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Runtime       | the `node` the engine runs on, with Node's permission model enabled and no filesystem or network grants | `python3` from `PATH`; the image includes it and `xwe doctor` reports it |
-| Module access | none: no `require`, no `import`, only the language's built-ins                                          | the standard library only; no `pip` packages                             |
-| Time          | `timeoutMs` per invocation; on expiry the process is killed and the step fails                          | the same                                                                 |
-| Memory        | `memoryMb` as the heap limit                                                                            | `memoryMb` as an address-space limit                                     |
-| Network       | none                                                                                                    | none                                                                     |
-| Filesystem    | none                                                                                                    | none                                                                     |
-| Environment   | scrubbed: no `XORGATE_SECRET_*`, no secrets file                                                        | the same                                                                 |
+| Boundary      | JavaScript                                                                                                                                                                          | Python                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime       | the `node` the engine runs on, with Node's permission model enabled; the only grant is a read on the runner file itself (no file system, no child processes, no workers, no addons) | `python3 -I -S` from `PATH` (isolated: no site-packages, no environment variables); the image includes it and `xwe doctor` reports it |
+| Module access | none: no `require`, no `import()`, no `eval` or `Function`, no `process`; the language's built-ins, timers, `console` and `structuredClone`, in a context of their own              | the standard library minus the modules that reach files, processes or the network; `open()` refuses; no `pip` packages                |
+| Time          | `timeoutMs` per invocation; on expiry the process is killed and the step fails                                                                                                      | the same                                                                                                                              |
+| Memory        | `memoryMb` as the heap limit (`--max-old-space-size`)                                                                                                                               | `memoryMb` as an address-space limit (`RLIMIT_AS`, enforced on Linux; not on macOS)                                                   |
+| Network       | none: `fetch` and every module refuse with `ERR_ACCESS_DENIED`                                                                                                                      | none: `socket`, `asyncio`, `http`, `urllib` and their relatives raise `PermissionError` on import                                     |
+| Filesystem    | none                                                                                                                                                                                | none: `open()`, `os`, `pathlib`, `shutil`, `tempfile` refuse                                                                          |
+| Environment   | an allowlist: `PATH`, `HOME`, locale, `TZ` and the temp directory; no `XORGATE_SECRET_*`, no secrets file, no `NODE_OPTIONS`; the handler has no `process` at all                   | the same allowlist                                                                                                                    |
 
 The container image is the intended outer boundary for hosts that run
 templates from people they do not trust; the per-process limits above are the
-inner one. A function that needs the network, a package, a model or a secret
-is a sign that it should be a pack or a connector node instead.
+inner one. The JavaScript wall is enforced by the runtime (the permission
+model and the context); the Python guards are at the import layer, and an
+interpreter is not a security boundary on its own. A function that needs the
+network, a package, a model or a secret is a sign that it should be a pack or
+a connector node instead. `xwe doctor` names the `python3` a machine would
+use; without one, a `function.python` step fails naming it and
+`function test` exits 2.
 
 ## Functions or packs
 
