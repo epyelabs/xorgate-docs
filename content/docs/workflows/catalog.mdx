@@ -6,9 +6,9 @@ description: "All 28 node types by group: ports and channels, run target, config
 The catalog is the set of node types a definition may use. The engine serves it
 as a payload whose content hash (`catalogVersion`) changes whenever any node
 definition does; the editor uses that hash as an ETag. Everything below was
-read from that payload at `catalogVersion 08c8c39436928e5e` (the engine's
-main branch for 0.2.0; the published 0.1.0 serves 26 nodes at
-`e481243f5ffe4678`, and the 26 definitions the two share are identical).
+read from that payload at `catalogVersion 08c8c39436928e5e` (0.2.0; 0.1.0
+served 26 nodes at `e481243f5ffe4678`, and the 26 definitions the two share
+are identical).
 
 Ports are written `id:channel`, a `json` port as `id:json/tag`, and an optional
 input with a trailing `?`. **Target** says what a node needs from its host: `any`
@@ -96,11 +96,8 @@ Every logic node emits `condition:condition` and runs on any target.
 
 ## Function
 
-<Callout type="warn" title="Design preview">
-  The two nodes below are implemented on the engine's main branch for 0.2.0 and
-  verified by its golden suite; the published 0.1.0 package does not have them.
-  See [Code function nodes](/workflows/functions).
-</Callout>
+The two nodes below arrived in 0.2.0; [Code function
+nodes](/workflows/functions) is their page.
 
 | Type                  | Ports                                                | Target | Configuration                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | --------------------- | ---------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

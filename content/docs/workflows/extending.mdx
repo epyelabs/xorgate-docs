@@ -3,7 +3,7 @@ title: "Extending the catalog"
 description: "Writing a node with defineNode, packaging nodes as a pack, loading packs into the engine and the CLI, and what catalogVersion means once two hosts do not run the same set of nodes."
 ---
 
-The 26 nodes in the [catalog](/workflows/catalog) are ordinary modules: a
+The 28 nodes in the [catalog](/workflows/catalog) are ordinary modules: a
 declarative definition and an executor, validated once when the catalog is
 built. A node you write is the same thing, in your own package, and the
 engine treats it exactly like a core node once it is registered. This is where
@@ -177,12 +177,12 @@ with the example pack registered next to the core
 
 ```json
 {
-  "catalogVersion": "5c3e079fc2e7f9e8",
+  "catalogVersion": "d5dd472d2ef514eb",
   "schemaVersion": 2,
   "aliases": {},
   "nodes": [],
   "packs": [
-    { "name": "core", "version": "0.1.0-dev", "hash": "e481243f5ffe4678" },
+    { "name": "core", "version": "0.2.0", "hash": "08c8c39436928e5e" },
     {
       "name": "@acme/xwe-nodes-scale",
       "version": "1.0.0",
@@ -194,11 +194,11 @@ with the example pack registered next to the core
 
 A pack's `hash` is the `catalogVersion` a catalog holding only that pack
 would have, so the `core` entry equals the core hash whenever every core pack
-is registered, whatever else is (the seven core packs collapse into that one
+is registered, whatever else is (the eight core packs collapse into that one
 entry; a host that dropped `core/model` reports a different core hash). With
 no packs registered the payload is exactly what it was before packs existed
-plus a one-entry `packs` list, and `catalogVersion` is still
-`e481243f5ffe4678`.
+plus a one-entry `packs` list, and `catalogVersion` is the core hash
+(`08c8c39436928e5e` since 0.2.0, `e481243f5ffe4678` in 0.1.0).
 
 `packs` is additive to the payload; a consumer that only knows
 `catalogVersion` keeps working. A consumer that reads `packs` can say "the

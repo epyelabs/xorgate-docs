@@ -15,7 +15,7 @@ on each.
 <Callout title="Published">
   `npm install -g @xorgate/workflow-engine` puts `xwe` on your path; `docker
   pull ghcr.io/epyelabs/xwe` gets the image with ffmpeg and ONNX Runtime inside.
-  Both are version 0.1.0, built from the repository's `v0.1.0` tag. [Installing
+  Both are version 0.2.0, built from the repository's `v0.2.0` tag. [Installing
   the engine](/workflows/installation) has every install route; this page is the
   repository itself, for running from a checkout and for reading the code.
 </Callout>
@@ -50,7 +50,7 @@ through this package. The line is drawn on
 | Directory      | What it is                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------- |
 | `src/engine/`  | `runGraph`, the bounded channels, ffmpeg and ONNX plumbing, the manifest and result schemas |
-| `src/catalog/` | The 26 node definitions and executors                                                       |
+| `src/catalog/` | The 28 node definitions and executors                                                       |
 | `src/models/`  | The model manifest schema (the registry layout)                                             |
 | `src/local/`   | The local host shell: file sources, the artifact writer, secrets, progress, video muxing    |
 | `src/cli/`     | The `xwe` command                                                                           |

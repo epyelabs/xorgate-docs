@@ -69,16 +69,16 @@ core, and the editor's webcam simulation is designed around them, but the
 local host shell has no live source: no v4l2, no avfoundation, no MQTT ingest.
 A `webcam` binding fails with "no live ingest support".
 
-### No function nodes
+### Function nodes: since 0.2.0
 
-The `function` node group is reserved for `function.javascript` and
-`function.python`, user code run in a sandboxed child process. They are a
-design placeholder: no executor exists, and the group is empty in the catalog.
-The container image is the intended sandbox boundary when they land, which is
-why the `Dockerfile` avoids anything that would make adding a Python runtime
-painful. The planned design, aligned with the web application's editor
-mockup, is on [Code function nodes](/workflows/functions) as a design
-preview.
+`function.javascript` and `function.python`, user code run in a sandboxed
+child process, shipped in 0.2.0 and are documented on
+[Code function nodes](/workflows/functions). The container image is the
+outer sandbox boundary, which is why it carries `python3`. What is still not
+there is a `condition` output (a function cannot drive `output.event`
+directly) and a way to feed a function from telemetry: a function consumes
+`json`, so on a telemetry-only graph its producer is the connector or another
+function.
 
 ### CPU only
 
@@ -97,16 +97,15 @@ scheduling around recording, no fleet distribution of templates.
 
 ### What is distributed, and what is not
 
-The engine is published as `@xorgate/workflow-engine` 0.1.0 on npm, with the
+The engine is published as `@xorgate/workflow-engine` 0.2.0 on npm, with the
 `xwe` command inside it, and as the multi-arch image `ghcr.io/epyelabs/xwe`;
 [Installing the engine](/workflows/installation),
 [Using the engine as a library](/workflows/library),
 [Models and the registry](/workflows/models) and
 [Extending the catalog](/workflows/extending) describe those artifacts as
 verified. The license is MIT, the same as the SDKs. There is no licensing or
-metering of runs, and none is planned. Code function nodes are the one
-documented feature not in 0.1.0 (see [Code function
-nodes](/workflows/functions)).
+metering of runs, and none is planned. Every documented feature is in the
+published 0.2.0, code function nodes included.
 
 ## Bindings that only resolve on the platform
 

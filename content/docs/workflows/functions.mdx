@@ -3,12 +3,10 @@ title: "Code function nodes"
 description: "User code inside a template: function.javascript and function.python, the handler contract, worked examples over detections, versions, how the engine runs them in a sandboxed child process, local testing with xwe function test, and how they differ from node packs."
 ---
 
-<Callout type="warn" title="Design preview">
-  Code function nodes are implemented on the engine's main branch for 0.2.0 and
-  verified by its golden suite, on a laptop and inside the container image;
-  every output on this page is measured from that branch. The published 0.1.0
-  package and image do not have them. This callout goes when 0.2.0 is on npm and
-  verified from a clean install.
+<Callout title="Shipped in 0.2.0">
+  Code function nodes are in `@xorgate/workflow-engine` 0.2.0 on npm and in
+  `ghcr.io/epyelabs/xwe:0.2.0`, verified from a clean install; every output on
+  this page is measured from that release.
 </Callout>
 
 A [pack](/workflows/extending) is code you compile, publish and load into the

@@ -3,7 +3,7 @@ title: "CLI reference"
 description: "The xwe commands (validate, run, models, doctor), every flag, how --input keys map to source nodes, the NDJSON progress stream, and the exit codes."
 ---
 
-`xwe` is one dispatcher with four subcommands. It has no configuration file
+`xwe` is one dispatcher with five subcommands. It has no configuration file
 and no daemon; every run is one process that reads a template, executes it,
 and exits with a code you can act on.
 
@@ -14,15 +14,12 @@ xwe run --manifest <manifest.json> [options]
 xwe models list | pull <family>/<name>[@<version>] | path <family>/<name>[@<version>] | check <dir>
 xwe doctor [--models-dir <dir>]...
 xwe <command> ... --log-level silent|error|info|debug                      # any command
-xwe function test <template.json> <nodeId> --event <event.json> [--version <n>]   # 0.2.0, on main
+xwe function test <template.json> <nodeId> --event <event.json> [--version <n>]
 ```
 
-<Callout type="warn" title="Design preview">
-  Everything on this page is shipped in 0.1.0 and verified against the published
-  package, except `function test`, which is implemented on the engine's main
-  branch for 0.2.0 with [code function nodes](/workflows/functions) and is not
-  in a published package yet; its output below is measured from that branch.
-</Callout>
+Everything on this page is shipped and verified against the published
+package: `function test` arrived in 0.2.0 with [code function
+nodes](/workflows/functions), the rest in 0.1.0.
 
 ## `validate`
 
@@ -198,8 +195,7 @@ $ xwe models path detection/yolov8n
 
 Runs one event through a [code function node](/workflows/functions) in the
 same sandboxed runtime a run would use, with the code the template holds, and
-prints the result, the log lines and the handler's duration. On the engine's
-main branch for 0.2.0, not in a published package yet.
+prints the result, the log lines and the handler's duration. Since 0.2.0.
 
 ```bash
 xwe function test forklift-summary.json fn --event event.json
@@ -224,7 +220,7 @@ node ids), the event file or the version is wrong and nothing ran, and when
 
 Prints the node version, the ffmpeg it would use, whether the
 ONNX Runtime binding and the VLM provider client are installed, the `python3`
-that `function.python` nodes would use (from 0.2.0), the model roots and
+that `function.python` nodes would use, the model roots and
 what they contain, whether the registry is reachable, and the catalog hash
 with any packs. Exits non-zero when something a run needs is missing, with the
 fix on the same line. The output is on

@@ -80,17 +80,17 @@ affected. The catalog, validation and the serialized catalog payload never
 touch either package, which is why importing the library is cheap on every
 host.
 
-The numbers below were measured for 0.1.0 by the package's own tarball check
+The numbers below were measured for 0.2.0 by the package's own tarball check
 (`npm run verify:tarball`: pack, install into a fresh project, run), on macOS
 arm64 with npm 11, and confirmed against the published tarball. They are
 re-measured for every release.
 
-| Artifact                                   | Measured                                                                                                                                                                     |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm tarball (`dist`, README, LICENSE only) | 185 kB packed, 1.2 MB unpacked, 282 files                                                                                                                                    |
-| `node_modules` after `--omit=optional`     | 4.8 MB                                                                                                                                                                       |
-| `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB                                                                                                |
-| container image, per architecture          | ONNX Runtime trimmed to the image's own binding: 940 MB on arm64 (1.31 GB before the trim), 1.03 GB on amd64 (1.78 GB before); ffmpeg and its libraries are most of the rest |
+| Artifact                                   | Measured                                                                                                                                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm tarball (`dist`, README, LICENSE only) | 211 kB packed, 1.3 MB unpacked, 300 files                                                                                                                                                          |
+| `node_modules` after `--omit=optional`     | 4.9 MB                                                                                                                                                                                             |
+| `node_modules` after a default install     | 295 MB, of which ONNX Runtime 283 MB (every platform) and the VLM client 6 MB                                                                                                                      |
+| container image, per architecture          | ONNX Runtime trimmed to the image's own binding, plus `python3` since 0.2.0: 991 MB on arm64 (940 MB in 0.1.0), 1.08 GB on amd64 (1.03 GB in 0.1.0); ffmpeg and its libraries are most of the rest |
 
 The tarball never contains fixtures, models, video, or the source tree; the
 same check asserts it on every run.
@@ -120,7 +120,7 @@ The image is multi-architecture (`linux/amd64`, `linux/arm64`), so the same
 tag runs on a laptop, a server, and a Raspberry Pi 5 class device. The
 entrypoint is `xwe`, any argument list works after the image name, and your
 working directory mounted at `/work` is where relative template, input, model
-and output paths resolve. Tags follow the package version (`0.1.0`) with
+and output paths resolve. Tags follow the package version (`0.2.0`) with
 `latest` tracking the newest release.
 
 Models are not baked into the image. Mount a directory in the
@@ -135,25 +135,24 @@ docker run --rm -v "$PWD":/work -v xwe-models:/root/.xorgate/models \
 ## Checking a machine: `xwe doctor`
 
 `xwe doctor` reports everything a run depends on and exits non-zero when a
-required piece is missing. From the 0.1.0 image, after one `models pull` into
-a mounted cache:
+required piece is missing. From the 0.2.0 image, before any `models pull`:
 
 ```
-xwe 0.1.0 (node 20.20.2, linux arm64)
+xwe 0.2.0 (node 20.20.2, linux arm64)
   ffmpeg            /usr/bin/ffmpeg (5.1.9-0+deb12u1)
   onnxruntime-node  1.29.0, cpu binding loaded
   vlm providers     1 client installed
-  models            ~/.xorgate/models (1 cached: detection/yolov8n@1)
+  python3           /usr/bin/python3 (3.11.2)
+  models            ~/.xorgate/models (not present)
   registry          https://models.xorgate.io (index: 3 models)
-  catalog           26 nodes, core e481243f5ffe4678, no packs
+  catalog           28 nodes, core 08c8c39436928e5e, no packs
 ```
 
 Each line names the fix when something is absent (`ffmpeg: not found; set
 FFMPEG_PATH or install it`), which is the first thing to run when a model or
-video node fails on a new machine. From 0.2.0 a `python3` line follows
-`vlm providers` (`/usr/bin/python3 (3.11.2)` in the image) for
-[`function.python`](/workflows/functions) nodes; like the registry line it
-never fails the check. When more than one model root is in the
+video node fails on a new machine. The `python3` line (since 0.2.0; `/usr/bin/python3 (3.11.2)` in the image)
+is what [`function.python`](/workflows/functions) nodes would use; like the
+registry line it never fails the check. When more than one model root is in the
 search chain (`--models-dir`, the cache), each root gets its own line under
 `models`. The `registry` line reads the registry's `index.json`
 (`XWE_MODEL_REGISTRY`, default the public registry) and reports how many
