@@ -1,6 +1,6 @@
 ---
 title: "The engine"
-description: "What xorgate-workflow-engine is, where it is headed, what it needs from a host, and how to run it with docker or bare node."
+description: "What xorgate-workflow-engine is, where it runs, what it needs from a host, and how to run it with docker or bare node."
 ---
 
 `xorgate-workflow-engine` is the workflow execution engine, developed as its own
@@ -20,17 +20,20 @@ on each.
   repository itself, for running from a checkout and for reading the code.
 </Callout>
 
-## Where it is headed
+## Where it runs
 
 The engine is developed in isolation on purpose: a standalone codebase is
 easier to test and iterate on, and the platform is used as a source of real
 fixtures (published templates, session video, telemetry windows, registry
-models) rather than as a runtime dependency. The direction is for the
-platform to **consume this engine** as a package or image, so that a workflow
-attached to a device, a scheduled run, and a simulation from the editor all
-execute on exactly the code you can run with `xwe` today.
+models) rather than as a runtime dependency. The platform then **consumes this
+engine** as the npm package: since 0.3.0 its shell pins an exact version on
+both of its execution targets, a Lambda function for telemetry-only graphs and
+a container image (ffmpeg, ONNX Runtime, `python3`) for graphs with media or
+code function nodes, so a workflow attached to a device, a scheduled run, and
+a simulation from the editor all execute on exactly the code you can run with
+`xwe`.
 
-Everything about the engine's contracts is shaped by that destination:
+Everything about the engine's contracts is shaped by that arrangement:
 
 - The artifact tree a run writes uses the platform's storage key layout under
   the run prefix, so a local run directory and a platform run are
@@ -41,9 +44,8 @@ Everything about the engine's contracts is shaped by that destination:
 - The catalog is one catalog, served to the editor and executed by the engine,
   with a content hash that tells you at a glance whether two hosts agree.
 
-Until that integration lands, the platform's workflow runs do not execute
-through this package. The line is drawn on
-[What this does not cover](/workflows/not-covered#the-planned-platform-integration).
+What the integration does not give you (a round trip from a local run) is
+drawn on [What this does not cover](/workflows/not-covered#the-platform-integration).
 
 ## What is in the repository
 
@@ -59,8 +61,8 @@ through this package. The line is drawn on
 The engine core (`src/engine/`, `src/catalog/`) is storage-free by design.
 Every source reads through a seam, every artifact leaves through a seam, and a
 host supplies the seam implementations. `src/local/` is the host shell for
-files on disk; the platform's shell will supply the same seams over its own
-storage, secrets and progress transport. The seams are the library's
+files on disk; the platform's shell supplies the same seams over its object
+storage, secret store and message topics. The seams are the library's
 integration contract, described under
 [Using the engine as a library](/workflows/library#the-four-seams).
 
