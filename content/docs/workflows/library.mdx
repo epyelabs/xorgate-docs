@@ -198,10 +198,10 @@ The large ones are not committed: a checkout fetches them with
 `fixtures/fixtures.json`. The engine's own `npm test` runs the kit against the
 local host in both module formats, and against a host stripped of its model
 and artifact seams to prove that failures are reported. The platform's shell
-is a host like any other, driven through the same `createEngine` call, and the
-kit is how any host, that one included, is proven; that is what makes "a
-template behaves identically wherever it runs" a testable claim rather than a
-design goal.
+is a host like any other, driven through the same `createEngine` call, and it
+passes the same kit against its object storage and model registry; that is
+what makes "a template behaves identically wherever it runs" a tested claim
+rather than a design goal.
 
 ## Module format and what import costs
 
