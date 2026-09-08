@@ -56,7 +56,7 @@ What the definition promises:
 | Field               | Rule                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `type`              | `namespace.name`, lowercase. The namespace is yours; `source`, `video`, `telemetry`, `model`, `logic`, `output`, `connector` and `function` belong to the core. |
-| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `function` (empty until code function nodes ship). It places the node in the editor palette. |
+| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `function`. It places the node in the editor palette.                                        |
 | `inputs`, `outputs` | Ports with a [channel](/workflows/definitions#channels), a cardinality and `required`. A `json` output must declare its `tag`.                                  |
 | `config`            | A zod schema. It is parsed at run time, unknown keys are rejected, and it is serialized to JSON Schema for the editor's config form.                            |
 | `requires`          | Capability tokens (`secret:<name>`, `metric:<name>`, `video`) so `validate` can say what a graph needs before it runs.                                          |
@@ -91,10 +91,11 @@ is the pack. It depends on `@xorgate/workflow-engine` as a peer, so there is
 one engine in the process. Either module format works: the `xwe` command is
 CommonJS and loads an ES module pack through `require` (Node 20.19 and 22.12
 or later) or a dynamic `import` on older versions, and the library does the
-same in either direction. The core catalog is itself seven packs, one per
+same in either direction. The core catalog is itself eight packs, one per
 namespace (`corePacks`: `core/source`, `core/connector`, `core/video`,
-`core/telemetry`, `core/model`, `core/logic`, `core/output`), which is what
-lets a host compose the engine without the pieces it cannot run:
+`core/telemetry`, `core/model`, `core/logic`, `core/output`,
+`core/function`), which is what lets a host compose the engine without the
+pieces it cannot run:
 `createCatalog(corePacks.filter((p) => p.name !== "core/model"))` is the
 engine without ONNX Runtime.
 

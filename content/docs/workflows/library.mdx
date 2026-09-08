@@ -126,6 +126,28 @@ with a message naming the seam; nothing else in the graph notices. That is how
 a media-less host runs telemetry graphs with no ffmpeg and no ONNX Runtime
 installed at all.
 
+### A platform transport
+
+The local host prints progress as NDJSON. A host whose clients watch a run
+over a message bus wants the same messages on topics, and the package ships
+the reference implementation of that: `IotRunProgress({ runId, topicPrefix,
+publish })` is an `EngineProgressSink` over a `ProgressTransport`, a
+`(topic, payload) => Promise<void>` you supply. It serializes publishes on
+one chain per run so a topic stays ordered, swallows transport errors after
+logging them (progress never fails or slows a run), paces `record` and
+`preview` messages per node, drops a payload that would exceed a 128 KB bus
+limit, and exposes `flush()` to await the tail after the run. The layout is
+one topic per message kind under the prefix: `<prefix>/status`,
+`<prefix>/steps`, `<prefix>/events`, `<prefix>/records/<nodeId>` and
+`<prefix>/preview/<nodeId>` (downscaled JPEGs teed off the artifact sink with
+`teeArtifactSink`, schema `simPreviewPayloadSchema`). `simTopicPrefix(orgId,
+runId)` and `runTopicPrefix(orgId, runId)` name the two prefixes the
+platform's clients subscribe to, `wf/sim/<orgId>/<runId>` for simulations and
+`wf/run/<orgId>/<runId>` for triggered runs. The key helpers next to it
+(`manifestKey`, `resultKey`, `eventsKey`, `recordsKey`, `frameKey`,
+`inputRecordsKey`, all under `V2_RUN_PREFIX`) name the same artifact tree
+`writeRunArtifacts` lays out, for a host that keys an object store by path.
+
 Writing the artifact tree from an outcome is a host concern too, and the local
 host's writer is exported so a custom host can reuse the exact ordering rules
 (`events.jsonl` and records first, `result.json` last):
@@ -185,11 +207,11 @@ design goal.
 The package ships ESM and CJS builds with declaration files, under an
 `exports` map with three entry points:
 
-| Import                             | Contents                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`, `corePacks`) and the executor helpers (`requireInput`, `telemetrySamples`), every schema and every seam type, `LOG_LEVELS`, `scrubSecretEnv` |
-| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                                                                                                                                         |
-| `@xorgate/workflow-engine/testing` | `runConformance`, `CONFORMANCE_CASE_NAMES`, `CONFORMANCE_EXPECTATIONS` (the pinned values the cases assert)                                                                                                                                                                                                                |
+| Import                             | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@xorgate/workflow-engine`         | `createEngine`, `runGraph`, `validateDefinition`, `inspectTemplate`, `upgradeDefinition`, the catalog (`listNodeTypes`, `buildCatalogPayload`, `defineNode`, `createCatalog`, `corePacks`) and the executor helpers (`requireInput`, `telemetrySamples`), every schema and every seam type, `LOG_LEVELS`, `scrubSecretEnv`, and from 0.3.0 the platform transport (`IotRunProgress`, `teeArtifactSink`, the topic prefixes), the artifact key helpers, `captureFormatsOf` and the connector request builders |
+| `@xorgate/workflow-engine/local`   | `localHost`, the model resolvers, `writeRunArtifacts`, `emitVideo`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `@xorgate/workflow-engine/testing` | `runConformance`, `CONFORMANCE_CASE_NAMES`, `CONFORMANCE_EXPECTATIONS` (the pinned values the cases assert)                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Importing any of them loads no native module: ONNX Runtime and the VLM
 provider client are required lazily by the executors that use them, on the first run that

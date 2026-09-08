@@ -147,7 +147,7 @@ The expected output of that first run, on any host:
 Two scripts, both offline:
 
 ```bash
-npm run smoke   # imports runGraph, counts 26 catalog nodes, prints the catalog hash, asserts no cloud SDK packages
+npm run smoke   # imports runGraph, counts 28 catalog nodes, prints the catalog hash, asserts no cloud SDK packages
 npm test        # builds, then runs the golden suite
 ```
 
@@ -171,7 +171,7 @@ the full table with the file each contract lives in; the short form:
 | Workflow definition | `schemaVersion: 2`; v1 graphs are upgraded on the way in                                                                                         |
 | Run manifest        | `manifestVersion: 2`                                                                                                                             |
 | `result.json`       | `resultVersion: 2`, `engineVersion: 2`; written last in the artifact tree                                                                        |
-| Catalog payload     | `schemaVersion: 2`; `catalogVersion` is the content hash of the node definitions, `e481243f5ffe4678` for the core catalog; `packs[]` is additive |
+| Catalog payload     | `schemaVersion: 2`; `catalogVersion` is the content hash of the node definitions, `08c8c39436928e5e` for the core catalog; `packs[]` is additive |
 | Model manifest      | v1; the `files` block is additive; `family` is an open string                                                                                    |
 | Host seams          | `EngineSourceReader`, `EngineArtifactSink`, `EngineSecretReader`, `EngineProgressSink`, and `EngineHost.bind` over them                          |
 | Progress messages   | `status`, `step`, `event`, `record`, each stamped `at`; the same objects as NDJSON on stdout and as callbacks                                    |
