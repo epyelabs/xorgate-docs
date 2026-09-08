@@ -137,7 +137,8 @@ nothing on stderr at all):
 
 With `--progress json`, stdout carries the engine's progress messages, one
 object per line, each stamped with `at`. The message set is the engine's, not
-the CLI's; a platform shell publishes the same messages over its own transport:
+the CLI's; the platform's shell publishes the same messages to its message
+topics through `IotRunProgress`, the package's reference transport:
 
 | `t`      | Fields                                                                   | When                                           |
 | -------- | ------------------------------------------------------------------------ | ---------------------------------------------- |

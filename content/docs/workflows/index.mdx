@@ -1,6 +1,6 @@
 ---
 title: "Workflows"
-description: "Graphs of catalog nodes that turn video and telemetry into events, records and annotated video, and the one engine that runs them: on a laptop, in a container, on a device, and, by design, on the platform."
+description: "Graphs of catalog nodes that turn video and telemetry into events, records and annotated video, and the one engine that runs them: on a laptop, in a container, on a device, and on the platform."
 ---
 
 A workflow is a directed graph. Source nodes feed telemetry or video into
@@ -11,9 +11,9 @@ as JSON, and a **run** is one execution of it over concrete inputs.
 Templates are authored in the web application's editor. They are executed by
 **`xorgate-workflow-engine`**, a standalone execution engine with a
 command-line shell, `xwe`, that runs a template over local files on a laptop,
-in a docker container, or on a Raspberry Pi 5 class device today. It is built
-to be the same engine everywhere: the platform's own workflow runs are planned
-to execute on it too, consumed as a package or image, so a template behaves
+in a docker container, or on a Raspberry Pi 5 class device today. It is the
+same engine everywhere: the platform's own workflow runs execute on it too,
+consumed as the npm package by the platform's shell, so a template behaves
 identically wherever it runs.
 
 <Callout title="What is, and is not, documented here">
@@ -24,7 +24,7 @@ identically wherever it runs.
   [extending](/workflows/extending), [code function
   nodes](/workflows/functions)). The platform side (workflow templates, device
   attachments, runs and simulations as REST resources) is **not** in the API
-  reference or either SDK yet, and the platform does not yet execute its runs
+  reference or either SDK yet, even though the platform executes those runs
   through this engine. [What this does not cover](/workflows/not-covered) says
   exactly where the line is.
 </Callout>
@@ -96,7 +96,7 @@ The engine takes a **run manifest** (a definition plus source bindings) and
 produces an **artifact tree** (`result.json`, events, records, frames). Hosts
 differ only in where the bindings point and where the tree lands.
 
-|            | Your machine, a container, a device         | The platform (planned)                                                            |
+|            | Your machine, a container, a device         | The platform                                                                      |
 | ---------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
 | Started by | `xwe run`                                   | a device attachment trigger, a schedule, or a simulation from the editor          |
 | Inputs     | local files: video, CSV or JSONL telemetry  | device telemetry history, uploaded video, on-device session segments, live ingest |
@@ -110,10 +110,11 @@ container image; [Installing the engine](/workflows/installation) is how to
 get either, and [Using the engine as a library](/workflows/library) is what
 embedding it in your own service looks like.
 
-The local artifact tree already uses the platform's storage key layout, the
-binding kinds are shared, and the catalog is one catalog. That is deliberate:
-when the platform consumes the engine, nothing about a template, a manifest or
-a result changes. Four things are frozen contracts for that reason: the
+The local artifact tree uses the platform's storage key layout, the binding
+kinds are shared, and the catalog is one catalog. That is deliberate: the
+platform consumes the engine as a package, and nothing about a template, a
+manifest or a result changes between a local run and a platform run. Four
+things are frozen contracts for that reason: the
 definition format (`schemaVersion: 2`), the run manifest, the `result.json`
 shape, and the catalog node definitions.
 
@@ -133,7 +134,7 @@ shape, and the catalog node definitions.
   <Card
     title="The engine"
     href="/workflows/engine"
-    description="What xorgate-workflow-engine is, where it is headed, what it needs from a host, and how to run it with docker or bare node."
+    description="What xorgate-workflow-engine is, where it runs, what it needs from a host, and how to run it with docker or bare node."
   />
   <Card
     title="Installing the engine"
@@ -178,6 +179,6 @@ shape, and the catalog node definitions.
   <Card
     title="What this does not cover"
     href="/workflows/not-covered"
-    description="The platform API, the planned integration, and the engine features deferred by decision."
+    description="The platform API, what the platform integration does and does not give you, and the engine features deferred by decision."
   />
 </Cards>

@@ -9,7 +9,11 @@
     "2026-09-03: the workflows section gained installation, library, models and",
     "extending as design previews of the engine's distribution (plan:",
     "xorgate/plans/workflow-engine-distribution). A top-level 'Workflow Engine'",
-    "section for the standalone product was considered and deferred (its Q7)."
+    "section for the standalone product was considered and deferred (its Q7).",
+    "2026-09-08: the platform consumes @xorgate/workflow-engine 0.3.0 on both",
+    "of its execution targets (plan: xorgate/plans/wf-engine-integration-to-",
+    "core-service); the workflows pages now describe the integration as shipped.",
+    "The cloud workflow REST API is still undocumented."
   ],
   "title": "Documentation",
   "pages": [

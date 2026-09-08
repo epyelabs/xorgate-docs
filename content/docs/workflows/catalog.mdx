@@ -8,7 +8,9 @@ as a payload whose content hash (`catalogVersion`) changes whenever any node
 definition does; the editor uses that hash as an ETag. Everything below was
 read from that payload at `catalogVersion 08c8c39436928e5e` (0.2.0; 0.1.0
 served 26 nodes at `e481243f5ffe4678`, and the 26 definitions the two share
-are identical).
+are identical). The platform serves the same payload at the same hash from
+its `GET /workflow-catalog`, because its editor and its engine read one
+catalog instance from this package.
 
 Ports are written `id:channel`, a `json` port as `id:json/tag`, and an optional
 input with a trailing `?`. **Target** says what a node needs from its host: `any`
