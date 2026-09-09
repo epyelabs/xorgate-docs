@@ -1,0 +1,106 @@
+---
+title: "Overview"
+description: "The reads that let a program find a workflow template by tag, why only the reads are here, and the rules a tag has to obey."
+---
+
+A **workflow template** is a reusable processing graph an organization has
+authored: source nodes feed telemetry or video into processors that end in
+events, records and annotated frames. Templates are authored in the web
+editor, executed by
+[`@xorgate/workflow-engine`](/workflows), and attached to devices to run on a
+trigger.
+
+Three read operations are documented here, and nothing else is. That line is
+deliberate, and it is worth understanding before you build against it.
+
+## Why only the reads
+
+The reads exist for a program. An integration that owns some templates needs to
+find them at run time without hard-coding an id that someone can delete in the
+editor, so it tags its templates and lists by that tag. That path is settled,
+the SDK models it as
+[`xg.workflowTemplates`](/backend-sdk/resources/workflow-templates), and it is
+documented here.
+
+Everything else on the workflow surface, creating a template, saving a draft,
+publishing a version, restoring one, attaching a template to a device,
+triggering runs, reading run steps and events, the served node catalog, the
+model registry, simulations and per-organization credentials, exists as REST
+resources and is **not** documented anywhere on this site. That surface is still
+moving, and a template is authored by a person in the editor rather than by a
+consumer. `POST /v1/workflow-templates` therefore has no page here even though
+`GET /v1/workflow-templates` does: the classification is per operation, not per
+path.
+
+You can still reach those endpoints. `xg.request()` in the backend SDK will call
+them, with no stability promise attached. See
+[What this SDK does not cover](/backend-sdk/not-covered).
+
+## Tags
+
+A tag is a free-form label, and the API treats it as an identifier a program
+writes into its own configuration rather than as prose a person reads. Values
+are **normalized on write**:
+
+- trimmed and lowercased, so `Geofence` and `geofence ` cannot become two
+  labels for one intent;
+- deduplicated, keeping first-seen order;
+- 1 to 32 characters matching `^[a-z0-9][a-z0-9._-]*$`, so a tag survives a URL
+  unescaped;
+- at most 20 per template.
+
+A value that cannot be normalized into that shape is a `400`, not a silent drop.
+That matters more than it looks: a dropped tag leaves you with a template you
+believe is findable and a filter that will never find it.
+
+The same normalization runs on the filter, so `?tag=Geofence` matches the
+template stored as `geofence`.
+
+<Callout title="tags is always an array">
+  Every template response carries `tags`. An untagged template carries an empty
+  array, never `null` and never an absent field.
+</Callout>
+
+## Filtering
+
+[`GET /v1/workflow-templates`](/api-reference/workflow-templates/list-workflow-templates)
+takes a `tag` parameter with **ANY-of** semantics: a template matches when it
+carries at least one of the values you asked for.
+
+```
+GET /v1/workflow-templates?tag=geofence
+GET /v1/workflow-templates?tag=geofence&tag=speeding
+GET /v1/workflow-templates?tag=geofence,speeding
+```
+
+The last two are the same request. Repeated query parameters arrive
+comma-joined, and a comma can never occur inside a tag, so the two spellings are
+indistinguishable and both mean "either". There is no ALL-of mode; intersect
+client-side if you need one.
+
+`tag` combines with `status` and with the shared list dialect
+(`limit`/`offset`/`order`/`sort`), so "published templates tagged `geofence`,
+newest first" is one request.
+
+[`GET /v1/workflow-templates/tags`](/api-reference/workflow-templates/list-workflow-template-tags)
+answers the other half: every distinct tag in the organization with the number
+of templates carrying it, most used first. It is what a picker is built on, and
+it saves walking the whole collection to learn what is taggable.
+
+## Setting tags
+
+Not through this reference. Tags are written by
+`POST /v1/workflow-templates` and `PUT /v1/workflow-templates/{id}`, both part
+of the undocumented authoring surface, and the supported way to set them is the
+**Tags** field in the template settings sheet of the web editor. A present
+`tags` on those requests replaces the whole set.
+
+## Credentials and tenancy
+
+All three operations are organization-scoped and need no particular role, so an
+organization API key at the default `member` role can call them. A workspace-scoped
+session token cannot: templates are an organization-wide resource with no
+workspace dimension to narrow, so it gets `403 WORKSPACE_SCOPED`.
+
+A template belonging to another organization answers `404`, like every
+org-scoped resource here. `NOT_FOUND` means "not visible to me", not "deleted".

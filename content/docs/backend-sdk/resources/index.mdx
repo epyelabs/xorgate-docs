@@ -48,6 +48,11 @@ needs, and a runnable example.
     href="/backend-sdk/resources/telemetry"
     description="History, latest, recent, and the paginated readings table."
   />
+  <Card
+    title="Workflow templates"
+    href="/backend-sdk/resources/workflow-templates"
+    description="Finding a template by tag. Reads only."
+  />
 </Cards>
 
 ## Method index
@@ -129,6 +134,9 @@ decided on the token's prefix and are safe to branch on.
 | `xg.telemetry.recent(deviceId, p)`          | `GET /devices/{id}/telemetry/recent`              | read           |
 | `xg.telemetry.readings(deviceId, p)`        | `GET /devices/{id}/telemetry/readings`            | read           |
 | `xg.telemetry.readingsFlat(deviceId, p)`    | the same, `shape=flat`                            | read           |
+| `xg.workflowTemplates.list(p)`              | `GET /workflow-templates`                         | read           |
+| `xg.workflowTemplates.tags()`               | `GET /workflow-templates/tags`                    | read           |
+| `xg.workflowTemplates.get(id)`              | `GET /workflow-templates/{id}`                    | read           |
 
 Collections additionally carry `iterate()` and `listAll()`; see
 [Pagination](/backend-sdk/pagination). Two collections deliberately do not,
@@ -146,3 +154,11 @@ server. They belong to the frontend SDK. See
 `POST /device-registrations/{code}/claim` and `GET /get/{code}` have no SDK
 method either. They are the install script's private contract, called on the
 device, and the claim route returns X.509 private key material.
+
+The workflow AUTHORING endpoints are not modelled: creating a template, saving
+a draft, publishing or restoring a version, attaching a template to a device,
+triggering runs and reading them, the node catalog, the model registry,
+simulations and per-organization credentials. Only the three template reads
+above are, because a program discovers templates by tag; a template is authored
+in the web editor. That surface is still moving, and `xg.request()` reaches it
+with no stability promise.

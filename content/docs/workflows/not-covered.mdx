@@ -1,23 +1,36 @@
 ---
 title: "What this does not cover"
-description: "The platform workflow API, what the platform integration does and does not give you, the engine features deferred by decision, and the bindings that only resolve on the platform."
+description: "How much of the platform workflow API is documented, what the platform integration does and does not give you, the engine features deferred by decision, and the bindings that only resolve on the platform."
 ---
 
 Everything here is a known limit, recorded as a decision rather than left as a
-surprise. The engine's first plan deferred a specific list, and the platform's
-workflow REST surface is still moving; both are stated plainly so you can
-design around them.
+surprise. The engine's first plan deferred a specific list, and most of the
+platform's workflow REST surface is still moving; both are stated plainly so you
+can design around them.
 
-## The platform workflow API is not documented
+## Only the template reads are in the platform API docs
 
-Workflow templates, their versions and publication, device attachments and
-their triggers, runs, run steps, events, the served catalog, the model
-registry, simulations and organization credentials all exist as REST resources
-on the platform. **None of them are in the [API reference](/api-reference)**,
-and neither the [Backend SDK](/backend-sdk) nor the
-[Frontend SDK](/frontend-sdk) models them. `xg.search()` can return
+Three read operations are documented and modelled:
+[`GET /workflow-templates`](/api-reference/workflow-templates/list-workflow-templates)
+(filterable by tag),
+[`GET /workflow-templates/tags`](/api-reference/workflow-templates/list-workflow-template-tags)
+and
+[`GET /workflow-templates/{id}`](/api-reference/workflow-templates/get-workflow-template),
+with the Backend SDK modelling them as
+[`xg.workflowTemplates`](/backend-sdk/resources/workflow-templates). They exist
+for a program that has to FIND the templates it owns at run time: tag them in
+the editor, then list by that tag rather than by a hard-coded id.
+
+Everything else on that surface is still undocumented: template versions and
+publication, device attachments and their triggers, runs, run steps, events,
+the served catalog, the model registry, simulations and organization
+credentials. They exist as REST resources, but they are in neither the
+[API reference](/api-reference) nor either SDK. `xg.search()` can return
 `workflow-template` and `workflow-instance` hits, and `xg.request()` will reach
 the endpoints, with no stability promise attached.
+
+Note what that line means in practice: you can **read** a template's graph
+through the API, and you cannot write one. Authoring stays in the editor.
 
 What this section documents instead is the part that is stable and runnable:
 the definition format, the catalog, and the engine. A template exported from
@@ -37,7 +50,10 @@ package's, at the same `catalogVersion` (`08c8c39436928e5e`) `xwe` reports.
 
 What that does not give you is a round trip from a local run: there is no
 publishing of a locally authored template and no ingesting of a local run's
-results. Templates move as JSON.
+results. Templates move as JSON, and the one direction the API helps with is
+OUT: `GET /workflow-templates/{id}` serves each version's `definition` in the
+engine's own format, so pulling a platform template down to run under `xwe` is a
+read away. Pushing one back is not.
 
 What makes the integration hold:
 

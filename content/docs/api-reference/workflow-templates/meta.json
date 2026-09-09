@@ -1,0 +1,10 @@
+{
+  "title": "Workflow Templates",
+  "description": "The reusable processing graphs an organization has authored, and the tags a program finds them by. Reading only: authoring happens in the editor.",
+  "pages": [
+    "index",
+    "list-workflow-templates",
+    "list-workflow-template-tags",
+    "get-workflow-template"
+  ]
+}

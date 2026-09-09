@@ -9,6 +9,7 @@
     "devices",
     "device-registrations",
     "media",
-    "telemetry"
+    "telemetry",
+    "workflow-templates"
   ]
 }
