@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.7.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions` and\n`GET /devices/{id}/telemetry/readings` paginate; they accept `limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, and a session\nsegment index. `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving."
+    "version": "0.8.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings` and `GET /workflow-templates` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
     {
@@ -81,6 +81,11 @@
       "name": "Live",
       "x-displayName": "Live",
       "description": "Bootstrap for the live plane: video channel metadata, and the access grant the first-party dashboard needs."
+    },
+    {
+      "name": "Workflow Templates",
+      "x-displayName": "Workflow Templates",
+      "description": "The reusable processing graphs an organization has authored, and the tags a program finds them by. Reading only: authoring happens in the editor."
     },
     {
       "name": "Search",
@@ -2640,6 +2645,252 @@
           "ts": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "Author": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "email"
+        ],
+        "description": "The person a row is attributed to. When the account behind it was deleted the fields degrade to `{\"id\": \"\", \"name\": \"Unknown user\", \"email\": \"\"}` rather than to null.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "WorkflowTemplateTag": {
+        "type": "string",
+        "description": "A free-form label, normalized on write: trimmed, lowercased and deduplicated, 1 to 32 characters matching `^[a-z0-9][a-z0-9._-]*$`, at most 20 per template. A value that cannot be normalized into that shape is a 400 rather than a silent drop.",
+        "minLength": 1,
+        "maxLength": 32,
+        "pattern": "^[a-z0-9][a-z0-9._-]*$",
+        "example": "geofence"
+      },
+      "WorkflowTemplate": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "tags",
+          "status",
+          "currentVersion",
+          "usedBy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "The list-row view of an org-scoped workflow template. The graph itself is not here: it lives on the template's versions, which only the detail response carries.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "Derived from the name at creation and unique within the organization. Stable: it does not follow a rename."
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowTemplateTag"
+            },
+            "description": "Always present; an untagged template has an empty array."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published"
+            ]
+          },
+          "currentVersion": {
+            "type": "integer",
+            "description": "The highest version number, published or not."
+          },
+          "publishedVersion": {
+            "type": "integer",
+            "nullable": true,
+            "description": "null until the template has been published once."
+          },
+          "usedBy": {
+            "type": "integer",
+            "description": "How many devices this template is attached to."
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Abstract input needs derived from the graph that would run (the published version, else the current one): tokens such as `video`, `gps`, `metric:<key>`. A device lacking one of them is refused on attach.",
+            "example": [
+              "gps"
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/Author"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/Author"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WorkflowTemplateVersion": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "status",
+          "definition",
+          "createdAt"
+        ],
+        "description": "One saved graph. At most one `draft` and one `published` row per template.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "archived"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "definition": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The graph, as `{ schemaVersion, nodes, edges }`. Its format is documented at https://docs.xorgate.io/docs/workflows/definitions and is a frozen contract shared with `@xorgate/workflow-engine`. Served upgraded to the current schema version, whatever the stored row holds."
+          },
+          "storedSchemaVersion": {
+            "type": "integer",
+            "description": "The schema version of the STORED row, before the read-path upgrade."
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/Author"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WorkflowTemplateDeployment": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "workspaceName",
+          "target",
+          "enabled"
+        ],
+        "description": "One device this template is attached to.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The attachment id, not the device id."
+          },
+          "name": {
+            "type": "string",
+            "description": "The device's name, falling back to its serial."
+          },
+          "workspaceName": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "description": "The device's serial."
+          },
+          "pinnedVersion": {
+            "type": "integer",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastRunAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "WorkflowTemplateDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkflowTemplate"
+          },
+          {
+            "type": "object",
+            "required": [
+              "versions",
+              "usage"
+            ],
+            "properties": {
+              "versions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WorkflowTemplateVersion"
+                },
+                "description": "Every version, oldest first."
+              },
+              "usage": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WorkflowTemplateDeployment"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "WorkflowTemplateTagCount": {
+        "type": "object",
+        "required": [
+          "tag",
+          "count"
+        ],
+        "properties": {
+          "tag": {
+            "$ref": "#/components/schemas/WorkflowTemplateTag"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Templates in this organization carrying the tag."
           }
         }
       }
@@ -6779,6 +7030,192 @@
           },
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/workflow-templates": {
+      "get": {
+        "operationId": "listWorkflowTemplates",
+        "summary": "List workflow templates",
+        "description": "Every template in the active organization, newest-updated first. Paginated with the shared list dialect, and filterable by `status` and by `tag`.\n\n`tag` is what makes this endpoint useful to a program: tag the templates your integration owns, then find them by that tag rather than by name or id. Repeating the parameter and comma-separating its values are the same request, and the semantics are ANY-of: `?tag=geofence&tag=speeding` returns templates carrying EITHER. There is no ALL-of mode.\n\nRows carry the metadata and the tags, not the graph. Read one template to get its versions and their definitions.",
+        "tags": [
+          "Workflow Templates"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "updatedAt",
+                "createdAt",
+                "name"
+              ],
+              "default": "updatedAt"
+            },
+            "description": "Sort column. Anything else is a 400."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "published"
+              ]
+            },
+            "description": "Narrow to one status. Empty or `any` means no filter; anything else is a 400."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "explode": true,
+            "style": "form",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/WorkflowTemplateTag"
+              },
+              "maxItems": 20
+            },
+            "description": "Return templates carrying at least one of these tags (ANY-of). Values are normalized like stored tags, so `?tag=Geofence` matches `geofence`; a value that cannot be a tag at all is a 400. At most 20 values.",
+            "example": [
+              "geofence"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of workflow templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "templates",
+                    "page"
+                  ],
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkflowTemplate"
+                      }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/workflow-templates/tags": {
+      "get": {
+        "operationId": "listWorkflowTemplateTags",
+        "summary": "List the organization's workflow template tags",
+        "description": "Every distinct tag used in the active organization with the number of templates carrying it, most used first and alphabetical within a count. One query over the organization's templates, meant for populating a picker without paging the collection. An organization whose templates are all untagged gets an empty array.",
+        "tags": [
+          "Workflow Templates"
+        ],
+        "responses": {
+          "200": {
+            "description": "The tag vocabulary of this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "tags"
+                  ],
+                  "properties": {
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkflowTemplateTagCount"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/workflow-templates/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        }
+      ],
+      "get": {
+        "operationId": "getWorkflowTemplate",
+        "summary": "Get a workflow template",
+        "description": "The template plus its full version history and the devices it is attached to. Each version carries its graph in `definition`, in the engine's definition format, upgraded to the current schema version on read.\n\nA template belonging to another organization answers `404`, like every other org-scoped resource: you cannot tell \"does not exist\" from \"not yours\".",
+        "tags": [
+          "Workflow Templates"
+        ],
+        "responses": {
+          "200": {
+            "description": "Workflow template",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "template"
+                  ],
+                  "properties": {
+                    "template": {
+                      "$ref": "#/components/schemas/WorkflowTemplateDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }

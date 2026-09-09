@@ -1,6 +1,6 @@
 ---
 title: "What this SDK does not cover"
-description: "The live planes, workflows, the device claim, and an honest list of the platform gaps you will hit."
+description: "The live planes, the authoring half of workflows, the device claim, and an honest list of the platform gaps you will hit."
 ---
 
 Two lists. The first is scope: things that exist and belong elsewhere. The
@@ -43,15 +43,28 @@ claim returns X.509 private key material. They are excluded from the public API
 reference and will never be SDK methods. Your side of that flow is
 [Device registrations](/backend-sdk/resources/device-registrations).
 
-### Workflows and AI
+### Workflows and AI, except the template reads
 
-The workflow templates, instances, runs, catalog, model registry and simulation
-surface are not documented anywhere on this site and are not in this SDK. That
-surface is still moving. `xg.search()` can return `workflow-template` and
-`workflow-instance` hits, and there is nothing in this SDK to follow them with.
+Three operations are covered:
+[`xg.workflowTemplates`](/backend-sdk/resources/workflow-templates) lists
+templates (filtered by tag), reads one back, and reads the organization's tag
+vocabulary. They exist because an integration has to FIND the templates it owns
+at run time without hard-coding an id, and tagging is how it does that. Those
+three are in the [API reference](/api-reference/workflow-templates) too.
 
-`xg.request()` will reach those endpoints if you need them. There is no
-stability promise attached.
+Everything else on that surface is not documented anywhere on this site and is
+not in this SDK: creating a template, saving a draft, publishing or restoring a
+version, device attachments and their triggers, runs, run steps, events, the
+served catalog, the model registry, simulations, and per-organization
+credentials. That half is still moving, and a template is authored by a person
+in the web editor rather than by a consumer.
+
+So `xg.search()` can return `workflow-template` and `workflow-instance` hits,
+and only the template ones have a method to follow them with:
+`xg.workflowTemplates.get(id)`.
+
+`xg.request()` will reach the rest if you need it. There is no stability promise
+attached.
 
 The definition format, the node catalog and the engine that executes a template
 are documented under [Workflows](/workflows); that is the stable part, and the
@@ -127,7 +140,8 @@ handed to someone reading the platform's.
 
 ### Not everything paginates
 
-Six list endpoints return their whole collection. That is fine at today's scale
+Six list endpoints return their whole collection (`xg.workflowTemplates.tags()`
+is a seventh, but that one is a small vocabulary rather than a collection). That is fine at today's scale
 and will not stay fine. Use `iterate()` rather than `list()` where you can, so
 the change is free. See [Pagination](/backend-sdk/pagination).
 

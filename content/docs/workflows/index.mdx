@@ -22,11 +22,14 @@ identically wherever it runs.
   as the image `ghcr.io/epyelabs/xwe` ([installing](/workflows/installation),
   [the library](/workflows/library), [models](/workflows/models),
   [extending](/workflows/extending), [code function
-  nodes](/workflows/functions)). The platform side (workflow templates, device
-  attachments, runs and simulations as REST resources) is **not** in the API
-  reference or either SDK yet, even though the platform executes those runs
-  through this engine. [What this does not cover](/workflows/not-covered) says
-  exactly where the line is.
+  nodes](/workflows/functions)). Of the platform side, only the
+  workflow-template READS are in the [API
+  reference](/api-reference/workflow-templates) and the [Backend
+  SDK](/backend-sdk/resources/workflow-templates): list templates by tag, and
+  read one back with its graph. Authoring, device attachments, runs and
+  simulations as REST resources are **not**, even though the platform executes
+  those runs through this engine. [What this does not
+  cover](/workflows/not-covered) says exactly where the line is.
 </Callout>
 
 ## The shape of a workflow

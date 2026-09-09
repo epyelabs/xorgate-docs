@@ -1,0 +1,135 @@
+---
+title: "Workflow templates"
+description: "Finding a workflow template by tag from a server, why this resource is read-only, and the tag rules the platform enforces."
+---
+
+A **workflow template** is a reusable processing graph an organization has
+authored in the web editor: telemetry or video in, events and records out. See
+[Workflows](/workflows) for the definition format and the engine that runs one.
+
+This resource is how a server-side integration **finds** a template. It is read
+only.
+
+```ts
+list(params?: ListWorkflowTemplatesParams): Promise<Page<WorkflowTemplate>>
+listAll(params?): Promise<WorkflowTemplate[]>
+iterate(params?): AsyncIterableIterator<WorkflowTemplate>
+get(id: string): Promise<WorkflowTemplateDetail>
+tags(options?): Promise<WorkflowTemplateTagCount[]>
+```
+
+An organization API key at the default `member` role is enough for all of them.
+
+## Why read-only
+
+Everything else on the platform's workflow surface exists as REST resources:
+creating a template, saving a draft, publishing a version, attaching one to a
+device, triggering runs, reading their steps and events, the node catalog, the
+model registry, simulations. None of it is in this package, and none of it is in
+the [API reference](/api-reference), because that surface is still moving and a
+template is authored by a person in the editor rather than by a consumer.
+
+`xg.request()` reaches those endpoints if you need them, with no stability
+promise attached. See [What this SDK does not cover](/backend-sdk/not-covered).
+
+## Finding templates by tag
+
+Hard-coding a template id in an integration is a liability: ids are opaque, they
+do not survive a template being recreated, and nothing stops someone deleting
+the row. Tag the templates your integration owns instead, and look them up:
+
+```ts
+const page = await xg.workflowTemplates.list({ tags: ["geofence"] })
+for (const template of page.items) {
+  console.log(template.name, template.status, template.tags)
+}
+```
+
+`tags` is **ANY-of**: `["geofence", "speeding"]` returns templates carrying
+either. There is no ALL-of mode; intersect client-side if you need one.
+
+Paginated with the [shared list dialect](/backend-sdk/pagination), so
+`iterate()` carries the filter onto every page:
+
+```ts
+for await (const template of xg.workflowTemplates.iterate({
+  tags: ["geofence"],
+  status: "published",
+})) {
+  // every published template tagged geofence, one request per page
+}
+```
+
+## The tag rules
+
+Tags are normalized by the platform on write, and the same normalization runs on
+your filter:
+
+- trimmed and lowercased, so `"Geofence"` matches the template stored as
+  `geofence`;
+- deduplicated;
+- 1 to 32 characters matching `^[a-z0-9][a-z0-9._-]*$`;
+- at most 20 per template.
+
+A filter value that could never be a stored tag is a `400`, not an empty result:
+
+```ts
+try {
+  await xg.workflowTemplates.list({ tags: ["not a tag"] })
+} catch (e) {
+  if (isXorgateError(e) && e.code === "BAD_REQUEST") {
+    // The message names the offending value.
+  }
+}
+```
+
+That is the right behaviour to build on. A silently empty page would read as
+"no templates match" and send you looking in the wrong place.
+
+<Callout title="tags is always an array">
+  `template.tags` is never undefined, even against an API deployment older than
+  the field: this package normalizes an absent `tags` (and an absent
+  `requiredCapabilities`) to `[]`, so you never need to know which deployment
+  you are talking to.
+</Callout>
+
+## `tags()`
+
+The organization's whole tag vocabulary with counts, most used first. One
+request, rather than walking every template to learn what is taggable:
+
+```ts
+for (const { tag, count } of await xg.workflowTemplates.tags()) {
+  console.log(`${tag} (${count})`)
+}
+```
+
+## `get(id)`
+
+The template plus every version and the devices it is attached to. Each version
+carries its graph in `definition`, upgraded to the current schema version on
+read:
+
+```ts
+const template = await xg.workflowTemplates.get(id)
+const running =
+  template.versions.find(
+    (v) => v.version === (template.publishedVersion ?? template.currentVersion)
+  ) ?? template.versions.at(-1)
+console.log(running?.definition.nodes.length, "nodes")
+```
+
+`WorkflowDefinition` is deliberately loose here (`{ schemaVersion?, nodes,
+edges }` plus whatever else the graph carries). This package does not model the
+node catalog: a definition read through it is meant to be handed to
+[`@xorgate/workflow-engine`](/workflows/library) or written back verbatim, not
+inspected field by field.
+
+A template in another organization answers `404`, like every org-scoped read.
+`NOT_FOUND` means "not visible to me", not "deleted".
+
+## Setting tags
+
+Not from this package. Tags are written by the undocumented authoring endpoints,
+and the supported way to set them is the **Tags** field in the template settings
+sheet of the web editor.
