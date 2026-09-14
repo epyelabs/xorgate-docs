@@ -1,0 +1,87 @@
+---
+title: "What this does not cover"
+description: "The Models routes that are outside the API reference and the SDKs, the limits this first release chose on purpose, the examples it does not ship, and what the next phase adds."
+---
+
+Everything here is a known edge, stated so you can design around it.
+
+## The routes are not in the API reference
+
+Datasets, items, annotations, imports, versions, training jobs and the
+organization registry exist as REST resources under `/datasets`,
+`/training-jobs` and `/models`, and the web application is built on them.
+They are in neither the [API reference](/api-reference) nor the
+[Backend SDK](/backend-sdk): `xg.request()` reaches them, `xg.search()`
+returns `dataset` and `model` hits, and no stability promise is attached
+yet. The one read that is stable by construction is the model itself: the
+two files you download are the engine's frozen contract.
+
+## One family, one recipe, two targets
+
+- **Object detection only.** Segmentation and classification, and the
+  polygon tool that goes with them, are the next phase's; the engine already
+  runs segmentation and depth models, and the registry layout does not
+  change for them.
+- **One recipe, `yolov8`**, whose trainer is AGPL-3.0. That license is
+  printed in the dialog and on this site rather than hidden, and the decision
+  about exposing an AGPL-trained model to customers is yours. A permissively
+  licensed recipe is the first item of the next phase.
+- **Two targets**, `cpu` and `gpu`, each an allow-list of one or two
+  instance types behind a name. The dialog does not choose the instance
+  type; the API accepts an `instanceType` override from the allow-list. The
+  GPU target runs on spot capacity by default and a job that gets no
+  instance within its budget closes `failed` with that reason; there is no
+  on-demand fallback.
+- **Train from pretrained weights only.** Training from one of your own
+  previous versions (train-from-previous) is designed and not enabled.
+- **One job per organization at a time**, training or assist. There are no
+  per-organization budgets yet; the budget is the job's `maxMinutes`.
+
+## Progress is polled
+
+The job page polls the row and the tail of the progress file. There is no
+push channel for training progress in this release; the workflow
+simulator's live progress topics are a different plane.
+
+## Frames are browser-scaled originals
+
+The Items grid shows the originals scaled by the browser; there are no
+server-side thumbnails. A 48-frame page of 1280x720 JPEGs is about 3.6 MB
+of images. Fine for hundreds of frames; the next phase adds thumbnails
+before datasets reach the 5,000-item cap in practice.
+
+## No dataset export or import in the UI
+
+A version's files are downloadable and are a valid forge dataset, and the
+[forge CLI](/models/forge-cli) converts COCO, YOLO and Pascal VOC on a laptop;
+the web application itself has no export or import dialog yet.
+
+## Bringing your own model is the manual path
+
+A model you trained elsewhere reaches your organization's root by the
+registry layout, not by an upload dialog: the [engine's
+walkthrough](/workflows/models#bringing-your-own-model) produces the two
+files, and placing them in the organization's root is an operator action
+today. A forge `check` job as the gate for a self-serve upload is the next
+phase's.
+
+## No dashcam example from a device recording
+
+The reference passes on the platform's own test device were made against a
+static indoor scene, so this section's worked numbers (86 frames, printer
+and chair, mAP50 0.93 on the class that mattered) are honest about what a
+first fine-tune on a few dozen frames looks like, and the dashcam example
+(cars and trucks) is the forge's fixture dataset, sampled from the engine's
+test drive. Neither is a benchmark; both are the loop working.
+
+## What the next phase adds
+
+In the order the design lists them: the permissive recipe and its engine
+decoder; train-from-previous as the default once a model exists; zero-shot
+auto-labeling from a prompt on the GPU target; the fleet feedback loop (a
+capture node sampling frames into a dataset with the detections as
+pre-labels); dataset export and import in the UI; upload-your-own-model
+with a forge check as the gate; server-side thumbnails; pushed progress;
+per-organization budgets; classification and segmentation with the polygon
+tool; version-to-version comparison on the same validation split; and
+organization models on devices through the agent.

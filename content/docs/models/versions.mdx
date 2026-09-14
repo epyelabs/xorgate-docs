@@ -1,0 +1,84 @@
+---
+title: "Versions"
+description: "A version freezes the labeled items with a train, validation and test split; how the split is drawn and kept, the health check that refuses a version no training run could use, and the four files a version is made of."
+---
+
+Training does not read a dataset; it reads a **version**: a frozen snapshot
+of the dataset's labeled items at a moment, each assigned to `train`, `val`
+or `test`, with per-class counts and a health report. Editing the dataset
+after the fact changes nothing about an existing version, which is what
+makes a model's lineage mean something.
+
+## Building one
+
+**New version** on the Versions tab asks for:
+
+- **Ratios**: train, validation, test, as fractions of the items. The
+  default is 80 / 20 / 0; a test split is for holding frames back from both
+  training and the reported metrics.
+- **Seed**: the split is deterministic for a seed; the same dataset and seed
+  give the same split.
+- **Keep the previous version's split**: on by default when a version
+  exists. Items that were in the previous version keep their side; only new
+  items are drawn. A model trained on version 2 is then comparable with one
+  trained on version 1 because the validation frames are the same frames.
+- **Include pre-labeled items**: whether `ai_labeled` items count as labeled
+  for this version. Off means only human-reviewed frames train the model.
+
+The dialog previews the split before you confirm: image and box counts per
+split and per class, and the health check below. A version builds in
+seconds (four to five on the reference passes) and reads `ready` once its
+files are written.
+
+### How the split is drawn
+
+Items are split in **groups**, not one at a time: frames that came from the
+same import (the same recording session, the same upload batch) stay on the
+same side of the split. Two frames two seconds apart in a static scene are
+near-duplicates, and a model that trains on one and validates on the other
+reports a score it did not earn. The seed shuffles the groups, the ratios
+cut the shuffled list, and `keep previous` pins the groups that were already
+assigned.
+
+## The health check
+
+A version is refused, not built, when it has:
+
+- a class with **no instance in the validation split**. Nothing could
+  measure the model on that class, and the trainer would report zeros
+  that look like a failure. The refusal names the class; the fix is to
+  label a few more frames of it (they land on the validation side with
+  the group they came from) or to drop the class.
+
+A version is built with a **warning** when a class has fewer than 5
+validation instances: the number the metrics report for that class is
+noise, and the Versions tab says so with a badge. A warning does not stop
+training.
+
+The check runs in the dialog on the preview, and again on the server on
+the rows as they are at build time, so a refusal is the same refusal in
+both places.
+
+## The files
+
+A ready version is a prefix in the platform's object storage holding:
+
+```
+dataset.json              the class list, counts, the split settings, the hash of the three files
+annotations.coco.json     one COCO detection file; category ids are 0-based indexes into the class list; image ids are item ids
+splits.json               item id -> train | val | test
+images/<itemId>.jpg       a copy of every included item, so a version survives edits and deletes
+```
+
+That layout is **dataset v1**, the input contract of the
+[forge](/models/forge-cli). A version synced to a laptop passes
+`xmf dataset validate` unchanged, and the training job mounts the prefix
+as its dataset channel as is. The Versions tab's **Files** button hands
+out short-lived links to the three JSON files.
+
+## Training from a version
+
+**Train** on a ready version opens the training dialog with that version
+selected; [Training](/models/training) is the next page. A version can be
+trained from any number of times; the model rows keep the version id, so
+the registry can tell you which frames a model saw.

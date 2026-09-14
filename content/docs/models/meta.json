@@ -1,0 +1,12 @@
+{
+  "title": "Models",
+  "pages": [
+    "index",
+    "datasets",
+    "versions",
+    "training",
+    "registry",
+    "forge-cli",
+    "not-covered"
+  ]
+}

@@ -505,3 +505,15 @@ public registry at `models.xorgate.io` is a mirror of the first-party subset
 of that registry, in the same layout, with `index.json` at the root. Nothing
 about a model differs between the two; the only difference is who can reach
 them.
+
+Since the [Models](/models) section shipped, an organization has a registry
+root of its own next to the platform's: a model trained on the platform from
+one of your datasets is published there as `<name>@<version>` in this same
+layout, and the platform's host resolves a template's model name in your
+organization's root first, then in the platform's, so a template that names
+`yard-forklift` runs your model wherever the platform runs it. The editor's
+model picker lists both roots, grouped, and sets the detection node's
+minimum confidence from the model's own operating point (the threshold its
+precision and recall were measured at). [The registry](/models/registry)
+page has the details, including the download that gives you the same two
+files this page describes for `xwe run --models-dir`.

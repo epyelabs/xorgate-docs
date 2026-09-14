@@ -29,6 +29,11 @@ credentials. They exist as REST resources, but they are in neither the
 `workflow-template` and `workflow-instance` hits, and `xg.request()` will reach
 the endpoints, with no stability promise attached.
 
+The same line holds for the [Models](/models) section's own routes (datasets,
+training jobs, the organization registry): described in prose there, reachable
+through `xg.request()`, and listed under [what it does not
+cover](/models/not-covered) until they enter the reference.
+
 Note what that line means in practice: you can **read** a template's graph
 through the API, and you cannot write one. Authoring stays in the editor.
 

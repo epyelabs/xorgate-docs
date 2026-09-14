@@ -1,0 +1,205 @@
+---
+title: "The forge CLI"
+description: "xmf, the trainer the platform runs, as a Python package and a container image: the commands, the job spec, the dataset layout, the output tree, the hosts, the progress stream, and the exit codes."
+---
+
+`xmf` is the training side of the engine: one Python package and one
+container image that train, evaluate, auto-label, export and check object
+detection models against the engine's frozen model contract (manifest v1 and
+the registry layout), with no platform account and no network once the base
+weights are on disk. The platform's training jobs run exactly this, in this
+image, on its compute; a laptop runs it on a synced dataset version, and the
+output is the same tree either way.
+
+```bash
+xmf doctor
+xmf recipes [--json]
+xmf validate <job.json> --dataset <dir> [--models-dir <dir>]...
+xmf run <job.json> --dataset <dir> --out <dir> [--models-dir <dir>]... [--progress json] [--host local|sagemaker]
+xmf train <job.json> --dataset <dir> --out <dir> [...]        # run, task train only
+xmf dataset validate <dir> [--min-val-instances n]
+xmf dataset import <src> --from coco|yolo|voc --out <dir> [--images <dir>] [--classes a,b] [--split train]
+xmf dataset export <dir> --to coco|yolo --out <dir>
+xmf dataset split <dir> [--train 0.8] [--val 0.2] [--test 0] [--seed 0] [--keep <splits.json>]
+xmf dataset stats <dir> [--json]
+xmf check <model-dir> [--no-fill]
+xmf weights pull [<ref>...] [--dir <dir>]
+xmf <command> ... --log-level silent|error|info|debug           # any command
+```
+
+This page describes release 0.2.0, the one the platform runs. The package
+is `xorgate-forge` (Python 3.11 and up; installable from a checkout of the
+repository, with PyPI publication planned), and the image is
+`ghcr.io/epyelabs/xmf:<version>` for CPU hosts (linux/amd64 and linux/arm64)
+with a `-cuda` variant for GPU hosts. The trainer a recipe wraps carries its
+own license, printed by `xmf recipes` (`yolov8` is Ultralytics, AGPL-3.0);
+the forge itself is MIT.
+
+```bash
+docker run --rm -v "$PWD":/work ghcr.io/epyelabs/xmf doctor
+docker run --rm -v "$PWD":/work ghcr.io/epyelabs/xmf run job.json --dataset ds --out out
+```
+
+## `doctor` and `recipes`
+
+`doctor` says what the machine can run. Real output on a laptop:
+
+```
+xmf 0.2.0  python 3.11.16  macOS-26.6.2-arm64-arm-64bit
+torch        ok   2.14.0 (mps); training device cpu
+onnxruntime  ok   1.29.0 (CoreMLExecutionProvider, AzureExecutionProvider, CPUExecutionProvider)
+ultralytics  ok   8.4.146
+recipe       yolov8   detection, object_detection, license AGPL-3.0; base weights: yolov8n cached, yolov8s absent
+weights      /opt/forge/weights, /Users/dev/.xorgate/forge/weights; downloads on
+model cache  /Users/dev/.xorgate/models: detection/yolov8n v1
+node         /usr/local/bin/node; xwe node_modules/.bin/xwe
+sagemaker    root /opt/ml
+```
+
+```
+$ xmf recipes
+id        family        task              license     base weights
+yolov8    detection     object_detection  AGPL-3.0    yolov8n, yolov8s
+```
+
+## The job spec
+
+A job is one JSON document (job spec v1). `task: train` names a recipe, the
+base weights, a `mode` (`fast` or `accurate`, a preset the `hyperparameters`
+override), `limits.maxMinutes`, and the registry identity of the output;
+`task: autolabel` names a registry model, a `minConfidence` and a `classMap`
+from the model's classes to the dataset's.
+
+```json
+{
+  "specVersion": 1,
+  "jobId": "quick",
+  "task": "train",
+  "recipe": "yolov8",
+  "output": { "family": "detection", "name": "fixture-vehicles", "version": 1, "label": "Fixture vehicles" },
+  "base": { "kind": "pretrained", "ref": "yolov8n" },
+  "mode": "fast",
+  "hyperparameters": { "epochs": 12, "imgsz": 320, "batch": 8, "patience": 12, "seed": 0 },
+  "limits": { "maxMinutes": 20 },
+  "provenance": { "orgId": "fixture", "datasetId": "fixture-vehicles", "datasetVersion": 1 }
+}
+```
+
+`provenance` is opaque to the forge and copied into the result and the
+manifest, which is how a model published by the platform carries the dataset
+version and organization it came from. `validate` prints what a job needs
+and exits 2 on a bad spec without running anything.
+
+## The dataset
+
+A dataset is a directory (dataset v1): `dataset.json`, one
+`annotations.coco.json` (COCO detection; category ids are 0-based indexes
+into the class list; image ids are strings), `splits.json`, and `images/`.
+It is the layout a platform [version](/models/versions#the-files) is written
+in, so a synced version is a valid input as is.
+
+- `dataset validate` is the check a job runs before training: every image
+  opens, every box is inside its image, every class has validation
+  instances (`--min-val-instances` is 5 by default; zero is an error, under
+  the floor a warning).
+- `dataset import` builds one from COCO, YOLO or Pascal VOC; `export` goes
+  the other way; the round trip preserves boxes to the pixel.
+- `dataset split` draws the split by group, deterministically for a seed,
+  and `--keep` pins the assignments of a previous `splits.json`.
+- `dataset stats` prints counts per split and class, box sizes and
+  unlabeled images.
+
+## What a run produces
+
+`run` writes `<out>/<jobId>/`:
+
+```
+result.json                       written last, always, even on failure
+progress.jsonl                    one object per line (below)
+model/<family>/<name>/<version>/  manifest.json and model.onnx: the registry layout
+weights/best.pt                   the training weights the model was exported from
+eval/metrics.json, eval/confusion.json, eval/samples/<n>.jpg
+train.log                         the trainer's own output
+labels.json                       autolabel jobs: the boxes, in dataset class names after the class map
+```
+
+`model/` is a registry root, so `xwe run ... --models-dir out/<jobId>/model`
+loads the model unchanged, and `xmf check <dir>` prints the same four lines
+as `xwe models check`. Evaluation runs on the exported ONNX through the
+manifest's own letterbox and decoder, so `result.metrics` describes the
+artifact the engine will run: `mAP50`, `mAP50_95`, `precision`, `recall`,
+`perClass`, and `confidence`, the operating confidence at which precision
+and recall were measured and the value a detection node should run the
+model at ([Training](/models/training#metrics) explains why); it is `null`
+when no threshold yields a true positive. The manifest's
+`provenance.metrics` repeats it.
+
+A run on the checkout's fixture dataset (63 dashcam frames, two classes) with
+the quick spec above, on a laptop CPU:
+
+```
+$ xmf run fixtures/specs/quick.json --dataset fixtures/ds --out out --progress json | tail -3
+{"t": "log", "at": "...", "line": "evaluated on 12 val image(s): mAP50 0.338, mAP50-95 0.190, precision 0.800, recall 0.250 at confidence 0.05"}
+{"t": "status", "at": "...", "status": "succeeded", "phase": "done"}
+$ npx xwe models check out/quick/model/detection/fixture-vehicles/1
+manifest   ok   detection/fixture-vehicles v1, yolov8, 2 classes, 320x320 nchw rgb
+model      ok   model.onnx 11.6 MB, sha256 verified
+session    ok   onnxruntime-node 1.29.0, input "images" [1,3,320,320]
+output     ok   "output0" [1,6,2100] matches yolov8 with 2 classes (4 + 2)
+```
+
+### The progress stream
+
+With `--progress json`, stdout carries one object per line, each stamped
+`at`; the same lines go to `progress.jsonl`, which the platform syncs while
+a job runs and tails on the job page:
+
+| `t`      | Fields                                                                        | When                               |
+| -------- | ----------------------------------------------------------------------------- | ---------------------------------- |
+| `status` | `status`, `phase` (`prepare`, `train`, `export`, `check`, `evaluate`, `label`, `done`) | at every phase change, and last    |
+| `epoch`  | `epoch`, `epochs`, `loss`, `mAP50`                                            | at the end of every training epoch |
+| `log`    | `line`                                                                        | the run's own log lines            |
+
+Diagnostics go to stderr, gated by `--log-level`; stdout is the stream and
+nothing else.
+
+## Hosts
+
+The runner reads and writes through five small seams (a dataset source, a
+model source, an artifact sink, a progress sink, a secret reader). The local
+host is the reference; the managed-training host is a path mapping over it:
+
+| Seam      | Local host                                                            | Managed-training host (`--host sagemaker`)                    |
+| --------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
+| dataset   | `--dataset <dir>`                                                     | the mounted dataset channel                                   |
+| job spec  | the `run` argument                                                    | the mounted job channel                                       |
+| models    | `--models-dir` roots, then `~/.xorgate/models`; base weights under `XMF_WEIGHTS_DIR` | an optional models channel, then the baked weights |
+| artifacts | `<out>/<jobId>/`, `result.json` last                                  | the output directory the service tars                         |
+| progress  | `progress.jsonl` in the job dir; stdout with `--progress json`        | the checkpoint directory, synced while the job runs           |
+| secrets   | `XORGATE_SECRET_<NAME>`, `--secrets file.json`                        | the job's environment                                         |
+
+`XMF_SAGEMAKER_ROOT` relocates the managed host's root, which is how the
+forge's own test suite proves that host under a fake tree without the
+service. Training stops cleanly at `limits.maxMinutes` minus a reserve for
+export, check and evaluation (a fifth, at most five minutes), then finishes
+on the best weights so far.
+
+## Exit codes
+
+| Code | Meaning                                                                                  |
+| ---- | ---------------------------------------------------------------------------------------- |
+| `0`  | Success.                                                                                 |
+| `1`  | The job failed (`result.json` is written, with `error.phase` and `error.message`) or a validation found problems. |
+| `2`  | Usage or configuration; nothing ran.                                                     |
+
+## Contracts and versions
+
+The forge is four documents (dataset v1, job spec v1, result v1, progress
+v1), the labels file, the engine's manifest v1 with an additive `provenance`
+block, the seams, the CLI and its exit codes; their JSON Schemas ship in the
+repository under `contracts/` with an example of each. The version number is
+about them: a breaking change to any is a major, an additive field or command
+a minor, anything else a patch, and the schema versions stay at 1 across
+additive releases so a document written by an older release keeps parsing.
+0.2.0 added `metrics.confidence` and `provenance.metrics.confidence`; a
+0.1.0 document simply lacks them.

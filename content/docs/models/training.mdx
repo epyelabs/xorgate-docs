@@ -1,0 +1,143 @@
+---
+title: "Training"
+description: "Training jobs on the platform: the recipe and its license, base weights, presets and overrides, CPU and GPU targets, the time budget against billable time, progress and early stop, the metrics and the operating confidence, failures and cancels, and the guardrails."
+---
+
+A **training job** turns a ready version into a model in your organization's
+registry. The platform runs the [forge](/models/forge-cli) in a managed
+training container on the compute target you choose, with no network access
+during the run: the dataset goes in as a channel, the base weights are baked
+into the image, and the artifacts come out as a tarball the platform reads,
+checks and publishes. Admins and owners start jobs; everyone reads them.
+
+## The dialog
+
+**Train** on a version (or **New job** on the Training list) asks for:
+
+| Field         | What it is                                                                                                                                                                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recipe        | `yolov8` is the one recipe in this release. Its license line is printed under it: the trainer is Ultralytics YOLOv8, **AGPL-3.0**, which has consequences for a proprietary product; a permissively licensed recipe is the first item of the next phase. |
+| Base          | `yolov8n` (the default, small and fast) or `yolov8s`. Pretrained general weights the fine-tune starts from.                                                                                                                                  |
+| Name          | The registry name the model is published under: letters, digits, `.`, `_` and `-`. A name already in your organization becomes its next version ("new version of yard-forklift: v3"); a name that resolves in the platform's registry is refused, so your model can never shadow a platform one. |
+| Label         | A human name for the picker.                                                                                                                                                                                                                 |
+| Mode          | `fast` or `accurate`, the recipe's presets (below).                                                                                                                                                                                          |
+| Epochs, image size | Overrides on the preset. The image size is what the model is exported at; 640 is the presets' default, 320 halves the compute for a scene where the objects are large. |
+| Target        | `cpu` (a 4-vCPU instance, the default) or `gpu` (a single-GPU instance on spot capacity). The dialog shows a static duration and cost estimate for each.                                                                                     |
+| Budget        | `maxMinutes`: the container's time budget. 60 by default, 240 at most.                                                                                                                                                                       |
+
+### Presets
+
+| Preset     | Epochs | Image size | Patience | Meant for                                                        |
+| ---------- | ------ | ---------- | -------- | ---------------------------------------------------------------- |
+| `fast`     | 50     | 640        | 10       | A first model: does the loop produce a detector for this scene? |
+| `accurate` | 150    | 640        | 30       | The model you keep.                                              |
+
+**Patience** is the number of epochs without improvement on the validation
+split before the trainer stops early. It matters more than the epoch count
+on a static scene, where the fitness saturates in the first dozen epochs;
+the `fast` reference job stopped at epoch 14 of 20 with the weights from
+epoch 5, the `accurate` one at 44 of 60 with the weights from epoch 15.
+**Early stop returns the best weights, not the last ones.**
+
+### The budget
+
+`maxMinutes` is the container's budget, measured from the moment training
+starts, not from the click: provisioning the instance and pulling the image
+(a minute or so) come before it and are not billed. Inside the budget the
+recipe reserves a fifth (at most five minutes) for export, check and
+evaluation, stops training cleanly when the rest is used up, and finishes on
+the best weights so far, so a job that hits its budget still publishes a
+model. A job that exceeds it anyway is stopped by the platform and closes
+`failed` with the reason.
+
+## The job page
+
+A job moves through `queued` (a row, waiting for the dispatcher),
+`dispatched` (the training service is provisioning an instance and pulling
+the image; on the GPU target, waiting for spot capacity), `running` (the
+container started; phases `prepare`, `train`, `export`, `check`,
+`evaluate`), then `succeeded`, `failed` or `cancelled`.
+
+While it runs the page polls and shows the phase, an epoch progress bar with
+the last epoch's loss and mAP50, and a live tail of the log. The page
+shows two durations once the job ends and both are real: **wall time**,
+from the click to the terminal state, and **billable time**, what the
+compute actually cost, which is well under the wall time on the CPU target
+(provisioning and the pull are free) and further under it on spot GPU (the
+spot discount).
+
+Reference numbers, `ml.m5.xlarge`-class CPU target, 64 training and 22
+validation frames at 320 px: `fast` 20 epochs, 180 s wall for 139 billable
+seconds; `accurate` 60 epochs, 375 s wall for 330 billable seconds; about
+5.5 s per epoch. The GPU target ran the same job on the reference dataset
+in 154 s wall for 55 billable seconds when spot capacity was available.
+
+### Metrics
+
+Evaluation runs on the **exported ONNX model**, not the training weights,
+through the manifest's own letterbox and decoder, so the numbers describe
+the artifact the engine will run:
+
+- **mAP50** and **mAP50-95**: ranking metrics over the validation split,
+  overall and per class, with the per-class table naming the number of
+  validation instances each row rests on (a class under 5 is noise, as the
+  version's health warning said).
+- **Precision** and **recall**, measured at the **operating confidence**.
+- The **confusion matrix** at that confidence, and up to 24 **sample
+  renders** of validation frames with predictions against ground truth.
+
+<Callout title="The operating confidence">
+  A small fine-tune can rank its classes well (a high mAP50) while every
+  score it produces sits under 0.1, let alone the detection node's catalog
+  default of 0.4. On
+  the reference recording the `fast` model reported printer mAP50 0.93 with
+  precision and recall 0.0000, and found nothing at all in the simulator,
+  because its top score per frame was 0.05 to 0.06. The forge therefore
+  reports the **operating confidence**: the threshold that maximizes F1 on
+  the validation split, at which precision and recall are measured. It is on
+  the job page, on the registry entry, and the template picker lowers the
+  detection node's minimum confidence to it when you pick the model. The
+  `logic.detection_gate` downstream has its own minimum confidence; set it
+  to match, or the gate drops what the node found. A model that reaches no
+  true positive at any threshold has no operating point: the job reports
+  none (a dash), precision and recall read 0, the picker prefills nothing,
+  and the fix is to train longer (the `accurate` preset) rather than to
+  lower a threshold.
+</Callout>
+
+A mAP50 of 0.0 on a few epochs is a real measurement, not an error: a short
+run on a small set finds nothing at any confidence. The presets' epoch counts
+are where the numbers start to mean something.
+
+### Failures and cancels
+
+A job that fails inside the container closes `failed` with the forge's own
+phase and message (`prepare: base "yolov8x" is not one of the yolov8 bases
+[...]`), never the compute service's generic failure string. A spot job
+that never gets an instance within its budget closes `failed` with "No spot
+instance became available within the wait time"; retry later or use the CPU
+target. **Cancel** on the job page stops the job and closes it `cancelled`
+(a queued job closes at once; a dispatched one in a few seconds). A failed
+or cancelled job still burns the version number it was allocated, so the
+registry may read 1, 3, 4.
+
+### Guardrails
+
+- **One job per organization at a time**, training or assist. A second is
+  refused in the dialog with a link to the one in flight, and by the API
+  with `409 TRAINING_JOB_IN_FLIGHT`.
+- `maxMinutes` 60 by default, 240 at most; the instance types behind
+  `cpu` and `gpu` are an allow-list.
+- 5,000 items per dataset, 20 MiB per image, 500 frames per import.
+- Members annotate and version; admins and owners train, assist, archive
+  and delete; viewers read. A viewer gets a 403 from the job routes and no
+  button in the UI.
+
+## Assist jobs
+
+An assist job is the same machinery with `task: autolabel`: it runs a
+registry model over the dataset's items and writes pre-labels instead of
+training. It appears on the Training list with the model it used, the class
+map, and a Labels summary (images labeled, boxes, per class, and the unmapped
+counts). [Datasets and annotation](/models/datasets#assisted-labeling) covers
+the dialog.

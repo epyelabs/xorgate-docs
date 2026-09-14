@@ -13,7 +13,8 @@
     "2026-09-08: the platform consumes @xorgate/workflow-engine 0.3.0 on both",
     "of its execution targets (plan: xorgate/plans/wf-engine-integration-to-",
     "core-service); the workflows pages now describe the integration as shipped.",
-    "The cloud workflow REST API is still undocumented."
+    "The cloud workflow REST API is still undocumented.",
+    "2026-09-14: the models section (datasets, annotation, versions, training on the platform, the organization registry, and the forge CLI) landed with plan xorgate/plans/xorgate-models; its REST routes are still outside the API reference, see models/not-covered."
   ],
   "title": "Documentation",
   "pages": [
@@ -24,6 +25,7 @@
     "backend-sdk",
     "frontend-sdk",
     "device-sdk",
-    "workflows"
+    "workflows",
+    "models"
   ]
 }

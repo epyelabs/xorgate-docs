@@ -1,0 +1,85 @@
+---
+title: "Models"
+description: "Train object detectors from your own recordings on the platform: datasets and annotation, versions, training jobs, the organization registry, and the same models running in workflows and under xwe."
+---
+
+A workflow's `model.object_detection` node runs whatever detector its
+template names. The platform ships general detectors, and this section is
+how you get one trained on what your cameras actually see: the loop from
+frames to a model an organization owns, run from the browser, with nothing
+to install.
+
+## The loop
+
+1. **Frames in.** Upload images, or pull frames straight out of a device
+   recording at an interval. They land in a **dataset** with a class list
+   you define.
+2. **Labels, mostly by machine.** An **assist** job runs a detector over the
+   unlabeled frames and writes its boxes as pre-labels, mapped onto your
+   classes. You accept, fix or draw in the **annotator**, one keystroke per
+   decision.
+3. **A version.** A **version** is a frozen snapshot of the labeled frames
+   with a train, validation and test split, checked for the things that make
+   a training run meaningless (a class with nothing to validate on).
+4. **A training job.** Pick a recipe and a compute target; the platform
+   trains, exports the model to the engine's format, checks it, evaluates it
+   on the validation split and publishes it to your organization's
+   **registry** as `<name>@<version>` with its lineage.
+5. **Run it.** Pick the model in a template's detection node and run the
+   simulator over the same recording; attach the template to devices; or
+   download the two files and run them under `xwe` on a laptop or an edge
+   device. A template that names your model resolves it in your
+   organization's root before the platform's, wherever it runs.
+
+Everything in the loop is a row you can inspect: the dataset and its items,
+the assist and training jobs with their logs and metrics, the model with the
+dataset version and job it came from.
+
+<Callout title="Who can do what">
+  Members annotate, build versions and download models. Admins and owners
+  start and cancel jobs (a job costs money) and archive or delete models.
+  Viewers read everything and change nothing.
+</Callout>
+
+## The pages
+
+<Cards>
+  <Card
+    title="Datasets and annotation"
+    href="/models/datasets"
+    description="Uploading frames, adding them from a recording, the class list, the annotator and its keyboard, and assisted labeling."
+  />
+  <Card
+    title="Versions"
+    href="/models/versions"
+    description="What a version freezes, how the split is drawn, the health check that refuses a bad one, and the files a version is made of."
+  />
+  <Card
+    title="Training"
+    href="/models/training"
+    description="Recipes and their licenses, presets, targets and budgets, what a job page shows, the operating confidence, and the guardrails."
+  />
+  <Card
+    title="The registry"
+    href="/models/registry"
+    description="Platform and organization models, how a name resolves, lineage, the template picker, downloading a model for xwe."
+  />
+  <Card
+    title="The forge CLI"
+    href="/models/forge-cli"
+    description="xmf: the same trainer as a package and an image, its job spec, dataset tools, outputs and exit codes."
+  />
+  <Card
+    title="What this does not cover"
+    href="/models/not-covered"
+    description="The routes outside the API reference, the limits chosen for this first release, and what comes next."
+  />
+</Cards>
+
+## Where it stands
+
+This is the first release of the section: one family (object detection), one
+recipe (`yolov8`, whose license is printed wherever it is chosen), two compute
+targets, and the loop above proven end to end from the browser against a real
+device recording. [What this does not cover](/models/not-covered) lists the
+edges plainly.

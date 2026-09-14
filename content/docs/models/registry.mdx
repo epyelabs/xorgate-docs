@@ -1,0 +1,111 @@
+---
+title: "The registry"
+description: "Platform and organization models side by side; how a template's model name resolves; lineage from a model back to its version and job; the template picker and the operating confidence; archive and delete; downloading a model and running it under xwe."
+---
+
+The registry page lists every model a template in your organization can
+name: the platform's models and your organization's, in one table with a
+**scope** column. A platform model is a first-party detector every
+organization sees; an organization model was trained on the platform from
+one of your versions (or placed in your root by hand) and is visible to your
+organization alone, never mirrored anywhere public.
+
+## Names and resolution
+
+A model is `<family>/<name>@<version>`; templates carry `name` or
+`name@version` in the detection node's `model` field, as [Models and the
+registry](/workflows/models) describes for the engine. The platform's host
+resolves a name in **your organization's root first, then the platform's**,
+highest version first within a root, so:
+
+- a template that names `yard-forklift` runs your model, at your latest
+  version, wherever the platform runs it: a simulation, an attachment on a
+  device, a scheduled run;
+- a template that pins `yard-forklift@2` keeps running version 2 when 3 is
+  published;
+- an organization model can never take a platform name: a training job
+  whose output name resolves in the platform's root is refused before
+  anything starts, so `yolov8n` always means the platform's `yolov8n`.
+
+## The entry
+
+A model's page shows the manifest the engine reads (family, name, version,
+label, input geometry, class names, post-processing, file checksums), its
+scope and status, and for a trained model its **lineage**: the recipe and
+base, the dataset version (a link, with the frame counts it was built from),
+the job (a link to its page, log and eval gallery), when it was trained, and
+its metrics: mAP50, mAP50-95, precision, recall and the **operating
+confidence** they were measured at. The dataset version keeps its own copy
+of every frame, so the lineage stays readable after the dataset moves on.
+
+**Versions of this name** lists the other versions in your organization,
+and **Used by** the published templates that name this model.
+
+## In the template editor
+
+The detection node's `model` field is a picker rather than a text box
+whenever the registry knows the model. It lists your organization's models
+and the platform's in two groups, filtered to the node's family, as
+`name@version` with the label beside it. **Pin version** decides whether the
+config carries `name` (the latest at run time, organization first) or
+`name@version`. A **custom name** escape keeps the free-text input for a
+model the registry does not list, with a publish-time warning when no root
+resolves it.
+
+Under the field, the picked model's class names, so the gate downstream can
+be typed to match, and, for a trained model, its **operating confidence**.
+Picking a model sets the node's **min confidence** to that value whenever
+the node would otherwise run above it (the field unset, at the catalog's
+default of 0.4, or at a higher hand-set value), because a fine-tune scored
+at 0.05 finds nothing at 0.1; a pick never raises the threshold. Editing the
+threshold above the model's operating point afterwards shows a hint with a
+one-click fix. The gate node's own minimum confidence is not changed for
+you: set it to match.
+
+On the reference pass the same model, over the same recording, found 0
+detections over 375 frames at the node's 0.1 and 354 at its operating
+confidence of 0.05.
+
+## Archive and delete
+
+**Archive** hides a model from the picker and from new runs; templates that
+pin it keep resolving it. **Delete** removes the two files and the row, and
+is **refused while a published template names the model**, with the list
+of templates that do. Both are admin actions.
+
+## Download and run under `xwe`
+
+Every member can download a model's two files, `manifest.json` and
+`model.onnx`, from its page (short-lived links). They are the engine's
+registry layout, so the directory you make from them is a registry root:
+
+```bash
+mkdir -p models/detection/yard-forklift/2
+# save manifest.json and model.onnx into it, then
+xwe models check ./models/detection/yard-forklift/2
+```
+
+```
+manifest   ok   detection/yard-forklift v2, yolov8, 2 classes, 320x320 nchw rgb
+model      ok   model.onnx 11.6 MB, sha256 verified
+session    ok   onnxruntime-node 1.29.0, input "images" [1,3,320,320]
+output     ok   "output0" [1,6,2100] matches yolov8 with 2 classes (4 + 2)
+```
+
+```bash
+xwe run forklift.json --input video=yard.mp4 --models-dir ./models --out out
+```
+
+```
+[xwe] model detection/yard-forklift v2 <- models/detection/yard-forklift/2/model.onnx
+  ok      det          37 detection(s) over 50 frame(s) (yard-forklift v2, ~22 ms/frame)
+```
+
+The manifest carries the forge's `provenance` block (the recipe and its
+license, the base, the job id, the dataset hash, the metrics and the
+operating confidence, the training time); the engine keeps it in the file
+and ignores it on parse, and the platform publishes the file byte for byte
+out of the training artifact, so what you download is what was checked.
+Copy the directory into `~/.xorgate/models/detection/` to make the model
+available to every run on the machine, or point `XWE_MODELS_DIR` at your
+root on an edge device.

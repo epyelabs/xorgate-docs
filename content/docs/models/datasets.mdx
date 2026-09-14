@@ -1,0 +1,136 @@
+---
+title: "Datasets and annotation"
+description: "A dataset and its items, uploading frames or adding them from a device recording, the class list, the annotator with its keyboard map, assisted pre-labeling with a class map, and what each item status means."
+---
+
+A **dataset** is an ordered class list plus a set of images (**items**), each
+with zero or more boxes. It belongs to the organization, not to a workspace,
+because a model trained from it serves every workspace. The Models nav has
+three children; Datasets is the first.
+
+## Items
+
+An item is one image with its size, a content hash, a status and its boxes.
+The Items tab is a grid of the originals, scaled by the browser (48 per page
+by default), with a box count on each thumbnail, filters by status and class,
+and multi-select for **Exclude**, which keeps an item out of every future
+version without deleting it.
+
+| Status        | Meaning                                                                              |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `unlabeled`   | No box yet. What an assist job runs over by default.                                 |
+| `ai_labeled`  | Pre-labeled: at least one box came from a model and has not been accepted or rejected. |
+| `labeled`     | A person has been over it: every box is human, or was accepted.                      |
+| `excluded`    | Kept in the dataset, skipped by versions.                                            |
+
+Limits, chosen for this release: 5,000 items per dataset, 20 MiB per image,
+JPEG and PNG. A duplicate (same bytes as an item already in the dataset) is
+reported and not added twice.
+
+### Uploading frames
+
+**Upload** takes files from a drop zone or the file picker and sends them
+straight to the platform's object storage with bounded concurrency, then
+registers each one; the platform reads the dimensions from the file and
+computes the hash while it streams. Sixteen 1280x720 frames took about 3.5 s
+on the reference pass.
+
+### Adding frames from a recording
+
+**Add from recording** opens the same device and session picker the
+workflow simulator uses. Pick a device and one of its recorded sessions, an
+interval in seconds and a cap, and the platform decodes frames at that
+interval across the session's segments and adds them as items, in order,
+skipping duplicates. Up to 500 frames per import; a session longer than one
+pass of the importer continues from where it stopped. The Imports strip on
+the Items tab shows each import with its state and frame count.
+
+On the reference pass, 86 frames at every 2 s from a 199 s session (ten
+20 s segments at 1280x720) took 23 s from the click to `succeeded`.
+
+## Classes
+
+The Classes tab edits the ordered class list, each with a colour. Order
+matters twice: it is what the number keys in the annotator select, and it is
+the class index a trained model is exported with (the manifest's
+`classNames`). Renaming a class keeps its boxes; removing one removes them.
+
+Choose class names that exist in the footage. A detector can only learn what
+it sees, and a pre-labeling model can only map its own classes onto yours
+when the objects are there.
+
+## The annotator
+
+Open any item to annotate it: `/datasets/<dataset>/annotate/<item>`. The
+stage is the original image with a box layer over it; it zooms under the
+cursor, pans with space-drag, and preloads the next image so moving through a
+dataset never blanks the stage.
+
+| Keys                              | Action                                                |
+| --------------------------------- | ----------------------------------------------------- |
+| Drag                              | Draw a box in the selected class                      |
+| Click                             | Select a box                                          |
+| Drag box / handle                 | Move / resize the selected box                        |
+| 1 to 9                            | Switch class (also re-classes the selected box)       |
+| Delete / Backspace                | Delete the selected box                               |
+| Esc                               | Deselect, or cancel the box being drawn               |
+| A                                 | Accept every pre-label on this image                  |
+| R                                 | Reject every pre-label on this image                  |
+| Enter                             | Accept pre-labels, mark labeled and go to the next image |
+| [ / ]  or  ← / →                  | Previous / next image                                 |
+| Scroll                            | Zoom under the cursor                                 |
+| Space + drag, or middle drag      | Pan                                                   |
+| F                                 | Fit the image to the stage                            |
+| ?                                 | Show this help                                        |
+
+Three things the table implies, worth saying outright:
+
+- **A new box starts on empty stage.** A pointer-down inside an existing
+  box selects and moves it; to draw a box that overlaps another, start the
+  drag outside every box and drag across.
+- **A digit key acts on the selection.** With a box selected, pressing `2`
+  re-classes that box; with nothing selected it switches the class the next
+  drag will draw in. Press `Esc` between the two.
+- **Enter is the "done with this image" key.** It accepts whatever
+  pre-labels are still pending, saves the image as `labeled` and opens the
+  next one.
+
+Every change autosaves (debounced) through a replace-all write guarded by
+the item's version, so two people editing the same image see a conflict
+banner rather than overwriting each other. An "unsaved changes" indicator
+shows until the save lands. The status the save picks is `labeled` when no
+pending pre-label is left on the image, `ai_labeled` while one is.
+
+### Pre-labels
+
+Boxes a model wrote render dashed with their confidence. Each has accept and
+reject controls, and the side panel accepts or rejects all of them at once
+(`A` and `R`). Accepting converts the box to a human box on save; rejecting
+deletes it. A pre-label you move or resize is accepted by the act.
+
+## Assisted labeling
+
+**Assist** runs a detector over the dataset's unlabeled items and writes its
+boxes as pre-labels. The dialog takes:
+
+- **Model**: a platform detector (`yolov8n`, the 80 general classes) or one
+  of your organization's models, at a version.
+- **Minimum confidence**: boxes under it are not written (0.4 by default).
+- **Class map**: model class to dataset class. Matching names are prefilled;
+  everything else is a row you add. A model class with no mapping is
+  **counted, not written**, and the job page lists those counts, which is how
+  you learn that the general detector calls your printer a "suitcase" and
+  that `suitcase -> printer` is the row to add.
+- **Items**: unlabeled only (the default, which never touches a labeled
+  item) or all.
+
+Assist is a job on the same compute as training, so it obeys the same
+one-job-per-organization rule and shows up on the Training list with a log
+and a summary: images labeled, boxes written, per class, and the unmapped
+counts. On the reference pass, 86 frames through `yolov8n` at 0.4 took 109 s
+of wall time for 64 billable seconds and wrote 157 boxes.
+
+Then correct. Ten frames spread across the dataset, each with the pre-labels
+accepted and the missing class drawn by hand, took about four seconds a frame
+including the save, and gave the validation split the instances of the
+hand-drawn class it needed. [Versions](/models/versions) is the next step.
