@@ -351,6 +351,53 @@ credentials), `"not-configured"` (the provider is missing one of the four AWS
 fields), or `"not-provisioned"` (reported per device, not by this hook, when the
 device has no realtime identity or no video channels).
 
+## `platform`, the host runtime
+
+Everything in this package that touches the host runtime goes through one
+optional `platform` prop, and **every slot defaults to the browser**, so a web
+app never passes it. It exists so React Native can supply its own runtime
+without forking the session, feed and replay logic.
+
+<TypeTable
+  type={{
+    createWebRtcPlatform: {
+      type: "() => WebRtcPlatform",
+      description:
+        "The KVS viewer's WebRTC: endpoints, ICE servers, signaling, the peer connection, id entropy.",
+    },
+    subscribeWake: {
+      type: "(onWake: () => void) => () => void",
+      description:
+        "Foreground / network-back events that nudge both live planes and refetch-on-focus. Browser: visibilitychange, pageshow, online.",
+    },
+    mqttConnect: {
+      type: 'TelemetryFeedDeps["connect"]',
+      description: 'The MQTT transport. Default: a dynamic import("mqtt").',
+    },
+    randomId: {
+      type: "() => string",
+      description: "Client-id entropy. Default: crypto.randomUUID().",
+    },
+  }}
+/>
+
+Each slot is resolved at its point of use rather than materialised into a
+default object on the provider, which is what keeps a page that mounts no video
+from pulling the WebRTC, AWS and mqtt code into its entry chunk.
+`browserPlatform()`, `browserSubscribeWake()` and `browserRandomId()` are
+exported if you want to wrap one.
+
+<Callout
+  type="info"
+  title="On React Native, the provider fills this in for you"
+>
+  [`XorgateNativeProvider`](/frontend-sdk/react-native) is `XorgateProvider`
+  with all four slots already native. Building an adapter for some other host?
+  The seams are `useLiveVideoSession`, `useReplayPlayerCore` + `attachLane`, the
+  `ReplayEngine` interface, and `createWebRtcPlatform(overrides)` — the browser
+  hooks are thin wrappers over the same cores.
+</Callout>
+
 ## Escape hatches
 
 `useXorgate()` returns the underlying `@xorgate/sdk` client. Use it for anything

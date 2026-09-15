@@ -160,6 +160,15 @@ One deliberate omission: a reconnect does **not** clear the `<video>` element.
 The last frame stays on screen instead of flashing to black, which is what makes
 a two-second blip look like a two-second blip rather than an outage.
 
+<Callout type="info" title="React Native has to work for that for free">
+  `RTCView` has no equivalent: it is handed a new `streamURL` on every reconnect
+  and shows black until a frame decodes. The native `LiveVideo` therefore holds
+  the outgoing picture behind an explicit [reconnect
+  hold](/frontend-sdk/react-native-live-video). Everything else on this page —
+  the deadlines, the grace window, the backoff, the credential cycle, the wake
+  nudges — is the same session code running there.
+</Callout>
+
 ## `LiveVideo`
 
 ```tsx

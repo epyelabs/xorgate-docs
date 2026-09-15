@@ -1,0 +1,212 @@
+---
+title: "Live video on React Native"
+description: "LiveVideo and useLiveVideo over react-native-webrtc's RTCView, the stats sampler, and the reconnect hold that keeps a blip from going black."
+---
+
+Live video on a phone is the same VIEWER session as
+[live video in a browser](/frontend-sdk/live-video) — the same signaling, the
+same deadlines, the same backoff, the same credential cycle. What differs is
+where the picture goes: a native `RTCView` with hardware H.264 decode behind it
+instead of an `HTMLVideoElement`.
+
+```tsx
+import { LiveVideo } from "@xorgate/react-native"
+
+<LiveVideo channel={cam0} style={{ aspectRatio: 16 / 9 }} />
+```
+
+Setup — install, the config plugin, the Metro rules and the polyfill — is on
+[the React Native page](/frontend-sdk/react-native). **Live video does not
+work without `@xorgate/react-native/polyfills`**; live telemetry does. That
+asymmetry is explained there.
+
+## Getting a channel
+
+`useVideoChannels(deviceId)` is re-exported and behaves exactly as it does on
+the web: `VideoChannel[]`, one per provisioned stream, and an empty array means
+the device is not provisioned rather than that it has no cameras.
+
+<Callout type="warn" title="On the proxied auth mode, fetch channels from your own API">
+
+`useVideoChannels` is a REST read, so it needs an auth mode that HAS a REST
+credential. An app on `auth={{ getLiveCredentials }}` — the vended-direct mode,
+where your own backend mints the credential and your users have no xorgate
+identity — gets `INVALID_CONFIG` from it by design. The live and replay
+**planes** are what that mode reaches.
+
+Fetch the channel list from your own backend, which relays
+`GET /devices/{id}/video-channels` with its API key, and hand the
+`VideoChannel` to `LiveVideo` directly. Nothing else changes.
+
+</Callout>
+
+## `useLiveVideo`
+
+```tsx
+const { streamURL, status, stats, error } = useLiveVideo(channel)
+```
+
+Pass `null` to stay idle, which is how you obey the Rules of Hooks inside a
+grid.
+
+<TypeTable
+  type={{
+    stream: {
+      type: "MediaStream | null",
+      description:
+        "The received remote stream. A reconnect delivers a NEW stream object; the previous one is dead, not resumable.",
+    },
+    streamURL: {
+      type: "string | null",
+      description: "stream.toURL(), the only thing RTCView takes.",
+    },
+    status: {
+      type: '"connecting" | "waiting" | "connected" | "closed" | "error" | "unavailable"',
+    },
+    unavailableReason: { type: "LiveUnavailableReason | null" },
+    error: { type: "XorgateError | null" },
+    stats: {
+      type: "LiveVideoStats | null",
+      description:
+        "width, height, fps, kbps from inbound-rtp. Null until the first sample, and reset to null on every reconnect.",
+    },
+  }}
+/>
+
+`waiting` means the offer went out and no answer came back, which almost always
+means the device is not running its master right now. It is a correctly working
+viewer talking to nobody, not a stalled connection.
+
+`getStats()` on `react-native-webrtc` 124 reports the **spec** field names, so
+the sampler reads them directly with no platform fallbacks. A typical sample
+off a prod bench camera: `1280x720 15.0 fps 2282 kbps`, populated from the first
+two-second window.
+
+## `LiveVideo`
+
+```tsx
+<LiveVideo
+  channel={channel}
+  style={{ aspectRatio: 16 / 9 }}
+  onStatusChange={(status, error) => …}
+  onStats={(stats) => …}
+/>
+```
+
+`useLiveVideo` plus the native view, and nothing else: no card, no spinner, no
+status text, no aspect ratio of its own. Same promise the web component makes —
+it exists so the common case is one line, not so it can be your player.
+
+<TypeTable
+  type={{
+    channel: { type: "VideoChannel | null" },
+    options: { type: "UseLiveVideoOptions" },
+    objectFit: {
+      type: '"contain" | "cover"',
+      description: 'Defaults to "cover", matching the web component.',
+    },
+    zOrder: { type: "number" },
+    mirror: { type: "boolean" },
+    onStatusChange: {
+      type: "(status, error) => void",
+      description: "Every transition. The component renders no status chrome.",
+    },
+    onStats: {
+      type: "(stats: LiveVideoStats | null) => void",
+      description: "Each inbound-rtp sample, for a stats row.",
+    },
+    onVideoDimensions: {
+      type: "({ width, height }) => void",
+      description:
+        "The encoded size of the picture on screen, as the renderer reports it.",
+    },
+    onDisplayedStreamChange: {
+      type: "(streamURL: string | null) => void",
+      description:
+        "The stream actually ON SCREEN, which during a reconnect lags the session's by the hold below.",
+    },
+  }}
+/>
+
+Every other `View` prop passes through.
+
+## The reconnect hold
+
+This is the one behaviour `LiveVideo` adds that the web component does not need,
+and the reason to prefer it over a bare `RTCView`.
+
+A browser's `<video>` keeps its last frame across a reconnect: the deliberate
+omission on the web side is that the viewer never clears the element, so a
+two-second blip looks like a two-second blip. `RTCView` has no equivalent.
+Every reconnect produces a new `MediaStream` with a new `streamURL`, and a view
+pointed at a stream that has not decoded a frame yet is **black**.
+
+So `LiveVideo` mounts the incoming stream underneath the outgoing one at zero
+opacity and promotes it only once the renderer reports its dimensions, which is
+the first-frame signal.
+
+<Callout type="info" title="With a ceiling, on purpose">
+  If the new stream never produces a frame, the swap happens anyway after **3
+  seconds**. A hold with no ceiling would let a dead stream pin a stale frame on
+  screen indefinitely, which is a worse lie than a moment of black.
+</Callout>
+
+Measured across three reconnects on a prod bench camera: **11 ms**, **183 ms**,
+and once **3020 ms** — the last one hit the ceiling and promoted rather than
+hold. In every case the outgoing frame stayed on screen and there was no black
+flash.
+
+Render `RTCView` yourself and you own that problem. `onDisplayedStreamChange` is
+how you observe it: during a hold it lags `useLiveVideo`'s `streamURL`.
+
+## What a reconnect costs
+
+Measured on an iOS dev build against a prod device, all numbers read off the
+session's own events rather than a stopwatch:
+
+| Event                                   | Time to a picture                        |
+| --------------------------------------- | ---------------------------------------- |
+| Cold connect, including credential vend | 2624 ms                                  |
+| Reconnect                               | 990–1324 ms                              |
+| Return from 60 s in the background      | 400 ms from the foreground nudge         |
+| 30 s network cut                        | video back 1.0 s after the link returned |
+
+The last two are the wake sources doing their job: the socket and the peer
+connection were both genuinely dead, and the nudge beat an 8-second backoff
+rung by roughly five seconds. Wire the network source —
+[four lines, on the React Native page](/frontend-sdk/react-native) — or you get
+the ladder instead.
+
+<Callout type="warn" title="Cellular is not yet verified">
+  Everything above was measured over Wi-Fi against a production device. A viewer
+  on a **carrier NAT** frequently has no working host or srflx path and has to
+  land on the TURN relay AWS hands out with the ICE server list;
+  `iceTransportPolicy: "all"` is set for exactly that, but relay selection over
+  LTE, and iOS's real socket suspension on a physical phone, have not been
+  measured. Treat them as unverified rather than as working.
+</Callout>
+
+## Gate the viewer before you mount it
+
+Unchanged from the web, and it matters more on a phone, where the wasted
+credentials and signaling calls are on someone's cellular plan:
+
+```tsx
+function StreamTile({ deviceId, channel, cameraEnables }) {
+  const feed = useLiveTelemetry(deviceId)
+  const block = useLiveBlock(feed)
+
+  if (cameraEnables?.[channel.streamKey] === false) {
+    return <Text>{channel.streamKey} is turned off</Text>
+  }
+  if (block.blocked) {
+    return <Text>Live view paused: {block.detail}</Text>
+  }
+  return <LiveVideo channel={channel} style={{ aspectRatio: 16 / 9 }} />
+}
+```
+
+The precedence, the `liveBlock` payload and the reasons behind it are on
+[the live telemetry page](/frontend-sdk/live-telemetry). The same shared socket
+the rest of the screen already uses is what carries the verdict, so this costs
+nothing extra.

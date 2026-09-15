@@ -1,0 +1,228 @@
+---
+title: "Replay on React Native"
+description: "useReplayPlayer and ReplayVideo over expo-video: two players per lane, why a boundary is an opacity flip, and what a seek actually costs."
+---
+
+The transport, the wall clock, the lanes, the gap semantics and the telemetry
+math are all [`@xorgate/react`'s](/frontend-sdk/replay), unchanged — this hook
+is `useReplayPlayerCore` with native media bound to every lane. Read that page
+first; it is the reference for the manifest, the clock, the timeline utilities
+and everything a scrubber needs.
+
+What is different here is the media layer, and the difference is not small.
+
+```tsx
+import { ReplayVideo, useReplayPlayer } from "@xorgate/react-native"
+
+const player = useReplayPlayer(manifest, { startTs })
+
+<ReplayVideo player={player} streamKey="cam0" style={{ aspectRatio: 16 / 9 }} />
+<Text>{new Date(player.playheadTs).toISOString()}</Text>
+<Button title={player.playing ? "Pause" : "Play"} onPress={player.toggle} />
+```
+
+## A lane is two players, not one
+
+<Callout type="info" title="Why the shape changes on a phone">
+
+A phone has no Media Source Extensions. `AVPlayer` and `ExoPlayer` play a
+**file**, and every recorded segment is a self-contained fMP4 that cannot be
+concatenated at runtime — so the browser engine's "one `SourceBuffer`, append
+the next segment into it" has no equivalent.
+
+Each lane therefore gets a **pair** of players: one showing the current segment
+while the other already holds the next. `ReplayVideo` mounts both views, the
+hidden one at zero opacity. A segment boundary is then an opacity flip between
+two live views rather than a source change on one.
+
+</Callout>
+
+The incoming player is prepared about half a second early and **not played
+until the outgoing one actually reaches the manifest boundary**. That ordering
+is what keeps the playhead continuous across a seam instead of silently dropping
+the lead — once per segment, which over an hour is minutes of video.
+
+Measured on a real 3-segment session and again across ten seams in range mode:
+a **29–72 ms** picture gap, which is a held frame rather than black, and a
+playhead jump of **0–18 ms**. Over a 145.6-second replay with two boundaries the
+whole drift was **125 ms**.
+
+## The hook owns the players, not the view
+
+The browser wrapper hands out `laneVideoRef` and waits for a `<video>` element
+to attach. A native player needs no view to load or decode, so `useReplayPlayer`
+creates a lane's pair as soon as the manifest describes it, and a `VideoView` is
+only a window onto media that already exists.
+
+That has one consequence worth designing around: **a tile can be unmounted and
+remounted — a tab change, a rotation, a list recycling a row — without
+re-downloading a segment.**
+
+`createVideoPlayer` is manual memory, unlike `useVideoPlayer`. The hook releases
+a lane's pair when the lane disappears or the hook unmounts, and destroys the
+engines before releasing the players, because a released player throws on every
+access.
+
+## `useReplayPlayer`
+
+```tsx
+const player = useReplayPlayer(manifest, { startTs, rate: 1, skipGaps: true })
+```
+
+Everything on [`UseReplayPlayerCore`](/frontend-sdk/replay) is here —
+`clock`, `timeline`, `lanes`, `playheadTs`, `playing`, `rate`, `skipGaps`,
+`lastSkip`, `laneState`, and the transport (`play`, `pause`, `toggle`,
+`seek`, `setRate`, `setSkipGaps`, `stepBoundary`). There is no `laneVideoRef`.
+In its place:
+
+<TypeTable
+  type={{
+    laneMedia: {
+      type: "(streamKey) => ReplayLaneMedia | null",
+      description:
+        "Both of a lane's players and which is in front: { players: [VideoPlayer, VideoPlayer], activeIndex: 0 | 1 }. What ReplayVideo renders.",
+    },
+    lanePlayer: {
+      type: "(streamKey) => VideoPlayer | null",
+      description:
+        "The player currently showing this lane. The one-view shortcut; it reloads at every boundary.",
+    },
+  }}
+/>
+
+<Callout type="warn" title="Reach for laneMedia, not lanePlayer">
+  `lanePlayer` is a convenience for a view that does not care about seams. A
+  single view cannot hold the outgoing picture across a boundary, so rendering
+  only the front player turns every seam back into a reload. If you are building
+  the views yourself, render **both** of `laneMedia`'s players and switch
+  opacity on `activeIndex`.
+</Callout>
+
+Two options exist beyond the core's:
+
+<TypeTable
+  type={{
+    debug: {
+      type: "(message: string) => void",
+      description:
+        "Every decision each lane's engine makes, prefixed with its streamKey. Off by default and free when unset.",
+    },
+    createPlayer: {
+      type: "() => VideoPlayer",
+      description:
+        "How a lane's players are made. Defaults to expo-video's createVideoPlayer; a test supplies its own.",
+    },
+  }}
+/>
+
+<Callout type="info" title="Keep debug wired while you build">
+
+A seam is tens of milliseconds wide and the native player is the half you cannot
+step through, so a boundary that did **not** happen has to be able to leave
+evidence.
+
+This option exists because the first run of this engine on a real session
+silently skipped a whole 60-second segment — 57.7 s of a 145.6 s replay — while
+the screen read `playing · ready · pacer` throughout. No test had caught it and
+no readout showed it. With the engine narrating its own decisions the cause
+turned out to be four separate defects that only misbehaved in combination.
+
+</Callout>
+
+## `ReplayVideo`
+
+```tsx
+<ReplayVideo player={player} streamKey="cam0" style={{ aspectRatio: 16 / 9 }} />
+```
+
+Both of the lane's views, the hidden one at zero opacity, and nothing else: no
+transport bar, no scrubber, no gap overlay, no loading state. Same minimalism as
+[`LiveVideo`](/frontend-sdk/react-native-live-video) and as the web
+`ReplayVideo` — read `player.laneState(streamKey)` and render those yourself.
+
+`contentFit` defaults to `"contain"`, matching the web component's `object-fit`.
+
+<Callout type="warn" title="nativeControls stays off">
+  The clock owns the transport. A native scrubber would drive **one segment's
+  file**, not the replay, so it would show a 60-second timeline for a two-hour
+  session and seeking on it would fight the clock. Build the scrubber against
+  `player.timeline` and `player.seek(ts)`, as the [replay
+  page](/frontend-sdk/replay) shows.
+</Callout>
+
+## What a seek costs, and what that means for a scrubber
+
+<Callout type="warn" title="A cross-segment seek is a whole-segment download">
+
+`replaceAsync` fetches the entire segment file. Measured at **1.7–2.0 seconds**
+for 6–13 MB on a good connection — download-bound, not player-bound, so it does
+not get better with a faster device.
+
+A seek **inside** the current segment is free: one `currentTime` write, no load,
+nothing in the engine log at all.
+
+</Callout>
+
+The consequence for your UI is concrete:
+
+<Callout type="info" title="Seek as the thumb MOVES, not only on release">
+  The intermediate seeks are what warm the player that the release will land on.
+  A scrubber that waits for release pays the full download after the user has
+  already stopped moving, which reads as a frozen app; one that seeks
+  continuously has usually already loaded the segment by the time the finger
+  lifts. Cross-segment seeks always load onto the **hidden** player, so the
+  outgoing picture is held still throughout — it does not go black, and it does
+  not keep playing past the seek target.
+</Callout>
+
+`player.laneState(streamKey)` and `player.clock` are what a scrubber should
+read.
+
+## Gaps
+
+Gap skipping is the clock's, so it works here exactly as on the web — and the
+preloaded second player makes the far side cheap. On a range manifest covering
+4 sessions, 27 segments and 4 gaps, an **1853.8-second** hole was skipped with
+the **picture back in 70 ms**, because the far side was already loaded. A
+1.9-second hole inside a session crossed in 80 ms.
+
+Range mode also means a lane's `seq` numbering restarts per session, which is
+why a lane keys its segments by `startTs`.
+
+## Telemetry at the playhead
+
+```tsx
+const { latest, position, routeLines, hasGps } = useReplayTelemetry(
+  deviceId,
+  player
+)
+```
+
+Re-exported and unchanged. It takes the player **core**, so the native player
+satisfies it the same way the browser one does — it reads a timeline and a
+playhead and has no idea what is playing the video.
+
+## Getting a manifest on the proxied auth mode
+
+`useReplayManifest` is a REST read. On `auth={{ getLiveCredentials }}` it
+answers `INVALID_CONFIG`, the same way `useVideoChannels` does and for the same
+reason: that mode reaches the live and replay **planes**, not the REST API.
+
+Fetch the manifest from your own backend, which relays
+`GET /devices/{id}/replay-manifest`, and pass it straight to
+`useReplayPlayer`. Point `useReplayTelemetry`'s `fetchTelemetry` option at your
+own relay of `GET /devices/{id}/telemetry` the same way. Both hooks take what
+they need as arguments, so neither of these is a workaround.
+
+## One note on measuring anything
+
+<Callout
+  type="warn"
+  title="The iOS simulator throttles a replay nobody is touching"
+>
+  The playhead tracks wall clock 1:1 while something is interacting with the app
+  and falls behind when nothing is — 17 seconds of playhead in five minutes of
+  wall clock, at worst. Nothing ever **disagrees**, because the video paces the
+  clock either way, but any timed measurement taken on an idle simulator is
+  measuring the Mac's display link. Keep it awake, or measure on a device.
+</Callout>

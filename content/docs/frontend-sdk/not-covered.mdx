@@ -1,6 +1,6 @@
 ---
 title: "What this SDK does not cover"
-description: "Runtime limits, deliberate omissions, and the platform gaps a browser consumer will hit."
+description: "Runtime limits, deliberate omissions, and the platform gaps a frontend consumer will hit — in either package."
 ---
 
 Everything here is a known limit, not an oversight. Reading it before you design
@@ -8,15 +8,37 @@ around this package is cheaper than discovering it afterwards.
 
 ## Runtime limits
 
-### React Native is not supported
+### React Native is a different package
 
-There is no plan to support it. The live plane needs `RTCPeerConnection` with
-the browser's ICE behaviour, `MediaSource`, `HTMLVideoElement` and a
-`WebSocket` that mqtt.js recognises. React Native has partial or third-party
-equivalents for some of that and nothing at all for MSE-based replay.
+<Callout type="info" title="This page used to say React Native was not supported. It is.">
 
-The REST hooks would work, but shipping a package that supports one of three
-planes on a platform is worse than not shipping it.
+All three planes run on a phone, through
+[`@xorgate/react-native`](/frontend-sdk/react-native): live telemetry, live
+video into `react-native-webrtc`'s `RTCView`, and replay over `expo-video`.
+
+The old reason given here was that mqtt.js needs a `WebSocket` it recognises.
+That turned out to be false — **mqtt.js 5 runs on React Native's global
+`WebSocket` unmodified**, and no substitute client was needed. What was
+genuinely missing was smaller and more specific: Hermes has no `crypto` global,
+which one package entry point installs, and the AWS tree needs four Metro
+resolver rules. Both are documented and both are four lines of setup.
+
+</Callout>
+
+What remains true is that **`@xorgate/react` itself** is the browser package and
+will not run there: its `useLiveVideo`, `LiveVideo`, `useReplayPlayer` and
+`ReplayVideo` need `HTMLVideoElement`, `window` or Media Source Extensions.
+Those four names are shadowed by native implementations in the React Native
+package, and everything else — the data hooks, the telemetry feed, the KVS
+session itself, the clock, the lanes, the timeline and telemetry math — is
+shared code reached through the provider's `platform` slot, not a second
+implementation.
+
+One thing is not yet verified there: a **physical phone over a cellular
+network**. Everything published was measured on the iOS simulator against a
+production device over Wi-Fi, so carrier-NAT TURN relay selection and iOS's real
+background socket suspension are open. See
+[live video on React Native](/frontend-sdk/react-native-live-video).
 
 ### Server rendering renders a shell
 
@@ -38,12 +60,17 @@ The hooks return state, they do not throw promises. Suspense boundaries around
 them do nothing. If you want Suspense, drive `@xorgate/sdk` through a library
 that provides it.
 
-### Video playback is browser-only
+### There is no HLS, on any platform
 
-Replay is fragmented MP4 through Media Source Extensions. There is no HLS, no
-DASH and no plain URL you can hand to another player, and there is no
-transcoding service to ask for one. Recorded segments are 60-second fMP4 files
-in S3, and stitching them is the client's job.
+Recorded segments are 60-second fMP4 files in S3, and stitching them is the
+client's job. There is no HLS, no DASH, no plain URL you can hand to another
+player, and no transcoding service to ask for one.
+
+That constraint shapes both players rather than blocking either. In the browser
+the segments are appended into one `SourceBuffer` through Media Source
+Extensions. On React Native, where there is no MSE and a native player plays a
+file, each lane runs [two players and flips between
+them](/frontend-sdk/react-native-replay) at a segment boundary.
 
 ## Deliberate omissions
 

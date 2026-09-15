@@ -1,6 +1,6 @@
 ---
-title: "Frontend SDK (React)"
-description: "@xorgate/react, the headless browser SDK for live video, live telemetry and replay."
+title: "Frontend SDK (React & React Native)"
+description: "@xorgate/react and @xorgate/react-native: the headless frontend SDK for live video, live telemetry and replay, in a browser or on a phone."
 ---
 
 `@xorgate/react` is the browser half of the xorgate SDK. It wraps
@@ -8,8 +8,15 @@ description: "@xorgate/react, the headless browser SDK for live video, live tele
 that never go through the REST API at all: live telemetry over MQTT and live
 video over WebRTC, plus the recorded-media replay player.
 
-It is headless. There is no styling, no design system, no layout. Hooks return
-state and refs; you render.
+[`@xorgate/react-native`](/frontend-sdk/react-native) is the same SDK on a
+phone. It carries this package as a dependency and re-exports everything
+neutral, so an app imports from one package either way; what it supplies is the
+host runtime and the two surfaces that cannot be neutral because they are
+pixels — live video into `react-native-webrtc`'s `RTCView` and replay over
+`expo-video`, both real native video views with hardware decode behind them.
+
+Both are headless. There is no styling, no design system, no layout. Hooks
+return state and refs; you render.
 
 ## What it is
 
@@ -40,6 +47,10 @@ function Fleet() {
 - **Three planes, one vocabulary.** REST, live and replay all speak the types
   from `@xorgate/sdk`, re-exported here so there is exactly one `Device` and one
   `LatestReading` on the platform.
+- **Two platforms, one implementation.** Everything with logic in it — the
+  hardened KVS session, the telemetry feed, the replay clock, the lanes, the
+  timeline and telemetry math — is shared code. The host runtime is one optional
+  `platform` prop on the provider, defaulting to the browser in every slot.
 - **One metric contract.** Live MQTT, `telemetry/latest` and replayed telemetry
   all produce `Record<"group.field", LatestReading>`, so one readout component
   renders all three without knowing which it is looking at.
@@ -56,7 +67,7 @@ function Fleet() {
   <Card
     title="Installation"
     href="/frontend-sdk/installation"
-    description="Peer dependencies, bundle weight, and what is browser-only."
+    description="Peer dependencies, bundle weight, and what runs where."
   />
   <Card
     title="Provider and auth"
@@ -91,12 +102,32 @@ function Fleet() {
   <Card
     title="What this SDK does not cover"
     href="/frontend-sdk/not-covered"
-    description="React Native, server rendering, and the org-blind live plane."
+    description="Server rendering, the missing HLS, and the org-blind live plane."
   />
   <Card
     title="Walkthrough: live asset map"
     href="/frontend-sdk/asset-map-walkthrough"
     description="A fleet map and an incident replay, with no styling framework."
+  />
+</Cards>
+
+## On React Native
+
+<Cards>
+  <Card
+    title="React Native"
+    href="/frontend-sdk/react-native"
+    description="Install, the config plugin, the four Metro rules, the polyfill, and XorgateNativeProvider."
+  />
+  <Card
+    title="Live video on React Native"
+    href="/frontend-sdk/react-native-live-video"
+    description="LiveVideo over RTCView, the stats sampler, and the reconnect hold."
+  />
+  <Card
+    title="Replay on React Native"
+    href="/frontend-sdk/react-native-replay"
+    description="Two players per lane, the seam, and what a seek really costs."
   />
 </Cards>
 
@@ -109,9 +140,9 @@ A library cannot work that way: one build has to serve a consumer's dev and
 production, and a test has to be able to point a hook at a fake. Every extracted
 piece takes its configuration from the provider.
 
-**Headless means headless.** Two components ship, `LiveVideo` and `ReplayVideo`,
-and each is a hook plus a bare `<video>` element. No card, no spinner, no error
-text, no aspect ratio. They exist so the common case is one line, not so they
+**Headless means headless.** Two components ship in each package, `LiveVideo`
+and `ReplayVideo`, and each is a hook plus a bare video view. No card, no
+spinner, no error text, no aspect ratio. They exist so the common case is one line, not so they
 can be your player. Everything with an opinion in it, including the copy for
 "live view is paused because the device is too hot", stays in the app.
 

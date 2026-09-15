@@ -1,6 +1,6 @@
 ---
 title: "Installation"
-description: "Peer dependencies, what each one costs, and why this package is browser-only."
+description: "Peer dependencies, what each one costs, and what runs where: the browser here, React Native in its own package."
 ---
 
 ## Install
@@ -79,18 +79,35 @@ One entry point. There is no `@xorgate/react/live` or `@xorgate/react/replay`
 subpath, because the dynamic imports already give you the code-splitting that
 subpaths would be for, without asking you to know which hook lives where.
 
-## Browser only
+## Where this package runs
 
-This package uses `WebSocket`, `RTCPeerConnection`, `MediaSource`,
-`HTMLVideoElement`, `document.visibilityState` and `crypto.randomUUID`. There is
-no server-side fallback for any of it.
+`@xorgate/react` is the **browser** package. Its default runtime reaches for
+`WebSocket`, `RTCPeerConnection`, `MediaSource`, `HTMLVideoElement`,
+`document.visibilityState` and `crypto.randomUUID`, and there is no server-side
+fallback for any of it.
 
 Under a server-rendering framework, mount the provider in a client component and
 keep the live and replay hooks below it. The provider itself renders on the
 server without error, and every data hook returns
 `{ data: undefined, isLoading: true }` there, so a shell renders and hydration
 fills it in. See [what this SDK does not cover](/frontend-sdk/not-covered)
-for the details, including React Native, which is not supported.
+for the details.
+
+<Callout type="info" title="React Native has its own package">
+
+Install [`@xorgate/react-native`](/frontend-sdk/react-native), not this one. It
+carries `@xorgate/react` as a dependency and re-exports everything neutral, so
+your app still imports from a single package — what it adds is the host runtime
+(`XorgateNativeProvider`) and the two things that cannot be neutral because they
+are pixels: live video into `react-native-webrtc`'s `RTCView` and replay over
+`expo-video`.
+
+Everything platform-neutral is genuinely shared rather than reimplemented: the
+same KVS session, the same telemetry feed, the same clock, lanes and timeline
+math, reached through one optional `platform` prop on the provider that defaults
+to the browser in every slot.
+
+</Callout>
 
 ## TypeScript
 

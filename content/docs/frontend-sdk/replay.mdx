@@ -5,8 +5,10 @@ description: "The replay manifest, the wall-clock replay clock, lanes, the headl
 
 Replay plays a device's recorded 60-second MP4 segments back as one continuous
 timeline, with telemetry resolved at the playhead. It is fragmented MP4 through
-Media Source Extensions, not HLS, so it is browser-only and there is no URL you
-can hand to another player.
+Media Source Extensions, not HLS, so there is no URL you can hand to another
+player. This page is the browser player; everything on it except the MSE engine
+and `laneVideoRef` is shared with
+[the React Native player](/frontend-sdk/react-native-replay).
 
 ```tsx
 import { useReplayManifest, useReplayPlayer, ReplayVideo } from "@xorgate/react"

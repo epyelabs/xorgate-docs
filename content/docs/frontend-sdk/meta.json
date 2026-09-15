@@ -1,5 +1,5 @@
 {
-  "title": "Frontend SDK (React)",
+  "title": "Frontend SDK (React & React Native)",
   "pages": [
     "index",
     "installation",
@@ -10,6 +10,10 @@
     "replay",
     "types",
     "not-covered",
-    "asset-map-walkthrough"
+    "asset-map-walkthrough",
+    "---React Native---",
+    "react-native",
+    "react-native-live-video",
+    "react-native-replay"
   ]
 }
