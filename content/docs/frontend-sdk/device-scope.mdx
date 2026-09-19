@@ -1,0 +1,191 @@
+---
+title: "Scope and transfers"
+description: "Why a live viewer goes silent when its device is transferred, why the first-party console cannot show you this, and the two hooks that turn the silence into a typed error."
+---
+
+A vended live credential encodes an organization and a workspace in its session
+policy, and this SDK caches it until close to expiry — up to about **50
+minutes**. If the device is [transferred](/platform-concepts/device-ownership)
+inside that window, nothing fails loudly.
+
+Read this page before you ship anything on the live plane. It is short, and the
+failure it describes is the worst one this platform has.
+
+## What actually happens
+
+**Telemetry goes silent.** In a vended-credential mode the subscription targets
+`xorgate/orgs/{org}/ws/{workspace}/devices/{id}/telemetry` with the old ids
+spelled out literally, because that is the only topic the session policy allows.
+The device now publishes under different ones. The socket stays `connected`, no
+error is raised, and no frame ever arrives — which is indistinguishable from a
+device that is simply idle.
+
+**Video keeps working, and then stops.** KVS authorizes on a resource tag with
+no MQTT session involved, so an established viewer session flows until it is
+cycled; the next connect gets `AccessDenied`.
+
+The result is a blank pane with a green connection indicator, and no way for the
+user to tell whether the device is broken, parked, or gone.
+
+<Callout type="warn" title="The first-party console cannot show you this bug">
+  `console.xorgate.io` subscribes to **both** telemetry planes with wildcards, so
+  it renders a transferred device perfectly while a workspace-scoped consumer of
+  the same device sees nothing at all.
+
+"It works in the console" is therefore not evidence that a transfer landed, and
+it is not evidence that your integration will survive one. Only a
+workspace-scoped vended credential exercises this path.
+
+</Callout>
+
+## `useDeviceScope(deviceId)`
+
+Turns that silence into a typed error.
+
+```tsx
+import { useDeviceScope, useLiveTelemetry } from "@xorgate/react"
+
+function Panel({ deviceId }: { deviceId: string }) {
+  const scope = useDeviceScope(deviceId)
+  const live = useLiveTelemetry(scope.outOfScope ? null : deviceId)
+
+  if (scope.error) return <Banner>{scope.error.message}</Banner>
+  return <Readout latest={live.latest} />
+}
+```
+
+It reads the device over REST and compares its `workspaceId` against the
+workspace the live credential was actually vended for.
+
+<TypeTable
+  type={{
+    status: {
+      type: '"checking" | "in-scope" | "out-of-scope" | "unknown"',
+      description: "Four states. `unknown` is a real answer, not a failure.",
+    },
+    outOfScope: {
+      type: "boolean",
+      description:
+        'True exactly when status is "out-of-scope". The one-liner for gating a live hook.',
+    },
+    error: {
+      type: "XorgateError | null",
+      description:
+        'Code "DEVICE_OUT_OF_SCOPE". Set only in the out-of-scope state.',
+    },
+    device: {
+      type: "Device | undefined",
+      description: "The device as REST sees it, once read.",
+    },
+    deviceError: {
+      type: "XorgateError | null",
+      description:
+        "Whatever the device read failed with. Distinct from `error`.",
+    },
+    recheck: {
+      type: "() => Promise<void>",
+      description: "Re-read the device and re-compare.",
+    },
+  }}
+/>
+
+Options are the usual `QueryOptions`. One read on mount is the default, which
+catches the case that matters — a viewer opened on a device that has already
+moved. Pass `refetchIntervalMs` to keep checking. **Nothing here polls on its
+own.**
+
+### It is deliberately not wired into `useLiveTelemetry`
+
+Composition is the documented pattern, and it is the line above. Wiring the
+guard in automatically would add an unrequested REST read, and a poll, to every
+live consumer — and a `{ getLiveCredentials }`-only integration has no REST
+plane to read from, so it would be a no-op in exactly the place the problem was
+first seen.
+
+### `"unknown"` is not a problem signal
+
+Say nothing rather than raise a false alarm. The hook reports `unknown` when
+there is genuinely nothing to compare:
+
+- A **first-party Cognito session**. Not workspace-scoped at all, and the console
+  wildcards both planes, so the condition does not exist there.
+- An **organization-scoped credential**, which may reach any workspace in its
+  organization — and this SDK does not know which those are.
+- An auth mode with **no REST plane**.
+- A device read that failed for some other reason, or a credential that could not
+  be minted. A credential failure is not a scope verdict; the live hooks report
+  it in their own `error`.
+
+Only an explicit `false` from the vended scope is treated as evidence.
+
+### One silent re-vend before it complains
+
+The ordinary cause of a mismatch is simply a credential cached across the
+transfer, and a fresh one resolves it with nobody the wiser. So the hook
+re-vends **once** per `(device, workspace)` pair before failing. If the mismatch
+survives the re-vend, it is real.
+
+### Two ways to become out of scope
+
+Both produce `DEVICE_OUT_OF_SCOPE`. Only `error.details` differs.
+
+| Credential                                    | Branch                             | `details`                   |
+| --------------------------------------------- | ---------------------------------- | --------------------------- |
+| A workspace-scoped **session token**          | The REST read itself answers `404` | `{ deviceId }`              |
+| Org-scoped REST + a workspace-scoped **vend** | The workspace comparison fails     | `{ deviceId, workspaceId }` |
+
+A workspace-scoped session token is a **boundary**, not a filter: the moment the
+device leaves that workspace the read 404s and there is nothing left to compare.
+
+<Callout title="A 404 here means not-yours, not deleted">
+  The API answers `404` rather than `403` for another tenant's resource on
+  purpose — confirming it exists would itself be a leak. So do not render this
+  as "device deleted", and do not render it as "you don't have permission"
+  either. Neither is something you know.
+</Callout>
+
+## `useLiveScope()`
+
+The tenancy the live plane is **currently operating in**, plus the way to reset
+it.
+
+```ts
+const { organizationId, workspaceId, invalidate } = useLiveScope()
+```
+
+This is deliberately not `useXorgateTenancy()`. That one reports the provider's
+props, which is what REST requests are sent with. This one reports what the live
+credential was actually **vended** for, which is what the MQTT topic filter and
+the KVS tag condition are checked against — and the two drift apart for exactly
+as long as a cached credential lives.
+
+### Call `invalidate()` after your app transfers a device
+
+```ts
+await xg.devices.transfer(deviceId, { workspaceId })
+invalidate()
+```
+
+Dropping a cached credential is not enough on its own, because it does not
+reconnect an already-open socket. `invalidate()` does both: it drops the
+credential **and** the learned vend scope, then notifies the open telemetry feed
+and KVS session, which tear down and re-open under the new tenancy. They do this
+from any state including `connected`, because connected-but-wrong is precisely
+the case that matters.
+
+It is cheap and idempotent — one credential mint on the next resolve.
+
+<Callout title="If a device can be transferred out from under your viewer, use both">
+  `invalidate()` covers transfers **your own app** performs. `useDeviceScope()`
+  covers transfers performed by anyone else — another operator, the console, or
+  the organization that is taking the device from you. A third-party integration
+  needs the second one.
+</Callout>
+
+## See also
+
+- [Device ownership and transfer](/platform-concepts/device-ownership) — what a
+  transfer does and does not change.
+- [Hand a device to another organization](/getting-started/hand-over-a-device) —
+  the flow that takes a device out from under someone else's viewer.
+- [Errors](/backend-sdk/errors) — the error type and the full code table.

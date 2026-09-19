@@ -63,6 +63,11 @@
       "description": "Device records, their configuration document, their IoT identity, and the one-shot commands you can send them."
     },
     {
+      "name": "Transfer Offers",
+      "x-displayName": "Transfer Offers",
+      "description": "Handing a device to an organization you have no membership in. The source mints a code, the destination redeems it. A move between workspaces of the SAME organization needs none of this — see POST /devices/{id}/transfer."
+    },
+    {
       "name": "Device Registrations",
       "x-displayName": "Device Registrations",
       "description": "Onboarding a physical device with a short-lived code and the install script."
@@ -2893,6 +2898,429 @@
             "description": "Templates in this organization carrying the tag."
           }
         }
+      },
+      "TransferTenancy": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "organizationId"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "TransferAdoption": {
+        "type": "string",
+        "enum": [
+          "confirmed",
+          "pending",
+          "unknown"
+        ],
+        "description": "Whether the DEVICE has confirmed it is now publishing under the new tenancy. `pending` is the normal answer immediately after a transfer and is not an error: the ownership change is already complete and authoritative in the cloud, and the device adopts it from the retained config on its next connect. `unknown` means the device has never reported a telemetry scope at all — every agent older than v0.0.6 is in this state — and must NOT be read as \"not scoped\". Read it back from `GET /devices/{id}`; a scope change deliberately does not move the config revision, so the revision is not evidence either way."
+      },
+      "TransferSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "deviceId",
+          "from",
+          "to",
+          "crossOrg",
+          "detachedWorkflowAttachments",
+          "kvsChannelsRetagged",
+          "scopeAttributes",
+          "adoption",
+          "warnings"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The transfer record, for audit and support."
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/TransferTenancy"
+          },
+          "to": {
+            "$ref": "#/components/schemas/TransferTenancy"
+          },
+          "crossOrg": {
+            "type": "boolean",
+            "description": "True when the destination workspace belongs to a different organization."
+          },
+          "detachedWorkflowAttachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Template names whose attachments were removed by the cross-organization sweep. Always empty for a same-organization move."
+          },
+          "kvsChannelsRetagged": {
+            "type": "integer",
+            "description": "Video signaling channels re-tagged to the new tenancy."
+          },
+          "scopeAttributes": {
+            "type": "string",
+            "enum": [
+              "unchanged",
+              "written",
+              "failed"
+            ],
+            "description": "What happened to the IoT thing attributes that authorize the device's telemetry topic. `failed` is a DEGRADED SUCCESS: the device moved and was told its new topic, but the broker was not told to allow it, so it publishes on the legacy (still-ingested) telemetry plane until any setting save re-asserts the attributes. Workspace-scoped credentials cannot see its telemetry meanwhile."
+          },
+          "adoption": {
+            "$ref": "#/components/schemas/TransferAdoption"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Human-readable notes about what this transfer did and did not do — an offline device, detached workflows, history travelling with the device, session tokens that lose sight of it. Surface these; none of them is an error."
+          }
+        }
+      },
+      "TransferBlocker": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "SAME_WORKSPACE",
+              "SERIAL_COLLISION",
+              "TRANSFER_IN_PROGRESS"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "TransferPreview": {
+        "type": "object",
+        "required": [
+          "deviceId",
+          "from",
+          "to",
+          "crossOrg",
+          "workflowAttachments",
+          "runningWorkflowRuns",
+          "openMediaSessions",
+          "staleSessionTokens",
+          "kvsChannels",
+          "carriesHistory",
+          "blockers",
+          "warnings"
+        ],
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deviceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serial": {
+            "type": "string",
+            "nullable": true
+          },
+          "from": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TransferTenancy"
+              }
+            ],
+            "description": "With `workspaceName` and `organizationName` added, for display."
+          },
+          "to": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TransferTenancy"
+              }
+            ],
+            "description": "With `workspaceName` and `organizationName` added, for display."
+          },
+          "crossOrg": {
+            "type": "boolean"
+          },
+          "workflowAttachments": {
+            "type": "array",
+            "description": "Attachments the cross-organization sweep would DETACH, named so a confirmation dialog can show them before the operator agrees rather than after. Their templates belong to the source organization and the destination cannot see them.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "templateId",
+                "templateName"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "templateId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "templateName": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "runningWorkflowRuns": {
+            "type": "integer",
+            "description": "Runs executing right now. They are left to finish; their history is stamped with the organization that started them."
+          },
+          "openMediaSessions": {
+            "type": "integer",
+            "description": "Recording sessions still accepting uploads. They keep uploading — segments are keyed by device, not by tenant."
+          },
+          "staleSessionTokens": {
+            "type": "integer",
+            "description": "Live workspace-scoped session tokens naming the SOURCE workspace. They stop seeing the device and are NOT revoked."
+          },
+          "kvsChannels": {
+            "type": "integer"
+          },
+          "carriesHistory": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Always true, and stated rather than implied. Every historical telemetry reading and every recorded segment is stored against the device and MOVES WITH IT. Nothing is purged. For a cross-organization transfer that is a data-disclosure event and the confirmation must say so."
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferBlocker"
+            },
+            "description": "Non-empty means the transfer would be refused. Returned rather than thrown so the dialog can explain the refusal; `POST .../transfer` turns the first of them into its 400 or 409."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TransferOffer": {
+        "type": "object",
+        "description": "An offer as its SENDER (or, once accepted, its recipient) sees it.",
+        "required": [
+          "id",
+          "code",
+          "status",
+          "direction",
+          "deviceId",
+          "from",
+          "expiresAt",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "description": "The redemption code. A secret — anyone holding it can accept or decline."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "declined",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "outgoing",
+              "incoming"
+            ],
+            "description": "`outgoing` when your organization created the offer, `incoming` when it accepted one."
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deviceName": {
+            "type": "string",
+            "nullable": true
+          },
+          "from": {
+            "type": "object",
+            "required": [
+              "organizationId",
+              "workspaceId"
+            ],
+            "properties": {
+              "organizationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "workspaceId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Where the device sat when the offer was created."
+              }
+            }
+          },
+          "acceptedBy": {
+            "type": "object",
+            "nullable": true,
+            "description": "Null until accepted.",
+            "properties": {
+              "organizationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "workspaceId": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              }
+            }
+          },
+          "transferId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "The transfer the acceptance produced."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TransferOfferPreview": {
+        "type": "object",
+        "description": "An offer as its RECIPIENT sees it, holding nothing but the code. The fields here are the whole allowlist: enough to decide whether to accept, and no more. The device id, serial, workspace, configuration and telemetry are all deliberately absent — whoever holds the code is not yet entitled to the device.",
+        "required": [
+          "code",
+          "status",
+          "expiresAt",
+          "createdAt",
+          "from"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "declined",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+              "name",
+              "model"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "model": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name",
+                  "sku"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "sku": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "from": {
+            "type": "object",
+            "required": [
+              "organizationName"
+            ],
+            "properties": {
+              "organizationName": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "TransferOfferCreated": {
+        "type": "object",
+        "required": [
+          "offer",
+          "willDetachWorkflowAttachments"
+        ],
+        "properties": {
+          "offer": {
+            "$ref": "#/components/schemas/TransferOffer"
+          },
+          "willDetachWorkflowAttachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflow template names this device is attached to. If a DIFFERENT organization accepts the offer they are all detached, because the templates belong to yours. Shown at creation because the sender is not present at acceptance."
+          }
+        }
       }
     },
     "responses": {
@@ -5598,6 +6026,205 @@
         }
       }
     },
+    "/v1/devices/{id}/transfer": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "transferDevice",
+        "summary": "Move a device to another workspace",
+        "description": "Changes which workspace — and therefore which organization — owns a device.\n\n**What moves.** Everything. The device record, its IoT identity and certificates, its video channels, ALL of its historical telemetry, and ALL of its recorded footage. Telemetry and media are stored against the device, not against a tenant, so they travel with it and nothing is purged. For a transfer between organizations that is a data-disclosure event; call the preview first and show the operator what it says.\n\n**What does not move.** Workflow attachments pointing at the source organization's templates are DETACHED (the destination cannot see those templates), and the names are returned in `transfer.detachedWorkflowAttachments`. Workflow runs already executing are left to finish. Session tokens scoped to the source workspace stop seeing the device and are not revoked. Completed run history, dataset items and the registration record stay where they are — they are history of the device under its former owner.\n\n**The device does not have to be online.** Nothing on the device changes: certificates and identity are untouched and the tenancy is never stored on the box. An offline device has its new tenancy staged in the cloud and adopts it the moment it next connects — no reboot, no re-provisioning, no site visit. That is a normal success, reported through `transfer.warnings`, not an error.\n\n**Completion is two-step, and the response says which step it is at.** The ownership change is complete and authoritative the moment this returns 200. Whether the DEVICE has caught up is a separate question, answered by `transfer.adoption`: `pending` is the normal immediate answer, `confirmed` appears once the device reports publishing under the new tenancy, and `unknown` means it has never reported a telemetry scope (every agent older than v0.0.6). Poll `GET /devices/{id}` to watch it settle.\n\n**Cross-organization.** Pass `organizationId` to move the device into another organization you personally administer (`owner` or `admin` in BOTH). Without that shared membership — a genuine handover to a customer — use a transfer offer instead: `POST /devices/{id}/transfer-offers`. API keys cannot use the shared-membership path at all, because a key is bound to one organization by its own record.\n\n**Operational precondition.** A device whose agent predates `v0.0.6` has no fallback to the unscoped telemetry topic, so a transfer that it cannot immediately act on can leave it unable to publish until its agent process is restarted. Update the fleet before transferring fielded devices.",
+        "tags": [
+          "Devices"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "workspaceId"
+                ],
+                "properties": {
+                  "workspaceId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The DESTINATION workspace."
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The DESTINATION organization. Only needed when it differs from the active one, and only usable by a user holding `owner` or `admin` in it."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transferred. Includes the case where the device is offline and will converge on its next connect — read `transfer.warnings` and `transfer.adoption`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "device",
+                    "transfer"
+                  ],
+                  "properties": {
+                    "device": {
+                      "$ref": "#/components/schemas/Device"
+                    },
+                    "transfer": {
+                      "$ref": "#/components/schemas/TransferSummary"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, an unknown field, or a destination equal to the device's current workspace (`SAME_WORKSPACE`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "The caller is a `member` or `viewer`, holds a workspace-scoped session token (a transfer spans two workspaces, so such a credential can never be authorized for both), or is an API key attempting the shared-membership cross-organization path.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The device was not found, or the destination workspace is not one the caller can reach. Deliberately indistinguishable: confirming that another tenant's workspace exists would itself be a leak.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "A device with the same serial already exists in the destination workspace (`SERIAL_COLLISION` — serials are unique per workspace), or another transfer of this device is already running (`TRANSFER_IN_PROGRESS`), or the device moved while the request was being prepared (`CONCURRENT_MODIFICATION`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The device could not be told about its new workspace, so the transfer was ROLLED BACK and nothing changed (`TRANSFER_FAILED`). Safe to retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/transfer/preview": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "previewDeviceTransfer",
+        "summary": "What a transfer would do, without doing it",
+        "description": "A dry run of `POST /devices/{id}/transfer`. Writes nothing.\n\nIt exists so a confirmation can NAME the consequences before the operator agrees rather than report them afterwards — in particular the workflow attachments a cross-organization move will detach, which cannot be reconsidered once the transfer has run.\n\nRefusals come back in `blockers` rather than as an error status, so the reason can be shown in place. `POST` turns the first blocker into its own 400 or 409.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The DESTINATION workspace."
+          },
+          {
+            "name": "organizationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The DESTINATION organization, for the shared-membership cross-organization path. Same authorization as on `POST`."
+          }
+        ],
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "What the transfer would do.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "preview"
+                  ],
+                  "properties": {
+                    "preview": {
+                      "$ref": "#/components/schemas/TransferPreview"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
     "/v1/devices/{id}/reboot": {
       "parameters": [
         {
@@ -6029,6 +6656,463 @@
           },
           "500": {
             "description": "Server misconfiguration. Body is a failing shell script."
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/transfer-offers": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createTransferOffer",
+        "summary": "Offer a device to another organization",
+        "description": "Mints a code that another organization can redeem to take ownership of this device.\n\nUse this when you do NOT share a membership with the destination — a genuine handover to a customer. If you personally hold `owner` or `admin` in both organizations, `POST /devices/{id}/transfer` with an `organizationId` does the same move in one call.\n\n**The code is a bearer token.** Anyone holding it can read the offer's preview and accept or decline it. Send it over a channel you trust. It expires after 7 days.\n\n**Idempotent.** A device has at most one open offer. Calling this again while one is pending returns the existing offer with **200** instead of minting a second claimable code; a genuinely new offer returns **201**.\n\n`willDetachWorkflowAttachments` names the workflow templates this device is attached to. If the offer is accepted by a different organization they are all detached, because they belong to yours and the new owner cannot see them. It is returned HERE, at creation, because you are not present when the offer is accepted — this is the last point at which you can reconsider.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An offer was already open for this device; it is returned unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOfferCreated"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "A new offer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOfferCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      },
+      "get": {
+        "operationId": "listDeviceTransferOffers",
+        "summary": "Every transfer offer ever made for a device",
+        "description": "Open and resolved offers, newest first. A pending offer past its expiry is flipped to `expired` as it is read, so the status you see is always current.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "responses": {
+          "200": {
+            "description": "The device's offers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "offers"
+                  ],
+                  "properties": {
+                    "offers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TransferOffer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/transfer-offers": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listTransferOffers",
+        "summary": "Transfer offers this organization sent or accepted",
+        "description": "Offers your organization CREATED, plus offers it has already ACCEPTED, newest first. `direction` tells them apart.\n\n**There is no inbox of incoming pending offers, by design.** An offer names no destination — that is exactly what lets it be handed to an organization whose id the sender does not know — so a pending offer is discoverable only by its code. If someone has offered you a device, you will have been sent a code; read it with `GET /transfer-offers/{code}`.\n\nDeclines are visible here: an offer the destination refused reads `declined` with `resolvedAt` set, rather than quietly expiring.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "accepted",
+                "declined",
+                "cancelled",
+                "expired"
+              ]
+            },
+            "description": "Filter by status. Anything else is a 400."
+          }
+        ],
+        "tags": [
+          "Transfer Offers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Up to 200 offers, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "offers"
+                  ],
+                  "properties": {
+                    "offers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TransferOffer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/transfer-offers/{code}": {
+      "parameters": [
+        {
+          "name": "code",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The offer code. Treat it as a secret: it is what authorizes the destination to read the offer and act on it."
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getTransferOffer",
+        "summary": "Read an offer you were sent a code for",
+        "description": "What the code buys, and nothing else: the device's name and model, the offering organization's name, and the offer's own status and expiry.\n\n**Deliberately absent**: the device id, its serial, its workspace, its configuration and its telemetry. Whoever holds the code is not yet entitled to the device, so the code must not double as a read primitive against someone else's fleet.\n\nAny role may read this. Accepting or declining needs `owner` or `admin`.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer preview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "offer"
+                  ],
+                  "properties": {
+                    "offer": {
+                      "$ref": "#/components/schemas/TransferOfferPreview"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelTransferOffer",
+        "summary": "Withdraw an offer you created",
+        "description": "Only the organization that created the offer can cancel it, and only while it is still pending. An offer belonging to another organization reads as **404**, not 403.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancelled. The code no longer works."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The offer has already been accepted, declined, cancelled or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/transfer-offers/{code}/accept": {
+      "parameters": [
+        {
+          "name": "code",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The offer code. Treat it as a secret: it is what authorizes the destination to read the offer and act on it."
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "acceptTransferOffer",
+        "summary": "Take ownership of an offered device",
+        "description": "Moves the device into one of YOUR workspaces and runs the full transfer, including the cross-organization sweep. Requires `owner` or `admin` in the accepting organization.\n\nEverything in `POST /devices/{id}/transfer` applies from here on: all historical telemetry and all recorded footage come with the device, the device does not have to be online, and `transfer.adoption` says whether it has confirmed the change yet.\n\nAccepting is race-safe: the offer is claimed with a conditional write before the transfer runs, so only one of two simultaneous accepts wins. If the transfer itself fails the offer is put back to `pending` and the code can be retried.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "workspaceId"
+                ],
+                "properties": {
+                  "workspaceId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The workspace in YOUR organization the device should land in."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted and transferred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "device",
+                    "transfer",
+                    "offer"
+                  ],
+                  "properties": {
+                    "device": {
+                      "$ref": "#/components/schemas/Device"
+                    },
+                    "transfer": {
+                      "$ref": "#/components/schemas/TransferSummary"
+                    },
+                    "offer": {
+                      "$ref": "#/components/schemas/TransferOffer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, or the offer was created by your own organization (use `POST /devices/{id}/transfer` instead).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such offer, or the named workspace is not one of yours. Deliberately indistinguishable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The offer is already resolved or expired, the device is mid-transfer, a device with the same serial already exists in the destination workspace, or the offering organization no longer owns the device (the offer is stale).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The device could not be told about its new workspace. The transfer was rolled back and the offer is still open.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/transfer-offers/{code}/decline": {
+      "parameters": [
+        {
+          "name": "code",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The offer code. Treat it as a secret: it is what authorizes the destination to read the offer and act on it."
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "declineTransferOffer",
+        "summary": "Refuse an offered device",
+        "description": "Marks the offer `declined` and closes it. The sender sees the decline in `GET /transfer-offers`, so a refusal is an answer rather than an offer that quietly expires. Requires `owner` or `admin`.",
+        "tags": [
+          "Transfer Offers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Declined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "offer"
+                  ],
+                  "properties": {
+                    "offer": {
+                      "$ref": "#/components/schemas/TransferOffer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The offer is already resolved or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }

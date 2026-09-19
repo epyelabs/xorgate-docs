@@ -1,0 +1,274 @@
+---
+title: "Device ownership and transfer"
+description: "What owns a device, what travels with it when it moves, what is deliberately detached, and why a transfer never touches the device itself."
+---
+
+A device belongs to exactly one **workspace**. Everything else about its tenancy
+is derived from that one column, which is why moving a device is a single
+operation rather than a migration.
+
+## What owns a device
+
+There is no `organizationId` on a device. A device points at a workspace, a
+workspace points at an organization, and every authorization decision walks that
+chain:
+
+```
+organization ──> workspace ──> device
+```
+
+The consequence is worth stating plainly, because the API's shape depends on it:
+
+<Callout title="Moving between workspaces and moving between organizations are the SAME operation">
+  Both are one write to the device's `workspaceId`. What differs is the blast
+  radius, not the mechanism. A transfer that happens to land in a workspace of
+  another organization is flagged `crossOrg: true` and runs an extra cleanup
+  pass; nothing else about it is special.
+</Callout>
+
+That is also why the destination is always named as a **workspace**.
+[`POST /devices/{id}/transfer`](/api-reference/devices/transfer-device) takes a
+`workspaceId`, and an `organizationId` only to prove you meant to cross an
+organization boundary.
+
+## What moves with the device
+
+Everything the platform stores about the device, because it is all keyed by
+device id rather than by tenant:
+
+|                           |                                                                        |
+| ------------------------- | ---------------------------------------------------------------------- |
+| **All telemetry history** | Every reading ever ingested, and the latest-value view.                |
+| **All recorded footage**  | Every media session, every segment, and the objects behind them.       |
+| **The device's identity** | Its AWS IoT thing, its X.509 certificate, its role alias.              |
+| **Its video channels**    | The KVS signalling channels, re-tagged to the new tenant.              |
+| **Its configuration**     | The config document and its revision.                                  |
+| **Its device model**      | The hardware catalog is platform-wide, so the model survives any move. |
+
+<Callout type="warn" title="For a cross-organization transfer this is a data-disclosure event">
+  History is **never purged** on transfer, and there is no option to purge it.
+  The new owner can read every reading the device ever published and play back
+  every second it ever recorded, including everything collected while you owned
+  it.
+
+This is deliberate: a device's history is the device's, and silently dropping
+it would make a handover lossy in a way nobody could audit. If footage must
+not travel, delete it before you transfer — that is a separate, destructive
+operation you perform knowingly.
+
+[`GET /devices/{id}/transfer/preview`](/api-reference/devices/preview-device-transfer)
+returns `carriesHistory: true` so a confirmation dialog can say this out loud
+before anyone agrees to it. It is always `true`; render it, do not branch on
+it.
+
+</Callout>
+
+## What stays behind
+
+Three things remain with the source organization, because they are records of
+the device _under its former owner_ rather than properties of the device:
+
+- **The registration record.** How this device came to exist, and in whose
+  workspace. Its `deviceId` is retained, but the record does not move.
+- **Completed workflow runs.** What the device did while the old owner owned it,
+  including the run history and its events.
+- **Dataset items** built from its footage. Datasets are organization-scoped;
+  the frames were collected and annotated under the old organization, and the
+  dataset stays there.
+
+## What is broken on purpose
+
+### Workflow attachments to the old organization's templates
+
+Workflow templates are organization-scoped; an attachment joining this device to
+one is not. Left alone, a transferred device would keep executing a template its
+new owner cannot see and its old owner no longer controls.
+
+So on a cross-organization transfer, **attachments are detached**, and the
+response names them:
+
+```json
+{
+  "transfer": {
+    "crossOrg": true,
+    "detachedWorkflowAttachments": ["Perimeter intrusion", "Idle engine alert"]
+  }
+}
+```
+
+They are named rather than counted so a confirmation can list exactly what will
+stop running. Templates are never copied into the destination — that would
+duplicate another organization's work without being asked.
+
+A same-org transfer detaches nothing: the templates are still visible from the
+new workspace, so `detachedWorkflowAttachments` is `[]`.
+
+### Credentials scoped to the old workspace
+
+An API key or session token scoped to the source workspace stops resolving the
+device the moment it moves. Nothing is revoked — the credential is still valid
+for everything else in its workspace — but this device is no longer in it.
+
+For a REST caller that shows up as a `404`, not a `403`. Confirming that another
+tenant's resource exists would itself be a leak, so "you cannot see this" and
+"this does not exist" are deliberately indistinguishable.
+
+For a **live** consumer it is worse, because nothing fails at all: the telemetry
+socket stays connected and simply goes quiet. If you build on the live plane,
+read
+[Scope and transfers](/frontend-sdk/device-scope) before you ship — that silence
+is the single worst failure mode this feature has.
+
+### In-flight work is left alone
+
+Running workflow runs are counted in the preview and left to finish. Open media
+sessions keep uploading, because segments are keyed by device and land under the
+new owner. Neither blocks a transfer.
+
+## A transfer does not touch the device
+
+**Nothing on the device changes, so a device does not have to be online to be
+transferred.**
+
+- Its certificate and identity are untouched. The thing name, certificate and
+  role alias all derive from the device id, and the IoT policy carries no
+  literal tenancy at all — it interpolates the thing's attributes at connect
+  time. A transfer re-tenants a device by editing the **cloud registry**, not
+  the box.
+- Its tenancy is never written to disk. The device learns which telemetry topic
+  to publish on from a retained MQTT message, and holds it in memory only.
+- The retained message waits. The broker replays it on the device's next
+  connect, so a device that was offline through a transfer converges the moment
+  it comes back.
+
+<Callout title="Offline is a normal success, not an error">
+  Transferring an offline device returns `200` with a warning in
+  `transfer.warnings`, never a `4xx`. No reboot, no site visit, no
+  re-provisioning, and nothing to retry.
+
+If anything, transferring while offline is the _safer_ case: there is no
+running agent holding a stale topic, so the device boots, reads the retained
+config and starts on the correct topic first time.
+
+</Callout>
+
+## There is no delivery receipt
+
+Ownership changes immediately. Whether the **device** has noticed is a separate
+question, and the API keeps them separate rather than pretending otherwise.
+
+The moment `POST /devices/{id}/transfer` returns `200`, the device belongs to
+the destination workspace: the API filters on it, the console shows it there,
+and permissions follow. `transfer.adoption` answers the other question.
+
+<TypeTable
+  type={{
+    confirmed: {
+      type: "adoption",
+      description:
+        "The device has reported that it is publishing under the new tenancy. The only positive proof.",
+    },
+    pending: {
+      type: "adoption",
+      description:
+        "It has not reported yet. The NORMAL immediate answer to a successful transfer, and the answer for every offline device. Not an error.",
+    },
+    unknown: {
+      type: "adoption",
+      description:
+        "The device has never reported a telemetry scope at all, so there is nothing to compare. An agent older than v0.0.6 never sends one.",
+    },
+  }}
+/>
+
+Three values, never two. `unknown` means _never told us_, which is not the same
+claim as _not yet scoped_, and collapsing it into `pending` would leave an old
+agent wearing a "catching up" badge forever.
+
+<Callout type="warn" title="`configRev` is NOT evidence that a transfer landed">
+  A scope change deliberately does **not** bump the device's config revision, so
+  `reportedConfig.rev` reads exactly the same before and after a transfer.
+  Forcing a revision bump to provoke a republish is actively harmful — it makes
+  the cloud re-kick the device on every reconnect.
+
+For the same reason, "the device is still publishing" proves nothing either.
+AWS IoT resolves a policy's thing-attribute variables at **connect** time, so
+an established session keeps its old resolution and can keep publishing
+happily for minutes after its tenancy changed. `adoption` is the only honest
+signal.
+
+</Callout>
+
+## Two degraded outcomes worth handling
+
+Both come back as `200`, so a `200` is not uniformly clean.
+
+**`scopeAttributes: "failed"`** means the device moved and was told its new
+topic, but the broker was not told to allow it. The device falls back to the
+legacy telemetry plane, which is still ingested, so history and the console keep
+working — but a workspace-scoped vended credential sees nothing until the
+attributes are repaired. Saving any setting on the device re-asserts them.
+
+**`adoption: "unknown"` on a fielded device** is your signal that its agent
+predates `v0.0.6` and has no fallback to the unscoped telemetry topic. Such a
+device can be left unable to publish until its agent process is restarted, which
+needs physical or shell access. The API does not refuse the transfer — it
+reports the condition. Update the fleet before transferring fielded hardware.
+
+## Handing a device to an organization you are not in
+
+A transfer needs authority in both the source and the destination, and a single
+request resolves to exactly one organization. So there are two paths:
+
+<Cards>
+  <Card
+    title="You administer both organizations"
+    href="/getting-started/transfer-a-device"
+    description="Pass organizationId and move it in one call. No handshake needed."
+  />
+  <Card
+    title="You do not share a membership"
+    href="/getting-started/hand-over-a-device"
+    description="Mint an offer code, send it, and the destination redeems it."
+  />
+</Cards>
+
+The offer is a genuine handshake: the source can withdraw it, the destination
+can decline it and the source sees the decline, and it expires after 7 days.
+
+<Callout title="There is no inbox of incoming offers, and there cannot be">
+  An offer names no destination — not needing to know the recipient's
+  organization id is the entire reason a code exists. So a pending offer is
+  discoverable **only by its code**.
+
+`GET /transfer-offers` lists what your organization SENT plus what it has
+ACCEPTED, tagged by `direction`. A pending offer made _to_ you does not appear
+in it and never will. Build a paste-a-code entry point, not a notification
+list.
+
+</Callout>
+
+## Where to go next
+
+<Cards>
+  <Card
+    title="Transfer a device to another workspace"
+    href="/getting-started/transfer-a-device"
+    description="The same-organization move, end to end, in three steps."
+  />
+  <Card
+    title="Hand a device to another organization"
+    href="/getting-started/hand-over-a-device"
+    description="The offer and accept handshake, from both sides."
+  />
+  <Card
+    title="Transfer offers reference"
+    href="/api-reference/transfer-offers"
+    description="Every offer route, and what the code does and does not buy."
+  />
+  <Card
+    title="Scope and transfers"
+    href="/frontend-sdk/device-scope"
+    description="Why a live viewer goes silent when its device moves, and the hook that catches it."
+  />
+</Cards>

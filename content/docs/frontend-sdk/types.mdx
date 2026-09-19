@@ -23,6 +23,7 @@ Re-exported: `Device`, `DeviceModel`, `VideoChannel`, `LatestByMetric`,
 `LatestReading`, `Me`, `MediaSession`, `MetricName`, `Organization`, `PageMeta`,
 `RecordingRun`, `ReplayGap`, `ReplayManifest`, `ReplaySegment`,
 `ReplaySession`, `StreamKey`, `TelemetryHistory`, `TelemetryReading`,
+`TransferSummary`, `TransferPreview`, `TransferOffer`, `TransferOfferPreview`,
 `Workspace`, `XorgateClient`, `XorgateError`, and the `isXorgateError` guard.
 Their reference is the
 [backend SDK types page](/backend-sdk/types).
@@ -139,6 +140,17 @@ discarded.
 
 `LiveVideoStatus`, `LiveVideoStats`, `UseLiveVideo`, `UseLiveVideoOptions`,
 `LiveVideoProps`.
+
+### Live scope
+
+`LiveScope`, `UseLiveScope`, `DeviceScopeStatus`, `UseDeviceScope`,
+`UseDeviceScopeOptions`.
+
+`DeviceScopeStatus` is
+`"checking" | "in-scope" | "out-of-scope" | "unknown"` — four states, because
+`"unknown"` is a real answer for a credential that is not workspace-scoped and
+therefore has nothing to compare, not a failure to decide. See
+[Scope and transfers](/frontend-sdk/device-scope).
 
 ### Replay
 

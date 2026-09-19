@@ -1,0 +1,242 @@
+---
+title: "Hand a device to another organization"
+description: "The offer and accept handshake end to end, from both sides: minting a code, what the recipient can see, where the code is entered, and declining or withdrawing."
+---
+
+Handing a device to an organization you are **not** a member of needs a
+handshake, because a single request resolves to exactly one organization and
+nobody can be authorized in both ends of the move at once.
+
+So the source mints a **code**, sends it out of band, and the destination
+redeems it.
+
+<Callout title="You may not need this">
+  If you personally hold `owner` or `admin` in **both** organizations, skip the
+  handshake entirely: pass `organizationId` to [`POST /devices/{id}
+  /transfer`](/getting-started/transfer-a-device) and the device moves in one
+  call. The offer flow exists for a genuine handover to someone else.
+</Callout>
+
+Both sides need `owner` or `admin`. An API key cannot use the shared-membership
+shortcut at all, because a key is bound to one organization by its own record.
+
+The two sides are different people with different credentials, so the examples
+below use two sets:
+
+```bash
+API="https://api-dev.xorgate.io/v1"
+
+# the source
+TOKEN="<source id token>";           ORG="<source organization id>"
+DEVICE="<the device to hand over>"
+
+# the recipient
+RECIPIENT_TOKEN="<their id token>";  RECIPIENT_ORG="<their organization id>"
+RECIPIENT_WS="<a workspace of theirs>"
+```
+
+## The source: mint a code
+
+```bash
+curl -sS -X POST "$API/devices/$DEVICE/transfer-offers" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG"
+```
+
+```json
+{
+  "offer": {
+    "id": "8f1c…",
+    "code": "K7QF4M2P",
+    "status": "pending",
+    "direction": "outgoing",
+    "deviceId": "5ced29fc-…",
+    "expiresAt": "2026-09-26T18:15:00.000Z",
+    "createdAt": "2026-09-19T18:15:00.000Z"
+  },
+  "willDetachWorkflowAttachments": ["Perimeter intrusion"]
+}
+```
+
+Two things in that response matter more than the code.
+
+**`willDetachWorkflowAttachments`** names the workflow templates this device is
+attached to. If a different organization accepts, every one of them is detached,
+because the templates belong to you and the new owner cannot see them. It is
+returned **here**, at creation, because you will not be present when the offer is
+accepted — this is the last point at which you can reconsider.
+
+**`expiresAt` is 7 days out.** A handover is slower than an install, so the code
+lives a week rather than fifteen minutes.
+
+<Callout type="warn" title="Treat the code as a bearer token">
+  Anyone holding it can read the offer and accept or decline it. Send it over a
+  channel you trust. If it goes astray, withdraw it — that is what `DELETE` is
+  for.
+</Callout>
+
+### Calling it twice is safe
+
+A device has at most one open offer, enforced by a database index. Calling
+`POST` again while one is pending returns **the existing offer with `200`**
+instead of minting a second claimable code; a genuinely new offer returns `201`.
+The bodies are identical, so the status is the only way to tell — the SDK
+surfaces it as `reused`. Reloading a dialog cannot leak a second code.
+
+## The recipient: read the code
+
+The recipient does not search for anything. There is nothing to search.
+
+<Callout title="There is no inbox of incoming offers, and there cannot be">
+  An offer names no destination — not needing to know the recipient's
+  organization id is the entire reason a code exists — so a pending offer is
+  discoverable **only by its code**.
+
+`GET /transfer-offers` returns what your organization SENT plus what it has
+already ACCEPTED, tagged by `direction`. While an offer to you is pending,
+your listing returns **nothing for it**. Do not build a notification list and
+do not leave an operator waiting for a row that will never arrive.
+
+</Callout>
+
+```bash
+curl -sS "$API/transfer-offers/K7QF4M2P" \
+  -H "Authorization: Bearer $RECIPIENT_TOKEN" \
+  -H "X-Organization-Id: $RECIPIENT_ORG"
+```
+
+```json
+{
+  "offer": {
+    "code": "K7QF4M2P",
+    "status": "pending",
+    "expiresAt": "2026-09-26T18:15:00.000Z",
+    "createdAt": "2026-09-19T18:15:00.000Z",
+    "device": {
+      "name": "Excavator 12",
+      "model": { "id": "…", "name": "Argus v1", "sku": "XG-ARG-1" }
+    },
+    "from": { "organizationName": "Alocate" }
+  }
+}
+```
+
+That is everything the code buys. **The device id, its serial, its workspace,
+its organization, its configuration and its telemetry are all deliberately
+absent** — the holder of a code is not yet entitled to the device, so a code
+must not double as a read primitive against someone else's fleet.
+
+This is a **different, smaller type** from the offer the sender reads. Do not
+write code that assumes the two are interchangeable.
+
+Any role can read an offer. Accepting or declining needs `owner` or `admin`.
+
+## The recipient: accept or decline
+
+Accepting names a workspace of your own:
+
+```bash
+curl -sS -X POST "$API/transfer-offers/K7QF4M2P/accept" \
+  -H "Authorization: Bearer $RECIPIENT_TOKEN" \
+  -H "X-Organization-Id: $RECIPIENT_ORG" \
+  -H "Content-Type: application/json" \
+  -d "{\"workspaceId\": \"$RECIPIENT_WS\"}"
+```
+
+This runs the **full transfer**, so everything in
+[Transfer a device to another workspace](/getting-started/transfer-a-device)
+applies from here: `transfer.adoption` is `pending` at first, the device does not
+have to be online, and all of its history and footage arrive with it.
+
+Declining is a real answer rather than an offer left to rot:
+
+```bash
+curl -sS -X POST "$API/transfer-offers/K7QF4M2P/decline" \
+  -H "Authorization: Bearer $RECIPIENT_TOKEN" \
+  -H "X-Organization-Id: $RECIPIENT_ORG"
+```
+
+The source sees `declined` with a `resolvedAt` in its own listing.
+
+## The source: watch, or withdraw
+
+```bash
+curl -sS "$API/transfer-offers?status=pending" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Organization-Id: $ORG"
+
+curl -sS -X DELETE "$API/transfer-offers/K7QF4M2P" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Organization-Id: $ORG"
+```
+
+`DELETE` answers `204` and the code stops working. Every offer route is keyed by
+**`{code}`**, cancel included — there is no cancel-by-id.
+
+Once an offer is resolved, a new one for the same device is allowed again.
+
+## What each side ends up seeing
+
+|                | Source                                                                 | Destination                                          |
+| -------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| While pending  | the offer, `direction: "outgoing"`                                     | nothing until the code is pasted                     |
+| After accept   | the offer as `accepted`, with `transferId`; the device now reads `404` | the device, and the offer as `direction: "incoming"` |
+| After decline  | `declined` with `resolvedAt`                                           | `declined`                                           |
+| After withdraw | `cancelled`; the code is dead                                          | the code reads `404`                                 |
+
+The source's `404` on the device afterwards is correct and expected. It is not a
+permissions message — say "this device is no longer in your organization", not
+"you don't have permission", because the API cannot tell you which.
+
+## Errors worth handling
+
+| Status | When                                                                                                                                                                                          |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | Malformed body, or accepting an offer your **own** organization created. Use `POST /devices/{id}/transfer` instead.                                                                           |
+| `403`  | A `member` or `viewer`, or a workspace-scoped session token.                                                                                                                                  |
+| `404`  | No such code, an offer belonging to another organization, or a `workspaceId` that is not one of yours. Deliberately indistinguishable.                                                        |
+| `409`  | The offer is already resolved or expired, the device is mid-transfer, a serial collides in the destination workspace, or the offering organization no longer owns the device (a stale offer). |
+| `502`  | The transfer was rolled back. The offer is put back to `pending` and the code can be retried.                                                                                                 |
+
+Expiry is lazy: a pending offer past `expiresAt` is flipped to `expired` as it is
+read, so the status you get back is always current.
+
+Accepting is race-safe. The offer is claimed with a conditional write before the
+transfer runs, so only one of two simultaneous accepts wins and the loser gets a
+`409`.
+
+## From the console
+
+**Source.** Device → Settings → General → **Ownership** → **Transfer
+ownership** → the _Another organization_ tab. If you administer the destination
+organization it appears there as a fast path (pick the organization, pick a
+workspace, confirm). Otherwise use the offer section below it, which mints the
+code with copy-to-clipboard and shows the 7-day expiry. An outstanding code is
+also shown on the Ownership card itself, with **Cancel offer**.
+
+**Destination.** Organization Settings → **Transfers**. That is where the code
+is entered: paste it into the box, read the allowlisted preview (device name,
+model, model SKU, source organization, expiry — no serial, no ids), pick the
+destination workspace, and **Accept** or **Decline**. Below the box is a history
+table of the offers this organization sent or accepted, with **Withdraw** on a
+pending outgoing one. The code column is blank for resolved offers, because a
+dead code is not worth showing.
+
+## With the SDK
+
+```ts
+// Source
+const { offer, willDetachWorkflowAttachments, reused } =
+  await xg.transferOffers.create(deviceId)
+console.log(reused ? "existing code" : "new code", offer.code, offer.expiresAt)
+
+// Destination
+const offered = await xg.transferOffers.get(code)   // the SMALLER preview type
+if (offered.status !== "pending") return
+const { device, transfer } = await xg.transferOffers.accept(code, { workspaceId })
+
+// Either side
+await xg.transferOffers.decline(code)
+await xg.transferOffers.cancel(code)                // by CODE, never by id
+```
+
+Full method documentation is on
+[Transfer offers](/backend-sdk/resources/transfer-offers).

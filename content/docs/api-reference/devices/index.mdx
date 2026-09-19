@@ -5,7 +5,7 @@ description: "Device records, the config document, IoT identity, and the one-sho
 
 A device is a row that points at a workspace and a device model, plus everything
 the platform knows about one physical unit: its status, its configuration
-document, and its IoT identity. The endpoints here fall into four groups, and
+document, and its IoT identity. The endpoints here fall into five groups, and
 they behave quite differently from each other.
 
 ## Reading and writing metadata
@@ -40,6 +40,30 @@ document as a retained MQTT message.
 
 `PATCH /devices/{id}/ui-prefs` is the opposite: cloud-only presentation state
 that is never delivered to the device and never bumps `configRev`.
+
+## Ownership
+
+`POST /devices/{id}/transfer` moves a device to another workspace, and therefore
+possibly to another organization — a device has no organization of its own, so
+the two are one write. `owner` or `admin` only.
+
+`GET /devices/{id}/transfer/preview` is the dry run, and the one to call first.
+It returns refusals as `blockers` rather than as an error status, so a
+confirmation can show the reason in place instead of provoking it, and it names
+the workflow attachments a cross-organization move will detach, which cannot be
+reconsidered once the transfer has run.
+
+The device is never touched: certificates and identity are untouched and the
+tenancy is never stored on the box, so **an offline device is a normal success**
+rather than a blocked action. What is complete on return is the ownership
+change; whether the device has caught up is `transfer.adoption`, and `pending`
+is the normal immediate answer. Read
+[Device ownership and transfer](/platform-concepts/device-ownership) before
+building on any of this — history and footage travel with the device, which for
+a cross-organization move is a data-disclosure event.
+
+Handing a device to an organization you are not a member of goes through
+[transfer offers](/api-reference/transfer-offers) instead.
 
 ## Identity
 

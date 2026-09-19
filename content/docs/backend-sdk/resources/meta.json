@@ -8,6 +8,7 @@
     "device-models",
     "devices",
     "device-registrations",
+    "transfer-offers",
     "media",
     "telemetry",
     "workflow-templates"

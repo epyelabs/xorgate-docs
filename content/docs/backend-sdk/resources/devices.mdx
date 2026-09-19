@@ -258,6 +258,150 @@ bumped. `null` resets a preference to its default.
 await xg.devices.patchUiPrefs(deviceId, { activeStreamsViewType: "map" })
 ```
 
+## Transfer
+
+```ts
+transfer(id: string, input: TransferDeviceInput): Promise<TransferResult>
+previewTransfer(id: string, input: TransferDeviceInput): Promise<TransferPreview>
+transferMany(ids: readonly string[], input: TransferDeviceInput): Promise<BulkTransferItem[]>
+```
+
+`owner` or `admin`. A device has no organization of its own — it points at a
+workspace, and the organization is derived — so moving a device between
+workspaces and moving it between organizations are the **same call**.
+
+<TypeTable
+  type={{
+    workspaceId: {
+      type: "string",
+      required: true,
+      description: "The DESTINATION workspace.",
+    },
+    organizationId: {
+      type: "string",
+      description:
+        "The DESTINATION organization. Only needed when it differs from the active one, and only usable by a user holding owner or admin in BOTH. An API key cannot use this path at all.",
+    },
+    signal: { type: "AbortSignal" },
+  }}
+/>
+
+### `previewTransfer(id, input)` first
+
+The dry run behind a confirmation. It writes nothing, and **blockers are
+returned rather than thrown**, so a dialog can explain a refusal without
+provoking it.
+
+```ts
+const preview = await xg.devices.previewTransfer(deviceId, { workspaceId: dest })
+
+if (preview.blockers.length > 0) {
+  for (const b of preview.blockers) console.log(b.code, b.message)
+  return
+}
+for (const a of preview.workflowAttachments) {
+  console.log("will be detached:", a.templateName)
+}
+```
+
+Blocker codes are `SAME_WORKSPACE`, `SERIAL_COLLISION` and
+`TRANSFER_IN_PROGRESS` — the same conditions `transfer()` would throw as a `400`
+or `409`. Everything else on the preview is context to render: counts of running
+workflow runs, open recording sessions, and session tokens that will lose the
+device.
+
+`carriesHistory` is **always literally `true`**. Render it; do not branch on it.
+It is there so a confirmation can state out loud that all telemetry history and
+all recorded footage travel with the device, which across organizations is a
+data-disclosure event and is the question anyone receiving a device actually
+asks.
+
+### `transfer(id, input)`
+
+```ts
+const { device, transfer } = await xg.devices.transfer(deviceId, {
+  workspaceId: dest,
+})
+```
+
+<Callout title="Never gate this on `device.status`">
+  Nothing on the device changes during a transfer: certificates and identity are
+  untouched, and the tenancy is never written to disk. An offline device has its
+  new tenancy staged in the cloud and adopts it on its next connect. **Offline
+  is a normal success**, reported through `transfer.warnings`, not an error.
+</Callout>
+
+A `200` is not uniformly clean. Two fields carry the nuance:
+
+- **`adoption`** has three values, not two. `"pending"` right after a transfer
+  is **normal** — the ownership change is already complete and authoritative in
+  the cloud. `"confirmed"` means the device has reported publishing under the
+  new tenancy. `"unknown"` means it has never reported a telemetry scope at all,
+  which is an agent older than `v0.0.6`, not a failure to converge.
+- **`scopeAttributes: "failed"`** is a degraded success. The device moved and
+  was told its new topic, but the broker was not told to allow it, so it falls
+  back to the still-ingested legacy telemetry plane. A workspace-scoped vended
+  credential sees nothing until any settings save re-asserts the attributes.
+
+<Callout
+  type="warn"
+  title="`reportedConfig.rev` is not evidence, and neither is a device that is still publishing"
+>
+  A scope change deliberately does not bump the config revision, so the reported
+  rev reads the same before and after. And AWS IoT resolves the policy's tenancy
+  variables at **connect** time, so an established session keeps its old
+  resolution and a botched transfer can look clean for hours before stranding on
+  the next reconnect. `adoption` is the only honest signal.
+</Callout>
+
+`transfer.kvsChannelsRetagged` is not a per-device count. It counts video-channel
+rows re-tagged across **both** workspaces the transfer touched, including other
+devices' channels repaired on the way past, so it can legitimately exceed the
+preview's `kvsChannels`. Do not render it as "N of this device's cameras moved".
+
+### `transferMany(ids, input)` is a client-side loop
+
+```ts
+const results = await xg.devices.transferMany([a, b, c], { workspaceId: dest })
+for (const item of results) {
+  if (item.ok) console.log(item.deviceId, "moved")
+  else console.log(item.deviceId, "failed:", item.error?.code)
+}
+```
+
+There is no bulk route, and this does not pretend otherwise. It runs
+**sequentially on purpose**: each transfer publishes a retained MQTT message and
+writes AWS IoT thing attributes, and a parallel fan-out is a good way to find the
+account's control-plane limits during an operation whose design depends on two
+writes staying adjacent.
+
+It does not stop at the first failure and it is **not atomic**. A partial result
+is the honest outcome, and there is nothing to roll back: a failed transfer has
+already rolled itself back. Same-organization only in practice — a
+cross-organization move is a handover, done one device at a time.
+
+### Failures
+
+`SAME_WORKSPACE` is a `400`. `SERIAL_COLLISION`, `TRANSFER_IN_PROGRESS` and
+`CONCURRENT_MODIFICATION` are `409`s. `TRANSFER_FAILED` is a `502` meaning the
+sequence was **rolled back and nothing changed**, so it is safe to retry — the
+one write on this API that is.
+
+A device or workspace outside the caller's reach is `404`, never `403`, because
+confirming another tenant's workspace exists is itself a leak. Do not render it
+as a permissions message; you do not know that it is one.
+
+A workspace-scoped session token is refused with `403`: a transfer spans two
+workspaces and such a token is confined to one by construction.
+
+### Handing a device to an organization you are not in
+
+Use [transfer offers](/backend-sdk/resources/transfer-offers). Background and
+the full picture of what moves is in
+[Device ownership and transfer](/platform-concepts/device-ownership); if your
+app also renders the live plane, read
+[Scope and transfers](/frontend-sdk/device-scope) before you ship.
+
 ## Commands
 
 ```ts

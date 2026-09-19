@@ -12,6 +12,8 @@
     "patch-device-ui-prefs",
     "provision-device",
     "get-device-identity",
+    "transfer-device",
+    "preview-device-transfer",
     "reboot-device",
     "power-off-device",
     "refresh-device-state",

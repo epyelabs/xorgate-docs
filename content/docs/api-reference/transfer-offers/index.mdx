@@ -1,0 +1,109 @@
+---
+title: "Overview"
+description: "Handing a device to an organization you have no membership in: minting a code, what the code buys, and the accept or decline handshake."
+---
+
+A transfer offer is how a device changes hands between organizations that share
+no membership — a genuine handover to a customer. The source mints a **code**,
+sends it out of band, and the destination redeems it.
+
+You do not need any of this to move a device between workspaces of the same
+organization, or into another organization you personally administer. Both of
+those are one call to
+[`POST /devices/{id}/transfer`](/api-reference/devices/transfer-device).
+
+<Steps>
+  <Step>
+    `POST /devices/{id}/transfer-offers` mints the code. It also returns
+    `willDetachWorkflowAttachments` — the templates this device will be detached
+    from if a different organization accepts. That is returned **here**, at
+    creation, because you are not present when the offer is accepted, so this is
+    the last point at which you can reconsider.
+  </Step>
+  <Step>
+    Send the code to the recipient over a channel you trust, and they read it
+    with `GET /transfer-offers/{code}`.
+  </Step>
+  <Step>
+    They call `POST /transfer-offers/{code}/accept` with a `workspaceId` of
+    their own, which runs the full transfer, or `POST /transfer-offers/{code}
+    /decline`, which you will see in your own listing.
+  </Step>
+</Steps>
+
+## The code is a bearer token
+
+Anyone holding the code can read the offer and act on it. It expires after
+**7 days**, and it can be withdrawn at any time while pending with
+`DELETE /transfer-offers/{code}`.
+
+Because the holder is an organization **not yet entitled to the device**, what
+the code buys is a deliberate allowlist rather than the offer row:
+
+| Returned                                     | Absent                           |
+| -------------------------------------------- | -------------------------------- |
+| The device's name                            | Its id                           |
+| Its device model and SKU                     | Its serial                       |
+| The offering organization's **name**         | Any workspace or organization id |
+| The offer's status, expiry and creation time | Any configuration or telemetry   |
+
+The code must not double as a read primitive against someone else's fleet, so
+`GET /transfer-offers/{code}` returns a **different, smaller type** than the
+offer routes the sender reads. Do not assume the two are interchangeable.
+
+<Callout title="There is no inbox, by design">
+  An offer names no destination — not needing to know the recipient's
+  organization id is the entire point of a code — so a pending offer is
+  discoverable **only by its code**.
+
+`GET /transfer-offers` returns what your organization SENT, plus what it has
+already ACCEPTED, tagged by `direction`. An offer made _to_ you does not
+appear there while it is pending. Build a paste-a-code entry point rather than
+a notification list.
+
+</Callout>
+
+## One code per device
+
+A device has at most one open offer, enforced in the database. Calling
+`POST /devices/{id}/transfer-offers` again while one is pending returns **the
+existing offer with `200`** rather than minting a second claimable code; a
+genuinely new offer returns `201`. The bodies are identical, so the status is
+the only way to tell them apart, and reloading a dialog cannot leak a second
+code into the world.
+
+## Paths and statuses
+
+Every offer route is keyed by `{code}`, including cancel. There is no
+cancel-by-id.
+
+| Route                                  | Who calls it                 | Notes                                   |
+| -------------------------------------- | ---------------------------- | --------------------------------------- |
+| `POST /devices/{id}/transfer-offers`   | source, `owner`/`admin`      | `201` new, `200` reused                 |
+| `GET /devices/{id}/transfer-offers`    | source                       | every offer ever made for the device    |
+| `GET /transfer-offers`                 | either                       | sent + accepted, never incoming-pending |
+| `GET /transfer-offers/{code}`          | holder of the code, any role | the allowlisted preview                 |
+| `DELETE /transfer-offers/{code}`       | source, `owner`/`admin`      | `204`; `409` once resolved              |
+| `POST /transfer-offers/{code}/accept`  | destination, `owner`/`admin` | runs the full transfer                  |
+| `POST /transfer-offers/{code}/decline` | destination, `owner`/`admin` | the source sees it                      |
+
+Accepting your **own** organization's offer is a `400` that tells you to use
+`POST /devices/{id}/transfer` instead. An offer belonging to another
+organization reads `404`, never `403`.
+
+Expiry is lazy: a pending offer past `expiresAt` is flipped to `expired` as it
+is read, so the status you get back is always current.
+
+## Accepting runs a real transfer
+
+Everything on
+[`POST /devices/{id}/transfer`](/api-reference/devices/transfer-device) applies
+from the accept onwards — all telemetry history and all recorded footage come
+with the device, the device does not have to be online, and `transfer.adoption`
+says whether it has confirmed the change yet. See
+[Device ownership and transfer](/platform-concepts/device-ownership) for what
+that means in full.
+
+The accept is race-safe: the offer is claimed with a conditional write before
+the transfer runs, so only one of two simultaneous accepts wins. If the transfer
+itself fails, the offer is put back to `pending` and the code can be retried.

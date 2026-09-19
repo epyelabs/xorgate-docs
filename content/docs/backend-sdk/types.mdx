@@ -314,6 +314,102 @@ interface ReplayManifest {
 The full `ReplaySession`, `ReplaySegment` and `ReplayGap` shapes are on
 [Media](/backend-sdk/resources/media).
 
+## Transfer
+
+```ts
+type TransferAdoption = "confirmed" | "pending" | "unknown"
+type ScopeAttributeResult = "unchanged" | "written" | "failed"
+type TransferBlockerCode = "SAME_WORKSPACE" | "SERIAL_COLLISION" | "TRANSFER_IN_PROGRESS"
+type TransferOfferStatus = "pending" | "accepted" | "declined" | "cancelled" | "expired"
+
+interface TransferTenancy {
+  workspaceId: string
+  organizationId: string
+}
+
+interface TransferSummary {
+  id: string // the transfer record
+  deviceId: string
+  from: TransferTenancy
+  to: TransferTenancy
+  crossOrg: boolean
+  detachedWorkflowAttachments: string[] // template NAMES; [] same-org
+  kvsChannelsRetagged: number
+  scopeAttributes: ScopeAttributeResult
+  adoption: TransferAdoption
+  warnings: string[]
+}
+
+interface TransferPreview {
+  deviceId: string
+  deviceName: string | null
+  serial: string | null
+  from: TransferTenancy & { workspaceName: string; organizationName: string }
+  to: TransferTenancy & { workspaceName: string; organizationName: string }
+  crossOrg: boolean
+  workflowAttachments: TransferWorkflowAttachment[]
+  runningWorkflowRuns: number
+  openMediaSessions: number
+  staleSessionTokens: number
+  kvsChannels: number
+  carriesHistory: true // literal true, ALWAYS
+  blockers: TransferBlocker[]
+  warnings: string[]
+}
+```
+
+`carriesHistory` is typed as the literal `true`, not `boolean`, because it is
+never anything else. It is there to be rendered — all telemetry history and all
+recorded footage travel with a device and nothing is purged — not to be branched
+on.
+
+`TransferAdoption` has three members on purpose. `"unknown"` means the device has
+never reported a telemetry scope at all, which is a different claim from
+`"pending"`, and collapsing the two would be a lie. See
+[Device ownership and transfer](/platform-concepts/device-ownership).
+
+```ts
+// the SENDER's view
+interface TransferOffer {
+  id: string
+  code: string
+  status: TransferOfferStatus
+  direction: "outgoing" | "incoming"
+  deviceId: string
+  deviceName: string | null
+  from: { organizationId: string; workspaceId: string }
+  acceptedBy: { organizationId: string; workspaceId: string | null } | null
+  transferId: string | null
+  expiresAt: string
+  resolvedAt: string | null
+  createdAt: string
+}
+
+// the RECIPIENT's view. A DIFFERENT, SMALLER type.
+interface TransferOfferPreview {
+  code: string
+  status: TransferOfferStatus
+  expiresAt: string
+  createdAt: string
+  device: { name: string | null; model: { id: string; name: string; sku: string } } | null
+  from: { organizationName: string }
+}
+```
+
+<Callout type="warn" title="The two offer types are not interchangeable">
+  `TransferOfferPreview` is a deliberate allowlist, not a subset that happens to
+  be short. It carries **no `deviceId`, no `serial`, no `workspaceId`, no
+  `organizationId`**, no configuration and no telemetry, because whoever holds
+  the code is an organization not yet entitled to the device. Both the API and
+  this SDK have tests asserting those absences.
+</Callout>
+
+The remaining envelope types are `TransferResult` (`{ device, transfer }`),
+`AcceptedTransferOffer` (`{ device, transfer, offer }`), `CreatedTransferOffer`
+(`{ offer, willDetachWorkflowAttachments, reused }`), `BulkTransferItem`,
+`TransferDeviceInput`, `TransferWorkflowAttachment`, `TransferBlocker` and
+`ListTransferOffersParams`.
+
 ## Pagination and errors
 
 ```ts

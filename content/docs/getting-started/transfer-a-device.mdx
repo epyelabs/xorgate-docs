@@ -1,0 +1,204 @@
+---
+title: "Transfer a device to another workspace"
+description: "Preview, confirm, transfer: moving a device inside your organization in three steps, and reading what the response tells you."
+---
+
+Moving a device between workspaces is one call. This guide does it in three
+steps, because the middle one — the preview — is what turns a surprise into a
+confirmation.
+
+Everything here also works **between organizations you personally administer**:
+add an `organizationId` and read
+[Hand a device to another organization](/getting-started/hand-over-a-device) for
+the case where you do not share a membership.
+
+```bash
+API="https://api-dev.xorgate.io/v1"
+TOKEN="<your cognito id token>"
+ORG="<your organization id>"
+DEVICE="<the device to move>"
+DEST="<the destination workspace id>"
+```
+
+You need `owner` or `admin`. A `member` may edit a device but may not give it
+away, and a workspace-scoped session token can never do this at all — a transfer
+spans two workspaces, so such a credential could not be authorized for both ends.
+
+<Callout title="The device does not need to be online">
+  Do not check the device's status first, and do not wait for it to come back.
+  Nothing on the device changes during a transfer, and an offline device adopts
+  its new tenancy the moment it next connects. See [Device ownership and
+  transfer](/platform-concepts/device-ownership).
+</Callout>
+
+## 1. Preview it
+
+<Callout type="warn" title="History and footage travel with the device">
+  Every telemetry reading and every recorded second moves with the device, and
+  nothing is purged. Inside one organization that is usually what you want.
+  Across organizations it is a data-disclosure event, so show someone the
+  preview before you run the transfer.
+</Callout>
+
+```bash
+curl -sS "$API/devices/$DEVICE/transfer/preview?workspaceId=$DEST" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG"
+```
+
+```json
+{
+  "preview": {
+    "deviceId": "5ced29fc-…",
+    "deviceName": "Excavator 12",
+    "serial": "XG-0042",
+    "from": {
+      "workspaceName": "Test Workspace",
+      "organizationName": "Alocate",
+      "…": "…"
+    },
+    "to": {
+      "workspaceName": "Argus v1",
+      "organizationName": "Alocate",
+      "…": "…"
+    },
+    "crossOrg": false,
+    "workflowAttachments": [],
+    "runningWorkflowRuns": 0,
+    "openMediaSessions": 1,
+    "staleSessionTokens": 2,
+    "kvsChannels": 2,
+    "carriesHistory": true,
+    "blockers": [],
+    "warnings": [
+      "The device is offline. It will adopt the new workspace on its next connect."
+    ]
+  }
+}
+```
+
+The preview writes nothing, and **refusals come back as `blockers` rather than
+as an error status** so you can show the reason in place without provoking it:
+
+| Blocker                | Means                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `SAME_WORKSPACE`       | The destination is where the device already is.                                                   |
+| `SERIAL_COLLISION`     | A device with this serial already exists in the destination. Serials are unique per workspace.    |
+| `TRANSFER_IN_PROGRESS` | Another transfer of this device has not finished. Stale ones are swept lazily; retry in a moment. |
+
+Render `carriesHistory` — it is always `true`, and it is the question anyone
+being handed a device actually asks. `staleSessionTokens` counts credentials
+scoped to the source workspace that will stop resolving this device; they are
+reported, never revoked.
+
+## 2. Transfer it
+
+If `blockers` is empty, the same arguments go to `POST`, which turns the first
+blocker it finds into a `400` or `409` of its own.
+
+```bash
+curl -sS -X POST "$API/devices/$DEVICE/transfer" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG" \
+  -H "Content-Type: application/json" \
+  -d "{\"workspaceId\": \"$DEST\"}"
+```
+
+```json
+{
+  "device": { "id": "5ced29fc-…", "workspaceId": "c2e2a967-…", "…": "…" },
+  "transfer": {
+    "id": "45479557-…",
+    "crossOrg": false,
+    "detachedWorkflowAttachments": [],
+    "kvsChannelsRetagged": 2,
+    "scopeAttributes": "written",
+    "adoption": "pending",
+    "warnings": [
+      "The device is offline. It will adopt the new workspace on its next connect."
+    ]
+  }
+}
+```
+
+The ownership change is **complete and authoritative** the moment this returns.
+
+## 3. Read the summary honestly
+
+A `200` is not uniformly clean, and two fields are worth branching on.
+
+**`adoption`** answers a different question from the status code: whether the
+_device_ has caught up.
+
+- `pending` is the **normal** immediate answer, and the permanent answer for an
+  offline device until it reconnects. Not an error.
+- `confirmed` appears once the device reports publishing under the new tenancy.
+- `unknown` means the device has never reported a telemetry scope at all — an
+  agent older than `v0.0.6`. Treat it as a prompt to update that device, not as
+  a failure.
+
+Poll `GET /devices/{id}` to watch it settle.
+
+<Callout type="warn" title="Do not use `configRev` as evidence">
+  A scope change deliberately does not bump the device's config revision, so
+  `reportedConfig.rev` reads the same before and after. "The device is still
+  publishing" is not evidence either: IoT resolves a policy's thing attributes
+  at connect time, so an established session keeps its old resolution for a
+  while. `adoption` is the only honest signal.
+</Callout>
+
+**`scopeAttributes: "failed"`** is a degraded success returned with `200`. The
+device moved and was told its new topic, but the broker was not told to allow
+it; it falls back to the legacy telemetry plane, which is still ingested. The
+console keeps working, but a workspace-scoped vended credential sees nothing.
+Saving any setting on the device re-asserts the attributes and repairs it.
+
+`kvsChannelsRetagged` is **not** a count of this device's cameras. It counts
+video-channel rows re-tagged across both workspaces the transfer touched,
+including other devices' channels repaired on the way past, so it can legitimately
+exceed the preview's `kvsChannels`.
+
+## If it fails
+
+`502 TRANSFER_FAILED` means the sequence was **rolled back**: the device is still
+in its original workspace and nothing changed. It is safe to retry.
+
+`409 CONCURRENT_MODIFICATION` means the device moved while your request was being
+prepared. Re-read the device and preview again.
+
+`404` covers both "no such device" and "that destination workspace is not one you
+can reach", deliberately indistinguishable — confirming another tenant's
+workspace exists would itself be a leak. Do not tell a user they lack permission;
+you do not know that.
+
+## From the console
+
+Device → **Settings** → **General** → the **Ownership** card, above the Danger
+zone. It names the current workspace and organization, shows a quiet "pending on
+device" badge while the device has not adopted yet, and the **Transfer
+ownership** button opens a dialog whose _This organization_ tab is exactly the
+three steps above: pick a workspace, read the live preview, confirm.
+
+To move several devices at once, select them in the devices list and use bulk
+transfer. It is **same-organization only**, runs sequentially, does not stop at
+the first failure, reports per device, and rolls nothing back — there is no
+batch route behind it, only a loop.
+
+## With the SDK
+
+```ts
+const preview = await xg.devices.previewTransfer(deviceId, { workspaceId: dest })
+if (preview.blockers.length > 0) {
+  for (const b of preview.blockers) console.log(b.code, b.message)
+  return
+}
+
+const { device, transfer } = await xg.devices.transfer(deviceId, { workspaceId: dest })
+console.log(device.workspaceId, transfer.adoption)
+```
+
+Full method documentation is on
+[Devices → Transfer](/backend-sdk/resources/devices#transfer). If your app also
+renders the **live** plane, read
+[Scope and transfers](/frontend-sdk/device-scope) — a transfer silently
+invalidates a cached live credential, and nothing fails loudly when it does.

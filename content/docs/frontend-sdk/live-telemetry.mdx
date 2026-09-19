@@ -343,3 +343,16 @@ device has no IoT identity.
   caller's own identity, and access can be revoked. The full caveat is on [the
   provider page](/frontend-sdk/provider).
 </Callout>
+
+<Callout type="warn" title="A connected socket that never delivers a frame may mean the device moved">
+  In a vended-credential mode the subscription targets the credential's own
+  tenant-scoped topic, with the organization and workspace ids spelled out
+  literally. If the device is transferred to another workspace, it starts
+  publishing somewhere else: `status` stays `"connected"`, no error is raised,
+  and `latest` simply never fills. Cached credentials live up to about 50
+  minutes, so the window is wide.
+
+[Scope and transfers](/frontend-sdk/device-scope) has the two hooks that turn
+that silence into a typed error.
+
+</Callout>

@@ -1,10 +1,10 @@
 ---
 title: "Platform concepts"
-description: "The models and vocabulary the API and SDKs are built on: metric names, device capabilities, media sessions, and the live versus recorded split."
+description: "The models and vocabulary the API and SDKs are built on: metric names, device capabilities, ownership and transfer, media sessions, and the live versus recorded split."
 ---
 
 The endpoint reference tells you what each route does. This section explains the
-four ideas that make the routes hang together, so the reference reads as a system
+five ideas that make the routes hang together, so the reference reads as a system
 rather than a list.
 
 <Cards>
@@ -17,6 +17,11 @@ rather than a list.
     title="Device models and capabilities"
     href="/platform-concepts/device-models"
     description="What io_capabilities declares, what it actually controls, and where it is not enforced."
+  />
+  <Card
+    title="Device ownership and transfer"
+    href="/platform-concepts/device-ownership"
+    description="What owns a device, what travels with it when it moves, and why a transfer never touches the device."
   />
   <Card
     title="Media sessions and segments"
@@ -47,4 +52,6 @@ platform comes from expecting one to behave like the other.
 
 The tenancy model itself is covered in
 [Getting started](/getting-started/tenancy), because you need it before you
-can make a single request.
+can make a single request. What happens when a device changes hands — which
+workspace owns it, what travels with it, and what is deliberately left behind —
+is [Device ownership and transfer](/platform-concepts/device-ownership).

@@ -39,6 +39,11 @@ needs, and a runnable example.
     description="The onboarding code flow, and waiting for a claim."
   />
   <Card
+    title="Transfer offers"
+    href="/backend-sdk/resources/transfer-offers"
+    description="Handing a device to an organization you are not a member of, by code."
+  />
+  <Card
     title="Media"
     href="/backend-sdk/resources/media"
     description="Sessions, runs, segments, playback URLs, replay manifests."
@@ -119,6 +124,16 @@ decided on the token's prefix and are safe to branch on.
 | `xg.devices.refreshState(id)`               | `POST /devices/{id}/refresh-state`                | read           |
 | `xg.devices.updateAgent(id)`                | `POST /devices/{id}/update`                       | owner/admin    |
 | `xg.devices.latestAgentBuild()`             | `GET /device-dist/latest`                         | read           |
+| `xg.devices.transfer(id, input)`            | `POST /devices/{id}/transfer`                     | owner/admin    |
+| `xg.devices.previewTransfer(id, input)`     | `GET /devices/{id}/transfer/preview`              | owner/admin    |
+| `xg.devices.transferMany(ids, input)`       | the above, once per id                            | owner/admin    |
+| `xg.transferOffers.create(deviceId)`        | `POST /devices/{id}/transfer-offers`              | owner/admin    |
+| `xg.transferOffers.listForDevice(deviceId)` | `GET /devices/{id}/transfer-offers`               | owner/admin    |
+| `xg.transferOffers.list(params)`            | `GET /transfer-offers`                            | read           |
+| `xg.transferOffers.get(code)`               | `GET /transfer-offers/{code}`                     | read           |
+| `xg.transferOffers.cancel(code)`            | `DELETE /transfer-offers/{code}`                  | owner/admin    |
+| `xg.transferOffers.accept(code, input)`     | `POST /transfer-offers/{code}/accept`             | owner/admin    |
+| `xg.transferOffers.decline(code)`           | `POST /transfer-offers/{code}/decline`            | owner/admin    |
 | `xg.deviceRegistrations.create(input)`      | `POST /device-registrations`                      | write          |
 | `xg.deviceRegistrations.get(code)`          | `GET /device-registrations/{code}`                | read           |
 | `xg.deviceRegistrations.waitForClaim(code)` | polls the above                                   | read           |

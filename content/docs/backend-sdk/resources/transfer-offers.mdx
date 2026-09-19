@@ -1,0 +1,182 @@
+---
+title: "Transfer offers"
+description: "Handing a device to an organization you are not a member of: minting a code, the deliberately smaller recipient type, accept, decline and withdraw."
+---
+
+`xg.transferOffers` is the cross-organization handover surface. The source mints
+a code, the destination redeems it, and neither side ever needs a membership in
+the other's organization.
+
+You do not need this to move a device between workspaces of the same
+organization, or into another organization you personally administer. Both of
+those are [`xg.devices.transfer()`](/backend-sdk/resources/devices#transfer).
+
+```ts
+create(deviceId: string): Promise<CreatedTransferOffer>
+list(params?: ListTransferOffersParams): Promise<TransferOffer[]>
+iterate(params?): AsyncIterableIterator<TransferOffer>
+listAll(params?): Promise<TransferOffer[]>
+listForDevice(deviceId: string): Promise<TransferOffer[]>
+get(code: string): Promise<TransferOfferPreview>
+accept(code: string, input: { workspaceId: string }): Promise<AcceptedTransferOffer>
+decline(code: string): Promise<TransferOffer>
+cancel(code: string): Promise<void>
+```
+
+Every method that names an offer names it **by `code`**, `cancel()` included.
+There is no cancel-by-id.
+
+## `create(deviceId)`
+
+`owner` or `admin` in the organization that currently owns the device.
+
+```ts
+const { offer, willDetachWorkflowAttachments, reused } =
+  await xg.transferOffers.create(deviceId)
+
+console.log(offer.code, offer.expiresAt) // 7 days out
+for (const name of willDetachWorkflowAttachments) {
+  console.log("will be detached:", name)
+}
+```
+
+`willDetachWorkflowAttachments` names the workflow templates this device is
+attached to. If a **different** organization accepts, all of them are detached,
+because the templates belong to the source and the new owner cannot see them.
+It is returned here, at creation, because the source is not present when the
+offer is accepted — this is its last chance to reconsider.
+
+<Callout title="`reused` is the only way to tell 201 from 200">
+  A device has at most one open offer, enforced by a database index. Calling
+  `create()` again while one is pending returns the existing offer with **200**
+  rather than minting a second claimable code; a genuinely new offer returns
+  **201**. The bodies are byte-identical, so the SDK reads the status itself and
+  surfaces it as `reused`. Without it, reloading a dialog would silently look
+  like a fresh code.
+</Callout>
+
+<Callout type="warn" title="The code is a bearer token">
+  Anyone holding it can read the offer and accept or decline it. Send it over a
+  channel you trust, and `cancel()` it if it goes astray.
+</Callout>
+
+## `get(code)` returns a different, smaller type
+
+This is the recipient's view, and it is a deliberate **allowlist** rather than a
+subset that happens to be short.
+
+```ts
+const offered = await xg.transferOffers.get(code)
+
+offered.device?.name // "Excavator 12"
+offered.device?.model.name // "Argus v1"
+offered.device?.model.sku // "XG-ARG-1"
+offered.from.organizationName // "Alocate"
+offered.status // "pending"
+offered.expiresAt
+```
+
+<Callout type="warn" title="`TransferOfferPreview` is not a `TransferOffer`">
+  There is **no `deviceId`, no `serial`, no `workspaceId`, no `organizationId`,
+  no configuration and no telemetry** on it, and there never will be. The holder
+  of a code is an organization not yet entitled to the device, so the code must
+  not double as a read primitive against someone else's fleet.
+
+Both the API and this SDK have tests asserting those absences. Do not write
+code that treats the two offer types as interchangeable.
+
+</Callout>
+
+Any role may call `get()`. Accepting or declining needs `owner` or `admin`.
+
+## `accept(code, { workspaceId })`
+
+Runs the **full transfer** into a workspace of the accepting organization, so
+everything on
+[`devices.transfer()`](/backend-sdk/resources/devices#transfer) applies from
+here on.
+
+```ts
+const { device, transfer, offer } = await xg.transferOffers.accept(code, {
+  workspaceId: yardId,
+})
+console.log(transfer.crossOrg, transfer.adoption, offer.transferId)
+```
+
+Accepting is race-safe: the offer is claimed with a conditional write before the
+transfer runs, so only one of two simultaneous accepts wins and the loser gets a
+`409`. If the transfer itself fails the offer is put back to `pending` and the
+code can be retried.
+
+Accepting an offer your **own** organization created is a `400` telling you to
+use `devices.transfer()` instead.
+
+## `decline(code)` and `cancel(code)`
+
+```ts
+await xg.transferOffers.decline(code) // destination refuses; the source sees it
+await xg.transferOffers.cancel(code) // source withdraws, 204
+```
+
+A decline is an answer rather than an offer left to rot: the source's own
+listing shows `declined` with a `resolvedAt`. Both are `409` once the offer has
+already been resolved or has expired.
+
+## `list()` is not an inbox
+
+```ts
+for (const offer of await xg.transferOffers.list({ status: "pending" })) {
+  console.log(offer.direction, offer.code, offer.expiresAt)
+}
+```
+
+<Callout title="A pending offer made TO you does not appear here">
+  An offer names no destination — not needing the recipient's organization id is
+  the entire reason a code exists — so a pending offer is discoverable **only by
+  its code**.
+
+`list()` returns what your organization **sent**, plus what it has already
+**accepted**, tagged by `direction`. Build a paste-a-code entry point, not a
+notification list, and do not poll this waiting for a row that will never
+arrive.
+
+</Callout>
+
+`status` filters by `pending | accepted | declined | cancelled | expired`;
+anything else is a `400`. Any role can call `list()`.
+
+`listForDevice(deviceId)` is every offer ever made for one device, newest first.
+It is a **device** route, so like everything else under `/devices/{id}`, it needs
+`owner` or `admin` — and a device in another organization reads `404`.
+
+Expiry is lazy. A pending offer past `expiresAt` is flipped to `expired` as it
+is read, so the status you get back is always current.
+
+<Callout title="`deviceName` currently comes back `null`">
+  On both list routes, `TransferOffer.deviceName` is `null` even for a device in
+  your own organization that has a name. The type is `string | null`, so this is
+  within contract, but do not build a UI that depends on it — fall back to the
+  device id, or read the device separately. `get(code)` **does** carry
+  `device.name`.
+</Callout>
+
+## Errors
+
+| Code                   | Status | When                                                                                                              |
+| ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `BAD_REQUEST`          | 400    | Malformed body, an unknown `status` filter, or accepting your own organization's offer.                           |
+| `INSUFFICIENT_ROLE`    | 403    | A `member` or `viewer` creating, accepting, declining, cancelling, or listing a device's offers.                  |
+| `WORKSPACE_SCOPED`     | 403    | A workspace-scoped session token. A transfer spans two workspaces.                                                |
+| `NOT_FOUND`            | 404    | No such code, another organization's offer, or a `workspaceId` that is not yours. Deliberately indistinguishable. |
+| `CONFLICT`             | 409    | Already resolved or expired, or a stale offer whose source no longer owns the device.                             |
+| `SERIAL_COLLISION`     | 409    | The destination workspace already has a device with this serial.                                                  |
+| `TRANSFER_IN_PROGRESS` | 409    | Another transfer of this device has not finished.                                                                 |
+| `TRANSFER_FAILED`      | 502    | Rolled back, nothing changed, the offer is still open. Safe to retry.                                             |
+
+## See also
+
+- [Hand a device to another organization](/getting-started/hand-over-a-device) —
+  the same flow end to end, from both sides, including the console.
+- [Device ownership and transfer](/platform-concepts/device-ownership) — what
+  moves, what is detached, and why the device is never touched.
+- [Transfer offers API reference](/api-reference/transfer-offers).

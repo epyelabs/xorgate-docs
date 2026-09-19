@@ -1,0 +1,14 @@
+{
+  "title": "Transfer Offers",
+  "description": "Handing a device to an organization you have no membership in. The source mints a code, the destination redeems it. A move between workspaces of the SAME organization needs none of this — see POST /devices/{id}/transfer.",
+  "pages": [
+    "index",
+    "list-device-transfer-offers",
+    "create-transfer-offer",
+    "list-transfer-offers",
+    "get-transfer-offer",
+    "cancel-transfer-offer",
+    "accept-transfer-offer",
+    "decline-transfer-offer"
+  ]
+}

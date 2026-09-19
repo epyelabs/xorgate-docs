@@ -139,6 +139,15 @@ enforces membership.
 
 </Callout>
 
+That boundary is evaluated when the credential is **vended**, not continuously,
+and the SDK caches a credential for up to about 50 minutes. So a device
+transferred out of your workspace inside that window leaves a viewer connected
+to a topic nothing publishes on any more, with no error raised. Nothing pushes
+that fact to you, which is why
+[Scope and transfers](/frontend-sdk/device-scope) exists — and why the one place
+you cannot reproduce it is the xorgate dashboard itself, whose broad path
+wildcards both telemetry planes.
+
 ### No webhooks, so polling is the only option
 
 Nothing pushes over the REST plane. Device state, config acknowledgement,

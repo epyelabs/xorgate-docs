@@ -1,4 +1,11 @@
 {
   "title": "Getting started",
-  "pages": ["index", "tenancy", "authentication", "quickstart"]
+  "pages": [
+    "index",
+    "tenancy",
+    "authentication",
+    "quickstart",
+    "transfer-a-device",
+    "hand-over-a-device"
+  ]
 }

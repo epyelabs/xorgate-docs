@@ -124,6 +124,11 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 | `CONFLICT`                  | 409    | The resource refuses this operation in its current state.                                                                            |
 | `RATE_LIMITED`              | 429    | Throttled. The SDK's own name for it: a gateway 429 carries no `error.code`. Carries `retryAfterMs` when the response said so.       |
 | `SERVER_ERROR`              | 5xx    | An unhandled API failure (full envelope, with `requestId`), or a 5xx with no envelope at all from the gateway in front. Retryable.   |
+| `SAME_WORKSPACE`            | 400    | A transfer whose destination is the workspace the device is already in.                                                              |
+| `SERIAL_COLLISION`          | 409    | The destination workspace already has a device with this serial. Serials are unique per workspace.                                   |
+| `TRANSFER_IN_PROGRESS`      | 409    | Another transfer of this device has not finished. Stale ones are swept lazily, so retry once before investigating.                   |
+| `CONCURRENT_MODIFICATION`   | 409    | The device moved while the request was being prepared. Re-read it and try again.                                                     |
+| `TRANSFER_FAILED`           | 502    | The transfer was **rolled back**; nothing changed. The one write on this API that is safe to retry blindly.                          |
 | `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                                |
 | `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                                |
 | `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                         |
@@ -141,22 +146,30 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 These never touch the network, or never got an answer from it. `status` is
 absent on all of them.
 
-| Code               | Means                                                                                                                                  |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `INVALID_CONFIG`   | `createClient` was called with unusable options. Thrown at construction, not on first request.                                         |
-| `INVALID_INPUT`    | Client-side validation rejected an argument. Today that is `ioCapabilities` on a device-model write. `details.issues` lists the paths. |
-| `TIMEOUT`          | The request exceeded `timeoutMs`.                                                                                                      |
-| `ABORTED`          | Your `AbortSignal` fired.                                                                                                              |
-| `NETWORK`          | DNS, TLS or connection failure. `cause` carries the underlying error.                                                                  |
-| `INVALID_RESPONSE` | A 2xx whose body was not the JSON the endpoint promised. Usually a proxy or captive portal, not the API.                               |
+| Code                  | Means                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INVALID_CONFIG`      | `createClient` was called with unusable options. Thrown at construction, not on first request.                                                                                                                                                                                                                                |
+| `INVALID_INPUT`       | Client-side validation rejected an argument. Today that is `ioCapabilities` on a device-model write. `details.issues` lists the paths.                                                                                                                                                                                        |
+| `TIMEOUT`             | The request exceeded `timeoutMs`.                                                                                                                                                                                                                                                                                             |
+| `ABORTED`             | Your `AbortSignal` fired.                                                                                                                                                                                                                                                                                                     |
+| `NETWORK`             | DNS, TLS or connection failure. `cause` carries the underlying error.                                                                                                                                                                                                                                                         |
+| `INVALID_RESPONSE`    | A 2xx whose body was not the JSON the endpoint promised. Usually a proxy or captive portal, not the API.                                                                                                                                                                                                                      |
+| `DEVICE_OUT_OF_SCOPE` | Declared here but raised by `@xorgate/react`: a device is no longer inside the workspace its live credential was vended for. It lives in this package so that one string names the condition on both sides of the boundary and a consumer's `switch` stays exhaustive. See [Scope and transfers](/frontend-sdk/device-scope). |
 
-## The two 502s are not the same
+## The three 502s are not the same
 
-Both are `retryable: true`, and treating them alike will corrupt your view of a
-device.
+All three are `retryable: true`, and treating them alike will corrupt your view
+of a device.
 
 **`COMMAND_PUBLISH_FAILED`** means the command never reached the broker. Nothing
 happened on the device. Retrying is safe and correct.
+
+**`TRANSFER_FAILED`** means the transfer sequence failed partway and **rolled
+itself back**: the device is still in its original workspace, the thing
+attributes were never written, and nothing on either side changed. Retrying is
+safe and correct. If it came from
+`POST /transfer-offers/{code}/accept`, the offer is put back to `pending` and
+the same code works again.
 
 **`CONFIG_PUBLISH_FAILED`** means the config write **succeeded**: `configRev` was
 bumped and the row was saved. Only the retained MQTT publish failed. The device
@@ -204,6 +217,12 @@ and the ones that are say so in their own documentation:
 
 - `deviceRegistrations.create()` is idempotent per workspace: an existing
   pending, un-expired code comes back instead of a new one.
+- `transferOffers.create()` is idempotent per device, for the same reason: a
+  device has at most one open offer, so a retry hands back the existing code
+  rather than minting a second claimable one. `reused` tells you which happened.
+- `devices.transfer()` is safe to retry **only** after `TRANSFER_FAILED`, which
+  guarantees the rollback. After a timeout it is as ambiguous as any other
+  write; read the device back instead.
 - `devices.updateAgent()` coalesces on the device, so pressing it twice starts
   one update.
 - The device refuses to execute the same command `requestId` twice, but a retry

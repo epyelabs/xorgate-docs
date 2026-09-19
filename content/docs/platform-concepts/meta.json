@@ -4,6 +4,7 @@
     "index",
     "metrics",
     "device-models",
+    "device-ownership",
     "media-sessions",
     "live-vs-recorded"
   ]
