@@ -1,0 +1,254 @@
+---
+title: "Telemetry sessions and artifacts"
+description: "Recorded telemetry is served as immutable objects by presigned URL: the session index, the overview.v1 artifact, the raw segments, and the insights contract."
+---
+
+Recorded telemetry follows the same shape as [recorded video](/platform-concepts/media-sessions):
+the device writes roughly 60 second **segments**, uploads them when it can, and
+the platform indexes them into **sessions**. What differs is how it is read
+back. A telemetry session is served as **immutable objects straight from object
+storage** through the replay manifest, with one small precomputed **overview**
+per session for the route line and the scrub preview, so a replay needs no
+database read and no API call per metric.
+
+```
+device  →  telemetry/v1/{deviceId}/{sessionId}/{startTsMs}-{seq}.jsonl.gz  →  object storage
+                                                                                     │
+                                                                         EventBridge on object created
+                                                                                     ↓
+                                                                   telemetry_sessions / telemetry_segments
+                                                                                     ↓ (on session close)
+                                                          telemetry/v1/{deviceId}/{sessionId}/overview.v1.json.gz
+```
+
+<Callout title="A telemetry session is not a video session">
+  Both ids are UUIDv7s minted on the device, but independently: the telemetry
+  recorder mints one per start, each camera mints its own per stream spawn. A 58
+  minute video session typically overlaps one or two telemetry sessions. Relate
+  them by **time**, never by id. The replay manifest does exactly that: it lists
+  the telemetry sessions overlapping the replay window.
+</Callout>
+
+## Segments
+
+Each segment is the device's own gzipped JSONL file. It opens with a header line
+and then carries one sample per line:
+
+```
+{"type":"header","v":1,"deviceId":"…","sessionId":"…","bootId":"…","timeSource":"ntp","rateHz":1,"startedAt":…}
+{"ts":1786314223040,"mono":…,"seq":0,"metrics":{"gps":{"lat":{"value":43.6,"unit":"deg"},…},"imu":{…},…}}
+```
+
+Segments rotate at min(60 s, 1 MB). At the default 1 Hz a segment is about 5 KB
+gzipped and holds every metric the device reports. The ingest pipeline
+normalises each object's metadata once (`Content-Type: application/x-ndjson`,
+`Content-Encoding: gzip`, `Cache-Control: private, max-age=86400, immutable`),
+so a browser, iOS or Android `fetch()` inflates it natively and no client ships
+an inflater. Segments are immutable: cache them by URL path.
+
+## Sessions
+
+The first segment to arrive creates the session row; every later one rolls
+`from`, `to`, the counters and the clock quality forward. `timeSource` is the
+**worst** clock seen across the session's segment headers (`ntp` > `gps` >
+`nitz` > `rtc` > `unsynced`); `rtc` is common on a boot that never synced.
+
+<Callout
+  type="warn"
+  title="Sessions close by inactivity, and the overview is built on close"
+>
+  Like media sessions, `status` is advisory: `closed` once no segment has
+  arrived for about ten minutes. The close is what triggers the overview build,
+  so an `open` session has **no overview yet**, and a just-closed one has none
+  for a minute or so. A straggler segment after close reopens the session, and
+  the next close rebuilds the overview in place.
+</Callout>
+
+A client replaying an `open` session builds its own overview from the raw
+segments it is handed (about 5 KB per minute recorded, so an hour is cheap)
+and refetches the manifest about every 60 seconds so the segment list grows
+with the recording. One code path; no database fallback.
+
+## The overview artifact (`overview.v1`)
+
+One object per session, built once at close from every segment the session
+has. Gzipped columnar JSON with `Content-Encoding: gzip`, so `fetch()` returns
+the object directly. Real sizes are 15 to 40 KB for an hour-long drive.
+
+```jsonc
+{
+  "v": 1,
+  "kind": "telemetry-overview",
+  "deviceId": "…",
+  "sessionId": "…",
+  "rateHz": 1,
+  "timeSource": "ntp",
+  "from": 1786314223040,
+  "to": 1786317672922,
+  "builtAt": 1786318000000,
+  "source": {
+    "segments": 52,
+    "seqFrom": 0,
+    "seqTo": 51,
+    "samples": 3153,
+    "bytes": 267392,
+    "missingSegments": 0,
+    "invalidLines": 0,
+  },
+
+  // One grid per metric group at its own bucket width. `ts` is SPARSE: only
+  // buckets that had data, so a hole in `ts` is a recording hole.
+  "groups": {
+    "gps": {
+      "bucketMs": 5000,
+      "ts": [1786314223000, 1786314228000 /* … */],
+      "units": {
+        "gps.lat": "deg",
+        "gps.lon": "deg",
+        "gps.speed": "km/h" /* … */,
+      },
+      "values": {
+        "gps.lat": [43.598321, 43.59834 /* … */],
+        "gps.lon": [-79.574472, -79.574401 /* … */],
+        "gps.speed": [0, 12.4 /* … */],
+        "gps.course": [null, 87.5 /* … */], // null = not reported in that bucket
+      },
+      "bbox": [-79.574472, 43.598321, -79.517906, 43.66587], // [minLon, minLat, maxLon, maxLat]
+    },
+    "imu": {
+      "bucketMs": 15000,
+      "ts": [/* … */],
+      "units": {/* … */},
+      "values": {/* … */},
+    },
+    "lte": {
+      "bucketMs": 1000,
+      "ts": [/* … */],
+      "units": {/* … */},
+      "values": {/* … */},
+    },
+    "system": {
+      "bucketMs": 15000,
+      "ts": [/* … */],
+      "units": {/* … */},
+      "values": {/* … */},
+    },
+  },
+
+  "insights": {/* see below */},
+}
+```
+
+The rules a reader can rely on:
+
+- **One grid per metric group.** Every metric in a group shares the group's `ts`
+  array, so pairing `gps.lat` with `gps.lon` is positional, never a search.
+- **Columnar, sparse, nullable.** `values[metric][i]` belongs to `ts[i]`; `null`
+  means the metric was absent in that bucket; a bucket with no data at all is
+  simply absent from `ts`.
+- **Bucket width is chosen server-side** from the client's own ladder (1, 2, 5,
+  10, 15, 30, 60 s, …) so that GPS lands at or under 2 000 buckets and every
+  other group at or under 500. A session with fewer samples than the target
+  ships at its native period with no averaging at all. Averaged values are
+  rounded to 6 decimals; `ts` is the bucket **start**.
+- **Units come from the segment lines**, not from the device model, so the
+  object is self-describing even for a model that later changed.
+- **`bbox` frames the map before a single value is parsed**, and `source` is
+  provenance for support (`missingSegments` counts index rows whose object had
+  already expired when the build ran).
+
+### Versioning
+
+`v: 1` in the body and in the key (`overview.v1.json.gz`); the manifest reports
+the format as `overview.v1`. **Additive fields keep `v: 1`**: a reader must
+ignore keys it does not know. A breaking change is a new format name and a new
+key, and the manifest says which one it serves.
+
+## Insights
+
+Every session's overview carries an `insights` block, computed in the same pass
+over the segments and mirrored onto the session row, so lists and roll-ups never
+open an artifact. The manifest and
+[`GET /devices/{id}/telemetry/sessions`](/api-reference/telemetry/list-device-telemetry-sessions)
+both return it.
+
+```jsonc
+"insights": {
+  "computed": { "duration": 1, "distance": 1, "speed": 1, "position": 1, "altitude": 1,
+                "gpsQuality": 1, "system": 1, "lte": 1, "stops": 1 },
+  "computedAt": 1786318000000,
+
+  "duration":   { "totalMs": 3153000, "movingMs": 2011000, "idleMs": 1142000, "movingThresholdKph": 2 },
+  "distance":   { "meters": 25181.6, "method": "haversine-2d",
+                  "accept": { "minFixQuality": 1, "maxHdop": 5, "maxJumpMps": 60, "breakGapMs": 30000,
+                              "stationaryRule": "speed" },
+                  "fixesUsed": 3074, "fixesRejected": 0,
+                  "crossCheckMeters": 25103.8 },
+  "speed":      { "maxKph": 116.1, "maxAt": 1786315690000, "avgMovingKph": 45, "source": "gps.speed" },
+  "position":   { "start": [-79.574472, 43.598321], "end": [-79.517906, 43.66587] },
+  "altitude":   { "minM": 74, "maxM": 131, "gainM": 142, "lossM": 88 },
+  "gpsQuality": { "fixRatio": 0.98, "avgSatellites": 7.6, "avgHdop": 0.9 },
+  "system":     { "maxCpuTempC": 61.2, "throttledMs": 0, "undervoltageMs": 0 },
+  "lte":        { "minRssi": -101, "avgRssi": -83, "resets": 0 },
+
+  "events": [
+    { "kind": "stop", "ts": 1786314900000, "endTs": 1786315020000, "position": [-79.5612, 43.6103] }
+  ]
+}
+```
+
+The contract, which is what lets insights be added later without breaking a
+reader:
+
+- **Versioned per insight, not per block.** `computed` maps each insight id to
+  the version that produced it. When an insight's meaning changes, its own
+  version bumps and every session is rebuilt; nothing else moves.
+- **Additive.** New insights arrive as new keys. Read the ones you know and
+  ignore the rest. A key's meaning never changes within a version.
+- **Units explicit; `{ "value": null, "reason": "…" }` when not computable**
+  (`"no-gps"`, `"unsynced-clock"`). Check for the object before doing
+  arithmetic on a scalar.
+- **Scalars and bounded event lists only.** `events[]` carries timestamped
+  findings (`stops` in v1) with `ts`, optional `endTs`, `position` as
+  `[lon, lat]`, and `value` plus `unit` where relevant, capped per kind, so a
+  timeline can pin them and a click can seek. Anything per-sample is a metric
+  and lives in `groups`, never here.
+- **Segment-derived only.** An insight is a pure function of the recorded
+  segments. Nothing that depends on a geofence, an organization setting or a
+  model is computed here, because it would go stale when that context changed;
+  such findings belong to the consuming product.
+
+Distance carries its own methodology in the object. It is a haversine sum over
+**accepted** fixes (`accept` records the rule), with `crossCheckMeters` being
+the integral of `gps.speed` over the same fixes. The two agree within a percent
+or two on a real drive; a large disagreement marks a suspect trace, typically
+GPS scatter while parked.
+
+## Reading it back
+
+| Endpoint                               | Returns                                                                                                     |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET /devices/{id}/replay-manifest`    | `replay.telemetry`: every session with a segment in the window, presigned overview and segments, insights.  |
+| `GET /devices/{id}/telemetry/sessions` | The paginated session index with counters and insights. No URLs. For tables and roll-ups.                   |
+| `GET /devices/{id}/telemetry*` (rows)  | The row-based history, unchanged. Still the right read for a live chart seed or a paginated readings table. |
+
+A session is listed when at least one of its segments overlaps the window,
+not merely when its bounds do: a session whose data sits in a recording hole
+around the window has nothing to show for it, and its overview would draw
+another time's route over this one.
+
+Through the manifest, a replay of a closed hour-long drive is one manifest call
+plus one GET for the overview and a GET per raw segment near the playhead, all
+against object storage, against roughly a dozen API calls before. Every URL in
+the block shares the manifest's `urlExpiresAt` with the video URLs, so the
+refresh contract is the same. The block has its own cap of 1 500 segments
+(about 24 hours at 1 per minute), honoured by `truncated: true` rather than by
+an error; narrow the window to reach the rest.
+
+## What is not here
+
+Recording is **off by default** and is configured per device through the
+`recording` namespace, so a device with recording off has no sessions, no
+artifacts and no route on replay. The live 1 Hz feed never writes history;
+the device's uploaded segments are the sole source, which is why the newest
+telemetry a replay can show is one segment rotation plus upload behind.

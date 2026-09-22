@@ -6,6 +6,7 @@
     "get-device-telemetry",
     "get-device-telemetry-latest",
     "get-device-telemetry-recent",
-    "get-device-telemetry-readings"
+    "get-device-telemetry-readings",
+    "list-device-telemetry-sessions"
   ]
 }

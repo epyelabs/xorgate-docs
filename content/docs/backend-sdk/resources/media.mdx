@@ -191,11 +191,14 @@ const incident = await xg.media.replayManifest(deviceId, {
 
 Caps, each a `400` telling you to narrow the request:
 
-| Cap                   | Applies to |
-| --------------------- | ---------- |
-| 600 segments in total | both modes |
-| 10 sessions           | range mode |
-| 24 hours              | range mode |
+| Cap                         | Applies to |
+| --------------------------- | ---------- |
+| 600 video segments in total | both modes |
+| 10 sessions                 | range mode |
+| 24 hours                    | range mode |
+
+Both forms take an optional `telemetry: false` to leave the telemetry block
+(below) out of the response.
 
 <Callout type="warn" title="Every timestamp here is epoch milliseconds">
   `from`, `to`, `urlExpiresAt`, `startTs`, gap bounds: all numbers, all epoch
@@ -246,6 +249,92 @@ telemetry-only replay of an old window possible.
   themselves, typically through Media Source Extensions. `session.codec`,
   `width`, `height` and `fps` are informational.
 </Callout>
+
+### Telemetry rides along
+
+`replay.telemetry` carries the recorded telemetry for the same window, as
+presigned objects: no API call per metric group, nothing through a database.
+
+```ts
+const replay = await xg.media.replayManifest(deviceId, { sessionId })
+
+if (!replay.telemetry) {
+  // Older server: fall back to xg.telemetry.history() over replay.from..to.
+}
+
+for (const t of replay.telemetry?.sessions ?? []) {
+  if (t.overview) {
+    // fetch() inflates the gzip itself; the body is the overview.v1 object.
+    const overview = await fetch(t.overview.url).then((r) => r.json())
+    console.log(t.id, overview.groups.gps?.ts.length, t.insights?.distance)
+  } else {
+    // Still recording: build the route from the raw segments and refetch
+    // the manifest about every 60 s until the session closes.
+    for (const seg of t.segments) {
+      const text = await fetch(seg.url).then((r) => r.text())
+    }
+  }
+}
+
+if (replay.telemetry?.truncated) {
+  // More than 1,500 telemetry segments in the window: narrow it.
+}
+```
+
+```ts
+interface ReplayTelemetry {
+  sessions: ReplayTelemetrySession[]
+  truncated: boolean // the 1,500-segment cap was hit; NOT a 400
+}
+
+interface ReplayTelemetrySession {
+  id: string // a TELEMETRY session id, not a video session id
+  status: "open" | "closed"
+  rateHz: number | null
+  timeSource: TimeSource | null // the WORST clock seen across its segments
+  from: number // epoch ms, first sample in the session
+  to: number
+  overview: ReplayTelemetryOverview | null // null while open, or until built
+  segments: ReplayTelemetrySegment[] // only those overlapping the window
+  insights: TelemetryInsights | null
+}
+
+interface ReplayTelemetryOverview {
+  format: "overview.v1"
+  url: string // Content-Type: application/json, Content-Encoding: gzip
+  bytes: number | null
+  builtAt: number
+}
+
+interface ReplayTelemetrySegment {
+  seq: number // order by startTs, never by seq
+  startTs: number // epoch ms, first sample IN THE FILE
+  endTs: number
+  samples: number
+  bytes: number
+  url: string // gzipped JSONL, inflated by fetch()
+}
+```
+
+Four rules:
+
+- **It is optional on the type.** A server older than API 0.9.0 never sends it.
+  When it is absent, fall back to `telemetry.history()`; when it is present,
+  never call the row endpoints for a replay.
+- **Telemetry sessions are joined to the replay by time, not by id.** A video
+  session and a telemetry session are minted independently on the device, so a
+  window can hold one, two or zero telemetry sessions; one is listed only when
+  at least one of its segments overlaps the window. Merge their segments into
+  one timeline the way you merge video lanes.
+- **`overview: null` means build it yourself, from `segments`.** That is the
+  open-session case (about 5 KB per minute recorded, so cheap), and it lasts a
+  minute or so past close. Refetch the manifest about every 60 s while any
+  session in it is `open`, so the segment list grows with the recording.
+- **The URLs share `urlExpiresAt` with the video URLs.** The same refresh
+  contract covers both; a `403` on any of them means refetch the manifest.
+
+The artifact format, the bucket rules and the insight contract are on
+[Telemetry sessions and artifacts](/platform-concepts/telemetry-sessions).
 
 ## Time source
 

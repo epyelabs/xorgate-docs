@@ -7,16 +7,16 @@ Almost everything a device produces is available two ways, and they are not two
 views of one system. They are two systems with different transports, different
 authentication, different latencies and different guarantees.
 
-|                                   | Live                                      | Recorded                                   |
-| --------------------------------- | ----------------------------------------- | ------------------------------------------ |
-| Telemetry transport               | MQTT over WebSocket, direct to the broker | REST, `GET /devices/{id}/telemetry*`       |
-| Video transport                   | WebRTC, viewer to device                  | Presigned segment URLs from object storage |
-| Goes through the API              | **no**                                    | yes                                        |
-| Credentials                       | vended by `POST /auth/live-credentials`   | your normal API auth                       |
-| Latency                           | about a second                            | minutes to hours, bounded by upload        |
-| History                           | none                                      | complete                                   |
-| Delivery                          | best effort, QoS 0                        | durable, retried until acknowledged        |
-| Works while the device is offline | no                                        | yes, for anything already uploaded         |
+|                                   | Live                                      | Recorded                                                  |
+| --------------------------------- | ----------------------------------------- | --------------------------------------------------------- |
+| Telemetry transport               | MQTT over WebSocket, direct to the broker | REST rows, or presigned artifacts via the replay manifest |
+| Video transport                   | WebRTC, viewer to device                  | Presigned segment URLs from object storage                |
+| Goes through the API              | **no**                                    | yes                                                       |
+| Credentials                       | vended by `POST /auth/live-credentials`   | your normal API auth                                      |
+| Latency                           | about a second                            | minutes to hours, bounded by upload                       |
+| History                           | none                                      | complete                                                  |
+| Delivery                          | best effort, QoS 0                        | durable, retried until acknowledged                       |
+| Works while the device is offline | no                                        | yes, for anything already uploaded                        |
 
 ## The live plane bypasses the API entirely
 

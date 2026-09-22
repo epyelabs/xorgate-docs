@@ -6,6 +6,7 @@
     "device-models",
     "device-ownership",
     "media-sessions",
+    "telemetry-sessions",
     "live-vs-recorded"
   ]
 }

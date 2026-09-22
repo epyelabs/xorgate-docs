@@ -88,7 +88,7 @@ started today. Sort by `startTs`, never by `uploadedAt`.
 | `GET /devices/{id}/sessions`        | Paginated sessions with per-session rollups. `?group=runs` clusters adjacent sessions into drivable runs. |
 | `GET /media-sessions/{id}/segments` | Every segment of one session, whole. Not paginated, on purpose.                                           |
 | `GET /media-segments/{id}/playback` | A presigned URL for one segment.                                                                          |
-| `GET /devices/{id}/replay-manifest` | A gap-aware timeline with segment URLs batch-presigned.                                                   |
+| `GET /devices/{id}/replay-manifest` | A gap-aware timeline with segment URLs batch-presigned, plus the telemetry artifacts for the same window. |
 
 There is **no HLS and no server-side transcoding**. Clients stitch the fragmented
 MP4 themselves through Media Source Extensions. The frontend SDK ships an engine
@@ -132,6 +132,16 @@ Telemetry is also recorded and uploaded as segments, on its own path
 **authoritative writer of its own history**: live ingest stops writing readings
 for it, because the device's batch upload is more complete. That is what the
 `recording.enabled` flag in the telemetry payload signals.
+
+A **telemetry session is a different id** from a video session. Both are
+UUIDv7s minted on the device, but the telemetry recorder mints one per start
+and each camera mints its own per stream spawn, so a single drive is one or two
+telemetry sessions next to one video session per camera, with near but not
+equal bounds. They are joined by **time window**, which is how the replay is
+addressed anyway: the replay manifest's `telemetry` block lists the telemetry
+sessions overlapping the replay's `from`..`to`, each as presigned artifacts.
+The format and the insight contract are on
+[Telemetry sessions and artifacts](/platform-concepts/telemetry-sessions).
 
 The full device-side story, including why a dead zone still records and what
 happens when the disk fills, is under

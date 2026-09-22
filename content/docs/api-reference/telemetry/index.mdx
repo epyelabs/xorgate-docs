@@ -1,6 +1,6 @@
 ---
 title: "Overview"
-description: "Stored sensor readings, the four ways to query them, and the caps on each."
+description: "Stored sensor readings, the four ways to query them, the caps on each, and the recorded-session index."
 ---
 
 Telemetry is stored as one row per reading: a timestamp, a metric name, a value
@@ -39,6 +39,17 @@ your only signal that data was left behind. Narrow the range or pass a coarser
 `/telemetry/readings` is the paginated history table, and the only one of the
 four that returns a `page` block. It paginates over DISTINCT timestamps so a
 page boundary never splits a sample.
+
+`/telemetry/sessions` is different in kind: it does not return readings at all.
+It lists what the device **recorded**, one row per telemetry session, with the
+counters and the `insights` block (distance, duration, max speed, stops, GPS
+quality) computed when the session's overview artifact was built. It is the read
+for a sessions table or a "kilometres this month" roll-up, and it never touches
+object storage. To play a session's telemetry, ask the
+[replay manifest](/api-reference/media-sessions/get-replay-manifest) for its
+window: the manifest's `telemetry` block carries the presigned overview and raw
+segments. The artifact format and the insight rules are on
+[Telemetry sessions and artifacts](/platform-concepts/telemetry-sessions).
 
 ## Two caps worth knowing on /telemetry/readings
 

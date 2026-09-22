@@ -1,6 +1,6 @@
 ---
 title: "Telemetry"
-description: "Four read shapes over stored telemetry: a time range, the latest per metric, the newest N, and the paginated readings table."
+description: "Four read shapes over stored telemetry, plus the recorded-session index with its insights."
 ---
 
 Devices publish telemetry at 1 Hz. This module reads what was stored. The live
@@ -19,6 +19,10 @@ recent(deviceId, params?): Promise<TelemetryHistory>
 readings(deviceId, params?): Promise<TelemetryTablePage>
 readingsFlat(deviceId, params?): Promise<Page<TelemetryReading>>
 iterateReadings(deviceId, params?): AsyncIterableIterator<TelemetryReading>
+
+sessions.list(deviceId, params?): Promise<Page<TelemetrySession>>
+sessions.iterate(deviceId, params?): AsyncIterableIterator<TelemetrySession>
+sessions.listAll(deviceId, params?): Promise<TelemetrySession[]>
 ```
 
 ## Which one to use
@@ -29,6 +33,8 @@ iterateReadings(deviceId, params?): AsyncIterableIterator<TelemetryReading>
 | "What is this device doing right now"        | `latest()` or `latestByMetric()`   |
 | To seed a chart on page load, window unknown | `recent()`                         |
 | A scrollable table, or to walk everything    | `readings()` / `iterateReadings()` |
+| A list of recorded drives with distance      | `sessions.list()`                  |
+| To replay a drive's telemetry                | `media.replayManifest()`           |
 
 ## `history(deviceId, params)`
 
@@ -221,6 +227,71 @@ it yields items and never sees the page block. `onPage` is the only way to
 notice. To read beyond the cap, narrow `from` and `to` and iterate the windows.
 
 </Callout>
+
+## `sessions.list(deviceId, params)`
+
+The index of what the device **recorded**: one row per telemetry session, with
+its counters and the `insights` block computed when its overview artifact was
+built. No readings and no URLs here, and nothing in object storage is touched:
+this is the read for a sessions table or a roll-up.
+
+```ts
+const page = await xg.telemetry.sessions.list(deviceId, {
+  from: "2026-09-01T00:00:00Z",
+  to: "2026-10-01T00:00:00Z",
+  status: "closed",
+})
+
+let meters = 0
+for (const s of page.items) {
+  const d = s.insights?.distance?.meters
+  if (typeof d === "number") meters += d
+  console.log(s.from, s.status, s.segments, s.insights?.speed?.maxKph)
+}
+console.log(`${(meters / 1000).toFixed(1)} km this month`)
+```
+
+<TypeTable
+  type={{
+    from: {
+      type: "string | Date",
+      description:
+        "Matches sessions OVERLAPPING the range, like media.sessions.list(), not only those that started inside it.",
+    },
+    to: { type: "string | Date" },
+    status: {
+      type: '"open" | "closed" | "any"',
+      description: '"any" means no filter.',
+    },
+    limit: {
+      type: "number",
+      description: "1 to 200, default 25. Out of range is a 400, not a clamp.",
+    },
+    offset: { type: "number" },
+    order: {
+      type: '"asc" | "desc"',
+      description: "By session start. Default desc (newest first).",
+    },
+  }}
+/>
+
+Three things to know:
+
+- **A telemetry session is not a video session.** Both ids are minted on the
+  device, independently. Relate them by time: a recording run's distance is the
+  sum of `insights.distance.meters` over the telemetry sessions returned for
+  the run's window.
+- **`insights` is `null` until the overview has been built**, which happens
+  when the session closes (about ten minutes after segments stop arriving).
+  An `open` session, or one closed within the last minute or so, has none yet.
+- **A scalar can be `{ value: null, reason }`** where it could not be computed
+  (`"no-gps"`, `"unsynced-clock"`). The types model this, which is why the
+  example checks `typeof d === "number"` before adding.
+
+`sessions.iterate()` and `sessions.listAll()` follow the usual
+[iteration convention](/backend-sdk/pagination). The full `TelemetrySession` and
+`TelemetryInsights` shapes, and the artifact they mirror, are on
+[Telemetry sessions and artifacts](/platform-concepts/telemetry-sessions).
 
 ## Metric names in TypeScript
 

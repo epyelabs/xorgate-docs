@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.8.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings` and `GET /workflow-templates` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
+    "version": "0.9.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
     {
@@ -2243,8 +2243,11 @@
           "sessions",
           "urlExpiresAt"
         ],
-        "description": "Everything a replay player needs in one response: per-session gap-aware timelines plus a presigned GET URL per segment. All timestamps are epoch milliseconds (the replay-clock unit), unlike the ISO strings elsewhere in this API. Format-neutral by design: no codec strings or playlist syntax, so clients parse media details from the segment bytes.",
+        "description": "Everything a replay player needs in one response: per-session gap-aware timelines plus a presigned GET URL per segment. All timestamps are epoch milliseconds (the replay-clock unit), unlike the ISO strings elsewhere in this API. Format-neutral by design: no codec strings or playlist syntax, so clients parse media details from the segment bytes.\n\nSince API 0.9.0 it also carries `telemetry`: the recorded-telemetry sessions overlapping the replay window, as presigned S3 artifacts (see the schema). Omitted only when the request said `telemetry=0`; a server older than 0.9.0 never sends it, so treat it as optional.",
         "properties": {
+          "telemetry": {
+            "$ref": "#/components/schemas/ReplayTelemetry"
+          },
           "deviceId": {
             "type": "string",
             "format": "uuid"
@@ -2400,6 +2403,433 @@
                 }
               }
             }
+          }
+        }
+      },
+      "ReplayTelemetry": {
+        "type": "object",
+        "required": [
+          "sessions",
+          "truncated"
+        ],
+        "description": "Recorded telemetry for the replay window, served as immutable S3 artifacts by presigned URL (telemetry session artifacts). A **telemetry session** is a different id from a video session: both are minted independently on the device, so they are joined by TIME, not by id. This block lists every telemetry session with at least one segment overlapping `replay.from`..`replay.to`, in start order (a session whose bounds straddle the window but whose data sits in a recording hole is not listed). A device with recording off, or nothing recorded in the window, returns `{ \"sessions\": [], \"truncated\": false }`. Every URL here shares `replay.urlExpiresAt` with the video URLs, so one refetch refreshes all of them.",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReplayTelemetrySession"
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the window contained more than 1,500 telemetry segments (about 24 hours at the default 60 s rotation) and only the earliest 1,500 by `startTs` are listed. Not an error: narrow the window to reach the rest. The cap is separate from the 600 video segments, which are still a 400."
+          }
+        }
+      },
+      "ReplayTelemetrySession": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "rateHz",
+          "timeSource",
+          "from",
+          "to",
+          "overview",
+          "segments",
+          "insights"
+        ],
+        "description": "One telemetry session overlapping the replay window. Two tiers of artifact: `overview` is the precomputed, downsampled `overview.v1` object (route line, scrub preview, every metric, gzipped columnar JSON, typically 15 to 40 KB), and `segments` are the raw 60 s files the device recorded, clipped to the window. All timestamps epoch ms.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Device-minted UUIDv7 of the TELEMETRY session."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "description": "Advisory, same rule as media sessions: `closed` about 10 minutes after segments stop arriving; a straggler segment reopens it and the overview is rebuilt on the next close."
+          },
+          "rateHz": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Sample rate the device recorded at."
+          },
+          "timeSource": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ntp",
+              "gps",
+              "nitz",
+              "rtc",
+              "unsynced"
+            ],
+            "description": "The WORST clock quality seen across the session's segment headers. `rtc` is common on a boot that never synced; `unsynced` means wall-clock correlation with video is untrustworthy."
+          },
+          "from": {
+            "type": "integer",
+            "description": "Epoch ms of the first sample in the session (not clipped to the window)."
+          },
+          "to": {
+            "type": "integer",
+            "description": "Epoch ms of the last sample in the session so far."
+          },
+          "overview": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReplayTelemetryOverview"
+              }
+            ],
+            "description": "`null` while the session is `open`, and for a short while after it closes until the artifact is built. A client then builds its own overview from `segments`, which is cheap (about 5 KB per minute recorded), and polls the manifest about every 60 s while any session is open."
+          },
+          "segments": {
+            "type": "array",
+            "description": "Only the segments overlapping the replay window, ordered by `startTs`. Each is the device's own gzipped JSONL file, served with `Content-Encoding: gzip` so `fetch()` inflates it natively: a header line, then one `{ ts, mono, seq, metrics }` sample per line. Immutable and safe to cache by URL path.",
+            "items": {
+              "$ref": "#/components/schemas/ReplayTelemetrySegment"
+            }
+          },
+          "insights": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryInsights"
+              }
+            ],
+            "description": "The session's insights, byte-identical to the block inside the overview object. `null` until the overview has been built."
+          }
+        }
+      },
+      "ReplayTelemetryOverview": {
+        "type": "object",
+        "required": [
+          "format",
+          "url",
+          "bytes",
+          "builtAt"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "overview.v1"
+            ],
+            "description": "The artifact format. Additive fields keep `overview.v1`; a breaking change is a new format name, and this field says which one the URL serves."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Presigned S3 GET. `Content-Type: application/json`, `Content-Encoding: gzip`."
+          },
+          "bytes": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Gzipped size, for fetch budgeting. `null` for an artifact built before sizes were recorded."
+          },
+          "builtAt": {
+            "type": "integer",
+            "description": "Epoch ms the artifact was (re)built."
+          }
+        }
+      },
+      "ReplayTelemetrySegment": {
+        "type": "object",
+        "required": [
+          "seq",
+          "startTs",
+          "endTs",
+          "samples",
+          "bytes",
+          "url"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "description": "Device sequence within the session. Order by `startTs`, never by `seq`."
+          },
+          "startTs": {
+            "type": "integer",
+            "description": "Epoch ms of the first sample IN THE FILE."
+          },
+          "endTs": {
+            "type": "integer",
+            "description": "Epoch ms of the last sample in the file."
+          },
+          "samples": {
+            "type": "integer",
+            "description": "Valid sample lines in the file."
+          },
+          "bytes": {
+            "type": "integer",
+            "description": "Gzipped object size."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Presigned S3 GET for the `.jsonl.gz`."
+          }
+        }
+      },
+      "TelemetryInsights": {
+        "type": "object",
+        "required": [
+          "computed",
+          "computedAt",
+          "events"
+        ],
+        "additionalProperties": true,
+        "description": "Per-session summaries computed from the segments when the overview is built, one namespace per insight. Versioned PER INSIGHT: `computed` maps each insight id to the version that produced it, so a consumer can tell `distance` v1 from a future v2 without a format bump. Additive: new insight ids appear as new keys, so read the ones you know and ignore the rest. A scalar that could not be computed is `{ \"value\": null, \"reason\": ... }`. Every insight is a pure function of the recorded segments (nothing that depends on a geofence, an org setting or a model), which is what makes a rebuild reproducible. The v1 set: `duration`, `distance`, `speed`, `position`, `altitude`, `gpsQuality`, `system`, `lte`, and `stops` (an event list). See the platform-concepts page on telemetry sessions for each block's fields.",
+        "properties": {
+          "computed": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "`{ insightId: version }` for every insight present.",
+            "example": {
+              "duration": 1,
+              "distance": 1,
+              "speed": 1,
+              "position": 1,
+              "altitude": 1,
+              "gpsQuality": 1,
+              "system": 1,
+              "lte": 1,
+              "stops": 1
+            }
+          },
+          "computedAt": {
+            "type": "integer",
+            "description": "Epoch ms."
+          },
+          "duration": {
+            "type": "object",
+            "description": "`totalMs`, `movingMs`, `idleMs`, `movingThresholdKph`.",
+            "additionalProperties": true,
+            "example": {
+              "totalMs": 3497000,
+              "movingMs": 2811000,
+              "idleMs": 686000,
+              "movingThresholdKph": 2
+            }
+          },
+          "distance": {
+            "type": "object",
+            "description": "`meters` by haversine over ACCEPTED fixes, with the acceptance rule (`accept`), the fix counts, and `crossCheckMeters` (the integral of `gps.speed` over the same fixes). A large disagreement between the two marks a suspect trace.",
+            "additionalProperties": true,
+            "example": {
+              "meters": 25181.6,
+              "method": "haversine-2d",
+              "fixesUsed": 3074,
+              "fixesRejected": 0,
+              "crossCheckMeters": 25103.8
+            }
+          },
+          "speed": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "maxKph": 116.1,
+              "avgMovingKph": 45,
+              "source": "gps.speed"
+            }
+          },
+          "position": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "`start` and `end` as `[lon, lat]`.",
+            "example": {
+              "start": [
+                -79.5745,
+                43.5983
+              ],
+              "end": [
+                -79.5179,
+                43.6659
+              ]
+            }
+          },
+          "altitude": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "minM": 14,
+              "maxM": 31,
+              "gainM": 42,
+              "lossM": 39
+            }
+          },
+          "gpsQuality": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "fixRatio": 0.98,
+              "avgSatellites": 7.6,
+              "avgHdop": 0.9
+            }
+          },
+          "system": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "maxCpuTempC": 71.5,
+              "throttledMs": 0
+            }
+          },
+          "lte": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "minRssi": -101,
+              "avgRssi": -83,
+              "resets": 0
+            }
+          },
+          "events": {
+            "type": "array",
+            "description": "Timestamped findings (stops in v1), bounded per kind, so a timeline can pin them and a click can seek. Never a per-sample series.",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "ts"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "example": "stop"
+                },
+                "ts": {
+                  "type": "integer",
+                  "description": "Epoch ms."
+                },
+                "endTs": {
+                  "type": "integer"
+                },
+                "position": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "`[lon, lat]`."
+                },
+                "value": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "TelemetrySession": {
+        "type": "object",
+        "required": [
+          "id",
+          "deviceId",
+          "status",
+          "rateHz",
+          "timeSource",
+          "from",
+          "to",
+          "lastSegmentAt",
+          "segments",
+          "samples",
+          "bytes",
+          "overviewBuiltAt",
+          "overviewBytes",
+          "insights"
+        ],
+        "description": "One recorded-telemetry session as the index knows it: lifecycle, counters and the `insights` mirror, with NO URLs (the replay manifest presigns). Timestamps are ISO-8601 here, like the media sessions list; the manifest's epoch-ms exception does not apply.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Device-minted UUIDv7 (sorts by start time)."
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "description": "Advisory; see the manifest schema."
+          },
+          "rateHz": {
+            "type": "integer",
+            "nullable": true
+          },
+          "timeSource": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ntp",
+              "gps",
+              "nitz",
+              "rtc",
+              "unsynced"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "First sample in the session."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last sample so far."
+          },
+          "lastSegmentAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Server-side arrival time of the newest segment: the close-detection clock."
+          },
+          "segments": {
+            "type": "integer",
+            "description": "Segment files indexed."
+          },
+          "samples": {
+            "type": "integer",
+            "description": "Valid sample lines across them."
+          },
+          "bytes": {
+            "type": "integer",
+            "description": "Gzipped bytes across them."
+          },
+          "overviewBuiltAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "`null` until the overview artifact exists."
+          },
+          "overviewBytes": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Gzipped size of the overview; `null` until built or backfilled."
+          },
+          "insights": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryInsights"
+              }
+            ],
+            "description": "`null` until the overview has been built."
           }
         }
       },
@@ -7541,6 +7971,132 @@
         }
       }
     },
+    "/v1/devices/{id}/telemetry/sessions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listDeviceTelemetrySessions",
+        "summary": "List recorded telemetry sessions with their insights",
+        "description": "The index of what the device RECORDED, one row per telemetry session, with the counters and the `insights` block computed when its overview was built (distance, duration, max speed, stops, GPS quality, ...). This is the read for a sessions table or a roll-up such as \"kilometres this month\": it never opens an artifact and never touches object storage. No URLs; to play a session's telemetry, ask the replay manifest for its window.\n\nA telemetry session is NOT a video session: both ids are minted independently on the device, so relate them by time. `from`/`to` match sessions OVERLAPPING the range, exactly like `GET /devices/{id}/sessions`, so a recording run's distance is the sum over the telemetry sessions returned for the run's window. `insights` is `null` on a session whose overview has not been built yet (it is `open`, or closed within the last minute or so). Listing has the same side effect as the media list: it closes stale sessions as it goes.\n\nPaginated: `page.total` is exact. Sorted by session start, newest first by default.",
+        "tags": [
+          "Telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 25
+            },
+            "description": "Sessions per page. Out of range is a 400."
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "startedAt"
+              ],
+              "default": "startedAt"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "any"
+              ]
+            },
+            "description": "Filter by lifecycle state. Omit or pass `any` for both."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Sessions still recording at or after this instant (overlap semantics)."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Sessions that started before this instant (overlap semantics)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of telemetry sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sessions",
+                    "page"
+                  ],
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TelemetrySession"
+                      }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
     "/v1/devices/{id}/sessions": {
       "parameters": [
         {
@@ -7874,7 +8430,7 @@
       "get": {
         "operationId": "getReplayManifest",
         "summary": "Get a gap-aware replay manifest with presigned segment URLs",
-        "description": "One response feeds a whole replay: per-session timelines (effective durations and gaps, computed server-side so every client renders the same timeline) plus a presigned GET URL per segment. Address it by `sessionId` (single session) OR by `from`/`to` (every session overlapping the range, segments clipped to it, optional `streamKey` filter), never both. Caps: 600 segments in total, and in range mode 10 sessions and 24 hours. Exceeding a cap is a 400 telling you to narrow the request. Refetch before `urlExpiresAt` (epoch ms), which is the real URL TTL minus a 5-minute safety margin.",
+        "description": "One response feeds a whole replay: per-session timelines (effective durations and gaps, computed server-side so every client renders the same timeline) plus a presigned GET URL per segment. Address it by `sessionId` (single session) OR by `from`/`to` (every session overlapping the range, segments clipped to it, optional `streamKey` filter), never both. Caps: 600 segments in total, and in range mode 10 sessions and 24 hours. Exceeding a cap is a 400 telling you to narrow the request. Refetch before `urlExpiresAt` (epoch ms), which is the real URL TTL minus a 5-minute safety margin.\n\n**Telemetry rides along.** `replay.telemetry` lists the recorded-telemetry sessions that overlap the replay window (in session mode, the merged video timeline; in range mode, `from`..`to`), each with a presigned `overview.v1` artifact and its raw segments clipped to the window, plus the session's `insights`. Nothing in it touches a database or a Lambda on fetch: the browser GETs the objects straight from storage, and the URLs share `urlExpiresAt` with the video ones. An `open` session has `overview: null`; build it from its `segments` and poll the manifest about every 60 s until it closes. Telemetry has its own cap of 1,500 segments, honoured by truncation (`telemetry.truncated: true`), not by a 400. Pass `telemetry=0` to omit the block; a device that recorded nothing in the window returns `{ \"sessions\": [] }`.",
         "tags": [
           "Media Sessions"
         ],
@@ -7917,6 +8473,20 @@
               "example": "cam0"
             },
             "description": "Range mode only: limit to one camera."
+          },
+          {
+            "name": "telemetry",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "default": "1"
+            },
+            "description": "`0` omits `replay.telemetry` (video-only clients, or a client that fetches telemetry by other means). Anything else, or absent, includes it."
           }
         ],
         "responses": {

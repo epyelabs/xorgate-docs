@@ -308,11 +308,13 @@ interface ReplayManifest {
   to: number
   urlExpiresAt: number
   sessions: ReplaySession[]
+  telemetry?: ReplayTelemetry // absent on a server older than API 0.9.0
 }
 ```
 
-The full `ReplaySession`, `ReplaySegment` and `ReplayGap` shapes are on
-[Media](/backend-sdk/resources/media).
+The full `ReplaySession`, `ReplaySegment`, `ReplayGap` and `ReplayTelemetry*`
+shapes are on [Media](/backend-sdk/resources/media); `TelemetrySession` and
+`TelemetryInsights` are on [Telemetry](/backend-sdk/resources/telemetry).
 
 ## Transfer
 
