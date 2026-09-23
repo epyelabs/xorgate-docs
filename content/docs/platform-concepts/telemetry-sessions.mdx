@@ -224,6 +224,40 @@ the integral of `gps.speed` over the same fixes. The two agree within a percent
 or two on a real drive; a large disagreement marks a suspect trace, typically
 GPS scatter while parked.
 
+## The `telemetry_session_completed` workflow trigger
+
+A device workflow attachment can subscribe to `telemetry_session_completed`,
+the telemetry twin of the media `session_completed` trigger. It fires once a
+telemetry session has **closed and its overview is built**, so the trigger
+context carries the session's `insights` block: "a drive over 50 km just
+ended", "three stops on this run" are one condition node away. There is
+nothing to configure on the trigger (a device has one telemetry recorder), and
+the run's telemetry window is the session's recorded span, so a
+`source.telemetry` node in the workflow reads exactly that drive.
+
+```jsonc
+// workflow_runs.trigger_context for a run this trigger started
+{
+  "type": "telemetry_session_completed",
+  "sessionId": "01a0be0c-4cc1-793b-a64c-2496553cb92d",
+  "deviceId": "b291752a-17fa-4b0f-8f1e-e9fd0ff13470",
+  "from": "2026-09-20T09:14:20.000Z", "to": "2026-09-20T10:12:37.000Z",
+  "rateHz": 1, "timeSource": "ntp",
+  "segmentCount": 45, "sampleCount": 3481,
+  "insights": { "computed": { "distance": 1, "…": "…" }, "distance": { "meters": 12437, "…": "…" }, "…": "…" },
+  "window": { "from": "2026-09-20T09:14:20.000Z", "to": "2026-09-20T10:12:37.000Z" }
+}
+```
+
+Like the media trigger it is **at-least-once**: the close is advisory, a
+segment that arrives after it reopens the session, and the next close rebuilds
+the overview and fires again with the updated insights. A workflow that must
+run once per drive dedupes on `sessionId`. It fires from the platform's
+housekeeping tick, typically within a minute or two of the close; a session
+whose overview cannot be built does not fire until it can. The same trigger
+can be run by hand from the device's Workflows tab over any recorded telemetry
+session.
+
 ## Reading it back
 
 | Endpoint                               | Returns                                                                                                     |
