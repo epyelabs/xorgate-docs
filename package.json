@@ -17,7 +17,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,mjs,mdx,json,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,mjs,mdx,json,css}\"",
     "refresh-openapi": "node scripts/refresh-openapi.mjs",
-    "generate-openapi": "node scripts/generate-openapi.mjs"
+    "generate-openapi": "node scripts/generate-openapi.mjs && node scripts/generate-webhook-events.mjs"
   },
   "dependencies": {
     "cnfast": "^0.1.0",

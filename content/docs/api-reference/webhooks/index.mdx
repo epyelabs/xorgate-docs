@@ -1,0 +1,43 @@
+---
+title: "Overview"
+description: "The webhook endpoint registry, its delivery log, the event catalog, a device's routes, and the payload of every event type."
+---
+
+These routes manage where xorgate sends webhooks. The concepts (where routing
+is configured, verification, retries, idempotency, latency) are on
+[Webhooks](/platform-concepts/webhooks); this section is the route-by-route
+reference.
+
+## The model
+
+An **endpoint** is an organization resource: a unique `name`, an `https://`
+URL and a signing secret that is returned once, on create and on rotate. Owners
+and admins manage endpoints; every role can read them. A workspace-scoped
+session token is refused (`403 WORKSPACE_SCOPED`).
+
+An endpoint receives nothing until something routes to it:
+
+- a **device route**, `PUT /devices/{id}/webhooks`, for that device's presence
+  and session events (the seven device event types), or
+- a workflow template whose `output.event` node names the endpoint in its
+  `webhook` field, for `workflow.event` in production runs.
+
+`POST /webhooks/{id}/test` sends a `ping` to the one endpoint.
+
+## Deliveries
+
+Each event becomes one **delivery** per endpoint it is routed to. A delivery is
+`pending` while queued or waiting to retry, `delivered` on a `2xx`, `failed`
+for a failed ping, a `410` or a disabled endpoint, and `exhausted` after eight
+failed attempts over about 44 hours. The log is kept for 30 days;
+`GET /webhooks/{id}/deliveries/{deliveryId}` includes the envelope that was
+sent and the first 1 KB of the response. Redelivery sends the same event (same
+`webhook-id`) on a fresh retry schedule, and answers `409` while the endpoint
+is disabled.
+
+## Event payloads
+
+**Event payloads** below has one page per event type: the request xorgate
+sends, with the envelope schema and a sample body. The API document publishes
+them under its `x-webhooks` extension, and `GET /webhook-event-types` serves
+the same catalog with one sample `data` per type.

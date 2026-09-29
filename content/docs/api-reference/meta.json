@@ -15,6 +15,7 @@
     "media-sessions",
     "live",
     "workflow-templates",
+    "webhooks",
     "search",
     "meta"
   ],

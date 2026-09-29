@@ -1,0 +1,620 @@
+---
+title: "Webhooks"
+description: "Signed HTTPS callbacks for device presence, recording sessions and workflow events: where routing is configured, the envelope, the event reference, signature verification, retries, idempotency and latency."
+---
+
+A webhook is an HTTPS `POST` that xorgate sends to a URL you own when something
+happens: a device goes online or offline, a recording session starts, ends or
+completes, or a workflow emits an event. It replaces the poll loops you would
+otherwise write against `GET /devices/{id}` and the session listings.
+
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com/)
+specification: every request is signed, retried with backoff until your
+endpoint answers `2xx`, and recorded in a delivery log you can read and replay.
+Delivery is **at least once**, so your receiver dedupes on the event `id`.
+
+## Three places to configure
+
+A webhook needs an **endpoint** (where to send) and a **route** (what to send
+there). Endpoints live in one registry per organization; routes are set where
+the event comes from.
+
+| What                                      | Configured in the console                                                          | API                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Endpoints (URL, name, signing secret)     | **Webhooks** in the sidebar, next to API Keys (the Webhook endpoints page)         | `POST /webhooks`, `GET/PATCH/DELETE /webhooks/{id}`    |
+| Workflow events (`workflow.event`)        | The **Webhook** dropdown on the Event (`output.event`) node in the workflow editor | the template definition (`config.webhook` on the node) |
+| Presence and session events (seven types) | The device's **Settings → Webhooks** sub-tab                                       | `GET` / `PUT /devices/{id}/webhooks`                   |
+
+### Endpoints
+
+An endpoint is a `name`, a `url` and a signing secret. The `name` (for example
+`dispatch`) is unique within the organization and is what a workflow refers to,
+so a template never carries a URL or a secret. Owners and admins create and
+manage endpoints; every role can read them and their delivery logs.
+
+```bash
+curl -X POST "$XORGATE_API/v1/webhooks" \
+  -H "Authorization: Bearer $XORGATE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "dispatch", "url": "https://example.com/hooks/xorgate" }'
+```
+
+The response carries `secret` (`whsec_` followed by the standard base64 of 32
+random bytes) **exactly once**. Store it; it cannot be read again, only
+rotated. The URL must be `https://`, carry no `user:pass@`, and not be
+`localhost` or a literal private, loopback or link-local address. Redirects are
+never followed. Endpoints are organization resources, so a workspace-scoped
+session token is refused on these routes (`403 WORKSPACE_SCOPED`).
+
+An endpoint receives nothing until something routes to it.
+
+From `@xorgate/sdk` 0.9.0 the same routes are `xg.webhooks.create()`, `list()`,
+`get()`, `update()`, `delete()`, `test()`, `rotateSecret()` and
+`eventTypes()`, the delivery log is `xg.webhooks.deliveries.list()`, `get()`
+and `redeliver()`, and a device's routes are `xg.devices.webhooks.get()` and
+`set()`.
+
+### Workflow events: the `output.event` node
+
+The [`output.event`](/workflows/catalog#output) node has an optional
+`webhook` field that holds an endpoint **name**. Every event that node emits in
+a **production** run is delivered to the organization's endpoint of that name
+as a `workflow.event`.
+
+```json
+{
+  "id": "n4",
+  "type": "output.event",
+  "data": {
+    "label": "Harsh brake",
+    "config": { "kind": "harsh_brake", "webhook": "dispatch" }
+  }
+}
+```
+
+- The name is resolved per organization when the run finalizes, so a template
+  imported into another organization binds `dispatch` to that organization's
+  own endpoint. Publishing a template whose name has no endpoint warns but
+  does not fail.
+- If no endpoint has that name when the run finalizes, the event is recorded
+  as unrouted and **not delivered**. Creating the endpoint later does not
+  backfill it.
+- **Simulation runs never deliver.** The simulator's run detail shows
+  `wouldDeliverTo` on each event instead, so you can check routing without a
+  real `POST`.
+
+### Presence and session events: the device
+
+Presence (`device.online`, `device.offline`) and session events
+(`media_session.*`, `telemetry_session.*`) are routed **per device**: pick one
+or more endpoints on the device page's **Settings → Webhooks** sub-tab and tick the
+events each one gets. The API equivalent replaces the whole set:
+
+```bash
+curl -X PUT "$XORGATE_API/v1/devices/$DEVICE_ID/webhooks" \
+  -H "Authorization: Bearer $XORGATE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "routes": [ { "endpointId": "'$ENDPOINT_ID'", "eventTypes": ["device.online", "device.offline", "telemetry_session.completed"] } ] }'
+```
+
+`{"routes": []}` removes every route. A workspace-scoped session token may
+manage its own workspace's devices, which is how an integration wires a device
+at pairing time. Routes are cloud-side only; they are not part of the device's
+config and never reach the device. A route applies to events from the moment it
+is saved: **there is no backfill**.
+
+## The envelope
+
+Every delivery's body is one JSON object:
+
+{/* BEGIN generated:envelope (scripts/generate-webhook-events.mjs from openapi/xorgate.json x-webhooks; do not edit by hand) */}
+
+```json
+{
+  "id": "0192f0a4-5555-7000-8000-000000000006",
+  "type": "device.offline",
+  "apiVersion": "2026-09-27",
+  "createdAt": "2026-09-27T14:03:11.412Z",
+  "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+  "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+  "data": {
+    "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+    "serial": "10954137370d4c73988b65d994e76a19",
+    "name": "Truck 01",
+    "lastSeenAt": "2026-09-27T14:03:10.100Z",
+    "status": "offline",
+    "previousStatus": "online",
+    "source": "lwt"
+  }
+}
+```
+
+{/* END generated:envelope */}
+
+| Field            | Meaning                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `id`             | A UUIDv7, also sent as the `webhook-id` header. **Dedupe on it.** A redelivery of the same event keeps it. |
+| `type`           | The event type, also sent as `x-xorgate-event`.                                                            |
+| `apiVersion`     | The version of the `data` shapes, currently `2026-09-27`.                                                  |
+| `createdAt`      | When xorgate detected the event, on the server clock. Device-side times are inside `data`.                 |
+| `organizationId` | The organization the event belongs to.                                                                     |
+| `workspaceId`    | The workspace of the device or of the workflow run; `null` for `ping`.                                     |
+| `data`           | The event itself. Ids and API paths only: never a presigned URL, since those expire.                       |
+
+And the request headers:
+
+| Header               | Value                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `webhook-id`         | The envelope `id`.                                                                                     |
+| `webhook-timestamp`  | Unix seconds when this attempt was sent. Each retry gets a fresh one.                                  |
+| `webhook-signature`  | `v1,<base64 signature>`; two space-separated entries during a [secret rotation](#rotating-the-secret). |
+| `x-xorgate-event`    | The event type.                                                                                        |
+| `x-xorgate-delivery` | The delivery id, as in `GET /webhooks/{id}/deliveries`. Differs per redelivery; do not dedupe on it.   |
+| `user-agent`         | `xorgate-webhooks/1`                                                                                   |
+| `content-type`       | `application/json`                                                                                     |
+
+## Event reference
+
+The table and the samples are rendered from the API's own event catalog.
+
+{/* BEGIN generated:events (scripts/generate-webhook-events.mjs from openapi/xorgate.json x-webhooks; do not edit by hand) */}
+
+| Event                                                        | Routed by                                 | Fires when                                                                                                                                                              |
+| ------------------------------------------------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`device.online`](#deviceonline)                             | Device route                              | The device came online (connect message or first telemetry after being offline).                                                                                        |
+| [`device.offline`](#deviceoffline)                           | Device route                              | The device went offline: graceful disconnect, MQTT last-will, or the stale-telemetry sweeper.                                                                           |
+| [`media_session.started`](#media_sessionstarted)             | Device route                              | The first segment of a new media session was ingested ("first data arrived", not "recording began").                                                                    |
+| [`media_session.ended`](#media_sessionended)                 | Device route                              | No segment arrived for the close window (10 min). A straggler segment reopens the session and it ends again later.                                                      |
+| [`telemetry_session.started`](#telemetry_sessionstarted)     | Device route                              | The first segment of a new telemetry session was ingested.                                                                                                              |
+| [`telemetry_session.ended`](#telemetry_sessionended)         | Device route                              | The telemetry session closed; its overview and insights may not be built yet.                                                                                           |
+| [`telemetry_session.completed`](#telemetry_sessioncompleted) | Device route                              | The closed telemetry session has its overview artifact and insights. The event most consumers want.                                                                     |
+| [`workflow.event`](#workflowevent)                           | The `output.event` node's `webhook` field | An output.event node whose `webhook` names this endpoint fired, in a production run. Delivered once the run ends. `payload` is producer-defined and not a stable shape. |
+| [`ping`](#ping)                                              | `POST /webhooks/{id}/test`                | Sent by POST /webhooks/\{id\}/test. One attempt, never retried.                                                                                                         |
+
+Each sample below is the `data` object of that event, exactly as the
+catalog (`GET /webhook-event-types`) serves it. The full body of every
+type, with the envelope, is in the
+[API reference](/api-reference/webhooks/events/device-online).
+
+### `device.online`
+
+```json
+{
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "serial": "10954137370d4c73988b65d994e76a19",
+  "name": "Truck 01",
+  "lastSeenAt": "2026-09-27T14:03:10.100Z",
+  "status": "online",
+  "previousStatus": "offline",
+  "source": "connect"
+}
+```
+
+### `device.offline`
+
+```json
+{
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "serial": "10954137370d4c73988b65d994e76a19",
+  "name": "Truck 01",
+  "lastSeenAt": "2026-09-27T14:03:10.100Z",
+  "status": "offline",
+  "previousStatus": "online",
+  "source": "lwt"
+}
+```
+
+### `media_session.started`
+
+```json
+{
+  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "streamKey": "cam0",
+  "startedAt": "2026-09-27T13:10:00.000Z",
+  "timeSource": "gps",
+  "codec": "h264",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "firstSeq": 0
+}
+```
+
+### `media_session.ended`
+
+```json
+{
+  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "startedAt": "2026-09-27T13:10:00.000Z",
+  "endedAt": "2026-09-27T13:52:00.000Z",
+  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+  "segmentCount": 42,
+  "reopened": false,
+  "streamKey": "cam0",
+  "totalBytes": 251658240,
+  "totalDurationMs": 2520000
+}
+```
+
+### `telemetry_session.started`
+
+```json
+{
+  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "startedAt": "2026-09-27T13:10:00.000Z",
+  "rateHz": 1,
+  "timeSource": "gps"
+}
+```
+
+### `telemetry_session.ended`
+
+```json
+{
+  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "startedAt": "2026-09-27T13:10:00.000Z",
+  "endedAt": "2026-09-27T13:52:00.000Z",
+  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+  "segmentCount": 42,
+  "reopened": false,
+  "sampleCount": 2520,
+  "byteCount": 409600
+}
+```
+
+### `telemetry_session.completed`
+
+```json
+{
+  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+  "startedAt": "2026-09-27T13:10:00.000Z",
+  "endedAt": "2026-09-27T13:52:00.000Z",
+  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+  "segmentCount": 42,
+  "reopened": false,
+  "sampleCount": 2520,
+  "byteCount": 409600,
+  "distanceM": 38210,
+  "durationMs": 2520000,
+  "maxSpeedKph": 104.2,
+  "insights": {},
+  "overview": {
+    "apiPath": "/v1/devices/0192f0a4-0000-7000-8000-000000000001/telemetry/sessions/0192f0a4-1111-7000-8000-000000000002"
+  }
+}
+```
+
+### `workflow.event`
+
+```json
+{
+  "eventId": "0192f0a4-2222-7000-8000-000000000003",
+  "nodeId": "n4",
+  "webhook": "dispatch",
+  "kind": "harsh_brake",
+  "occurredAt": "2026-09-27T13:31:12.000Z",
+  "confidence": 1,
+  "payloadSummary": "harsh_brake · observed 0.62",
+  "payload": {
+    "signal": "accel.x",
+    "observed": 0.62,
+    "operator": "gt",
+    "threshold": 0.5
+  },
+  "run": {
+    "id": "0192f0a4-3333-7000-8000-000000000004",
+    "templateId": "0192f0a4-4444-7000-8000-000000000005",
+    "templateVersion": 3,
+    "trigger": "event",
+    "triggerContext": null,
+    "deviceId": "0192f0a4-0000-7000-8000-000000000001"
+  }
+}
+```
+
+### `ping`
+
+```json
+{
+  "message": "Test ping from xorgate"
+}
+```
+
+{/* END generated:events */}
+
+### What the presence events mean
+
+`source` says which path noticed the change:
+
+| Event            | `source`    | Meaning                                                                                              |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
+| `device.online`  | `connect`   | The device's MQTT connect message.                                                                   |
+| `device.online`  | `telemetry` | Telemetry arrived from a device marked offline (its MQTT session survived, for example a dead zone). |
+| `device.offline` | `graceful`  | The agent said goodbye before disconnecting (a stop or a clean shutdown).                            |
+| `device.offline` | `lwt`       | The broker published the device's MQTT last will: the connection died without a goodbye.             |
+| `device.offline` | `sweeper`   | Telemetry went stale and the platform's minute sweeper marked the device offline.                    |
+
+There is no dwell or debounce in this version. A short connectivity blip
+produces an offline/online pair, and a stale last will racing a reconnect can
+produce an `offline` immediately followed by an `online`. Debounce on your side
+if a flap should not page anyone, for example by acting on `device.offline`
+only when no `device.online` for that device arrives within a minute or two.
+Conversely, a disconnect within about ten seconds of a connect can be absorbed
+by the platform's flap guard and produce no event at all.
+
+### What the session events mean
+
+- **`started` means the first segment was ingested**, not that recording
+  began. A device uploads roughly 60 second segments, so `started` arrives at
+  least a minute after recording began, and hours later if the device was
+  offline and uploads a backlog. `data.startedAt` is the device's own start
+  time; use it, not the envelope's `createdAt`.
+- **`ended` means ten minutes of quiet.** A session has no explicit end: it is
+  closed once no segment has arrived for about ten minutes (see
+  [Media sessions](/platform-concepts/media-sessions)). A late straggler segment
+  reopens it and it ends again later, so `ended` **can fire more than once** for
+  one session, the later ones with `reopened: true` and a later
+  `lastSegmentAt`. Each is a separate event with its own `id`.
+- **`telemetry_session.completed`** fires once the closed telemetry session's
+  overview artifact and insights exist, shortly after `telemetry_session.ended`.
+  It carries the distance, duration, top speed and the overview's API path, and
+  is the one most consumers want. See
+  [Telemetry sessions](/platform-concepts/telemetry-sessions).
+
+### What `workflow.event` means
+
+- Production runs only, delivered **after the run ends**: every event of the
+  run is delivered as one batch at finalize, one delivery per event. There is
+  no mid-run delivery.
+- `data.nodeId` is the `output.event` node that emitted it, and `data.webhook`
+  is the endpoint name that node carries. `data.run` identifies the run, its
+  template and version, what triggered it, and the device.
+- `data.payload` is producer-defined: its shape depends on the node graph
+  upstream of the `output.event` node and is **not a stable contract**.
+  `kind`, `occurredAt`, `confidence` and `payloadSummary` are.
+
+## Verifying signatures
+
+Verify every delivery before trusting it. The signature is an HMAC-SHA256 over
+`<webhook-id>.<webhook-timestamp>.<body>`, keyed with the base64-decoded bytes
+after `whsec_`.
+
+<Callout type="warn" title="Verify the raw body">
+  Compute the signature over the body **exactly as received**, before any JSON
+  parsing. A framework that parses the body and hands you an object has already
+  lost the bytes: re-serializing it changes whitespace or key order and the
+  signature no longer matches. In Express use `express.raw({ type:
+  "application/json" })` on the webhook route; in other frameworks, read the
+  raw request body.
+</Callout>
+
+Reject a timestamp more than five minutes from your clock (in either
+direction) to stop replays, and compare signatures in constant time.
+
+### With `@xorgate/sdk`
+
+<Callout title="Requires @xorgate/sdk 0.9.0">
+  `verifyWebhookSignature` ships in `@xorgate/sdk` 0.9.0. It has no dependencies
+  and uses WebCrypto, so it runs on Node 20+, Deno, Bun and edge runtimes.
+</Callout>
+
+```ts
+import express from "express"
+import { verifyWebhookSignature, WebhookVerificationError } from "@xorgate/sdk"
+
+const app = express()
+
+app.post(
+  "/hooks/xorgate",
+  express.raw({ type: "application/json" }), // req.body is the raw Buffer
+  async (req, res) => {
+    let event
+    try {
+      event = await verifyWebhookSignature({
+        headers: req.headers,
+        rawBody: req.body,
+        secret: process.env.XORGATE_WEBHOOK_SECRET!,
+        // toleranceSeconds: 300 (the default)
+      })
+    } catch (err) {
+      if (err instanceof WebhookVerificationError) return res.status(400).end()
+      throw err
+    }
+
+    res.status(204).end() // acknowledge first, then work
+    await handle(event) // dedupe on event.id inside
+  }
+)
+```
+
+It is async. It returns the parsed, typed envelope (a union discriminated on
+`event.type`) and throws a `WebhookVerificationError` (a `XorgateError` with
+code `WEBHOOK_VERIFICATION_FAILED` and a `reason` such as `missing_headers`,
+`timestamp_too_old` or `no_matching_signature`) when a header is missing, the
+timestamp is outside the tolerance or no signature matches. It accepts a `Headers` instance or Node's `req.headers`,
+and a string, `Uint8Array` or `ArrayBuffer` body.
+
+### Without the SDK
+
+Any [Standard Webhooks library](https://github.com/standard-webhooks/standard-webhooks/tree/main/libraries)
+verifies xorgate deliveries as they are, in most languages. The whole
+algorithm is short enough to write yourself.
+
+<Tabs items={["Node.js", "Python"]}>
+<Tab value="Node.js">
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto"
+
+export function verifyXorgateWebhook(
+  headers,
+  rawBody,
+  secret,
+  toleranceSeconds = 300
+) {
+  const id = headers["webhook-id"]
+  const timestamp = headers["webhook-timestamp"]
+  const signatures = headers["webhook-signature"]
+  if (!id || !timestamp || !signatures)
+    throw new Error("missing webhook headers")
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > toleranceSeconds) {
+    throw new Error("timestamp outside the tolerance")
+  }
+  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64")
+  const expected = createHmac("sha256", key)
+    .update(`${id}.${timestamp}.`)
+    .update(rawBody) // a Buffer or string, byte for byte as received
+    .digest()
+  const matched = signatures.split(" ").some((entry) => {
+    const [version, signature] = entry.split(",")
+    if (version !== "v1" || !signature) return false
+    const given = Buffer.from(signature, "base64")
+    return given.length === expected.length && timingSafeEqual(given, expected)
+  })
+  if (!matched) throw new Error("no matching signature")
+  return JSON.parse(rawBody.toString("utf8"))
+}
+```
+
+</Tab>
+<Tab value="Python">
+
+```python
+import base64, hashlib, hmac, json, time
+
+def verify_xorgate_webhook(headers, raw_body: bytes, secret: str, tolerance_seconds=300):
+    msg_id = headers["webhook-id"]
+    timestamp = headers["webhook-timestamp"]
+    signatures = headers["webhook-signature"]
+    if abs(time.time() - int(timestamp)) > tolerance_seconds:
+        raise ValueError("timestamp outside the tolerance")
+    key = base64.b64decode(secret.removeprefix("whsec_"))
+    signed = f"{msg_id}.{timestamp}.".encode() + raw_body
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+    for entry in signatures.split(" "):
+        version, _, signature = entry.partition(",")
+        if version == "v1" and hmac.compare_digest(signature, expected):
+            return json.loads(raw_body)
+    raise ValueError("no matching signature")
+```
+
+</Tab>
+</Tabs>
+
+Both were checked against the signing test vector the platform and the engine
+pin in their test suites.
+
+## Responding and retries
+
+Answer with any `2xx` within **10 seconds**. Acknowledge first and do the work
+afterwards (a queue, a background job): a slow handler that times out is
+retried and does the work twice.
+
+| Your response                                   | What happens                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------- |
+| `2xx`                                           | Delivered.                                                                   |
+| `410 Gone`                                      | Failed, and the endpoint is **disabled** at once (`disabledReason: "gone"`). |
+| Any other status, a `3xx`, a timeout, no answer | Retried on the schedule below.                                               |
+
+| Attempt | Sent after the previous one | Elapsed since the first |
+| ------- | --------------------------- | ----------------------- |
+| 1       | immediately                 | 0                       |
+| 2       | 1 min                       | 1 min                   |
+| 3       | 5 min                       | 6 min                   |
+| 4       | 30 min                      | 36 min                  |
+| 5       | 2 h                         | 2 h 36 min              |
+| 6       | 6 h                         | 8 h 36 min              |
+| 7       | 12 h                        | 20 h 36 min             |
+| 8       | 24 h                        | 44 h 36 min             |
+
+After the eighth failure the delivery is `exhausted`. A `ping` is never
+retried. Every attempt is in the endpoint's delivery log
+(`GET /webhooks/{id}/deliveries`, kept 30 days, and the console's endpoint
+page) with the status, the response code and time, and the first 1 KB of your
+response body. `POST /webhooks/{id}/deliveries/{deliveryId}/redeliver` sends
+the same event again (same `id`) on a fresh schedule; it and `test` answer
+`409` while the endpoint is disabled. Re-enable it with
+`PATCH /webhooks/{id}` and `{"enabled": true}`.
+
+<Callout title="Planned: automatic disable after repeated failures">
+  Disabling an endpoint automatically after five exhausted deliveries in a row,
+  with an email to the organization's owners, is planned and **not live yet**.
+  Today only a `410` or a manual `PATCH` disables an endpoint, and
+  `consecutiveFailures` on the endpoint counts exhausted deliveries for you to
+  watch.
+</Callout>
+
+## Idempotency and ordering
+
+- **Dedupe on `id`** (the `webhook-id` header). A retry after a timeout, a
+  manual redelivery and the platform's own at-least-once machinery all resend
+  the same `id`. Store the ids you have processed, or make the handler
+  idempotent.
+- **Order is not guaranteed.** Retries and backlog uploads deliver events out
+  of order. Sort by the times inside `data` (`startedAt`, `lastSegmentAt`,
+  `occurredAt`, `lastSeenAt`) rather than by arrival.
+- **`*_session.ended` can repeat for one session**, each with its own `id`,
+  `reopened: true` and a later `lastSegmentAt`. Treat it as "quiet for ten
+  minutes as of `lastSegmentAt`" and upsert by `sessionId`.
+- **`started` is "first segment ingested"**, so after a long offline spell
+  several `started` and `ended` events for past sessions can arrive in a
+  burst.
+- **No backfill.** Routes and endpoints apply to events detected after they
+  exist.
+
+## Latency
+
+From the real-world change to xorgate detecting it. Delivery normally adds
+only seconds on top.
+
+| Event                         | Typical latency                                                                                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device.online`               | about 1 s                                                                                                                                                                                     |
+| `device.offline` `graceful`   | about 1 s                                                                                                                                                                                     |
+| `device.offline` `lwt`        | about 1 s when the agent process dies but the network is up (the kernel closes the socket); about **90 s** when the device goes silent (power loss, dead link: 1.5 × the 60 s MQTT keepalive) |
+| `device.offline` `sweeper`    | 45 to 120 s                                                                                                                                                                                   |
+| `*_session.started`           | at least 60 s after recording began (one segment plus its upload); hours if the device was offline                                                                                            |
+| `*_session.ended`             | 10 min after the last segment arrived, plus up to 1 min                                                                                                                                       |
+| `telemetry_session.completed` | shortly after `telemetry_session.ended`, once the overview and insights are built                                                                                                             |
+| `workflow.event`              | when the run ends (a batch per run)                                                                                                                                                           |
+
+## Rotating the secret
+
+`POST /webhooks/{id}/rotate-secret` (or the endpoint page in the console)
+returns a new `secret` once. For the next **24 hours** every delivery carries
+two signatures in `webhook-signature`, one per secret, separated by a space.
+The verifiers above accept a delivery when any signature matches, so deploy the
+new secret to your receiver at your own pace within that window. After 24 hours
+only the new secret signs.
+
+## Testing
+
+**A ping.** `POST /webhooks/{id}/test` (or the endpoint page in the console)
+sends a `ping` event to that endpoint only, signed like any other delivery.
+It is attempted once and never retried; the result shows in the delivery log
+within seconds. Use it to check your URL, your TLS and your signature code
+before routing real events.
+
+**A local workflow run.** The standalone engine delivers the same
+`workflow.event` envelope from your machine, so a receiver can be built and
+tested before a template reaches the platform. Bind the node's webhook name on
+the command line ([CLI reference](/workflows/cli#webhooks)):
+
+```bash
+xwe run template.json --input telemetry=window.csv \
+  --webhook dispatch=http://127.0.0.1:8787/hooks/xorgate \
+  --webhook-secret dispatch=whsec_... \
+  --allow-insecure-webhooks
+```
+
+`--allow-insecure-webhooks` permits the `http:` URL of a receiver on your own
+machine. The envelope and headers match the platform's (with
+`data.run.trigger: "local"` and the organization, workspace and template fields
+`null`), so the same verification code works. **Local delivery is
+best-effort**: one attempt per event, a 10 second timeout, no retries, no
+delivery log, and a failed `POST` never fails the run.

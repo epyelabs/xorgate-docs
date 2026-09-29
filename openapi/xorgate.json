@@ -2,12 +2,12 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.9.0",
-    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
+    "version": "0.10.0",
+    "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates`, `GET /webhooks` and `GET /webhooks/{id}/deliveries` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
     {
-      "url": "https://h357muxy3k.execute-api.us-east-1.amazonaws.com"
+      "url": "https://api-dev.xorgate.io"
     }
   ],
   "security": [
@@ -91,6 +91,11 @@
       "name": "Workflow Templates",
       "x-displayName": "Workflow Templates",
       "description": "The reusable processing graphs an organization has authored, and the tags a program finds them by. Reading only: authoring happens in the editor."
+    },
+    {
+      "name": "Webhooks",
+      "x-displayName": "Webhooks",
+      "description": "Signed HTTPS callbacks when something happens: a device goes online or offline, a recording session starts, ends or completes, a workflow emits an event. Register an endpoint once, then route to it from a device (`PUT /devices/{id}/webhooks`) or from a workflow's Emit Event node. Deliveries follow Standard Webhooks and are retried for about 44 hours. The payload of each event type is under `x-webhooks`."
     },
     {
       "name": "Search",
@@ -240,6 +245,300 @@
       }
     },
     "schemas": {
+      "WebhookEndpoint": {
+        "type": "object",
+        "required": [
+          "id",
+          "organizationId",
+          "name",
+          "url",
+          "enabled",
+          "secretVersion",
+          "createdAt"
+        ],
+        "description": "A registered receiver. The signing secret is never part of it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "dispatch"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "secretVersion": {
+            "type": "integer",
+            "description": "Bumped by each rotation."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "disabledAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "disabledReason": {
+            "type": "string",
+            "nullable": true,
+            "example": "manual"
+          },
+          "consecutiveFailures": {
+            "type": "integer",
+            "description": "Exhausted deliveries in a row."
+          },
+          "lastDeliveryAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastSuccessAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "eventId",
+          "endpointId",
+          "status",
+          "attempt",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Also sent as `x-xorgate-delivery`."
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The envelope `id` and `webhook-id`."
+          },
+          "eventType": {
+            "type": "string",
+            "enum": [
+              "device.online",
+              "device.offline",
+              "media_session.started",
+              "media_session.ended",
+              "telemetry_session.started",
+              "telemetry_session.ended",
+              "telemetry_session.completed",
+              "workflow.event",
+              "ping"
+            ]
+          },
+          "endpointId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "redeliveryOf": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivered",
+              "failed",
+              "exhausted"
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "description": "Attempts made so far (at most 8)."
+          },
+          "nextAttemptAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "responseStatus": {
+            "type": "integer",
+            "nullable": true
+          },
+          "responseMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Timeout, network error or \"redirect not followed\"."
+          },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookEventEnvelope": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "apiVersion",
+          "createdAt",
+          "organizationId",
+          "workspaceId",
+          "data"
+        ],
+        "description": "The JSON body of every delivery. Dedupe on `id` (also the `webhook-id` header): delivery is at-least-once. `createdAt` is when xorgate detected the event (server clock).",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "device.online",
+              "device.offline",
+              "media_session.started",
+              "media_session.ended",
+              "telemetry_session.started",
+              "telemetry_session.ended",
+              "telemetry_session.completed",
+              "workflow.event",
+              "ping"
+            ]
+          },
+          "apiVersion": {
+            "type": "string",
+            "example": "2026-09-27"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WebhookEventTypeInfo": {
+        "type": "object",
+        "required": [
+          "type",
+          "routing",
+          "description",
+          "sample"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "device.online",
+              "device.offline",
+              "media_session.started",
+              "media_session.ended",
+              "telemetry_session.started",
+              "telemetry_session.ended",
+              "telemetry_session.completed",
+              "workflow.event",
+              "ping"
+            ]
+          },
+          "routing": {
+            "type": "string",
+            "enum": [
+              "device",
+              "node",
+              "endpoint"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "sample": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "DeviceWebhookRoute": {
+        "type": "object",
+        "required": [
+          "endpointId",
+          "endpointName",
+          "eventTypes"
+        ],
+        "properties": {
+          "endpointId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "endpointName": {
+            "type": "string"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "device.online",
+                "device.offline",
+                "media_session.started",
+                "media_session.ended",
+                "telemetry_session.started",
+                "telemetry_session.ended",
+                "telemetry_session.completed"
+              ]
+            }
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "required": [
@@ -2732,6 +3031,112 @@
           }
         }
       },
+      "TelemetryWindowInsights": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "sessions",
+          "distanceM",
+          "movingMs",
+          "telemetryMs",
+          "partial"
+        ],
+        "description": "Distance and moving time inside a window (GET /devices/{id}/telemetry/insights).",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sessions": {
+            "type": "array",
+            "description": "The telemetry sessions overlapping the window, oldest first.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "status",
+                "from",
+                "to",
+                "overlapMs",
+                "source",
+                "distanceM",
+                "movingMs",
+                "fixes"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed"
+                  ]
+                },
+                "from": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The session's own bounds."
+                },
+                "to": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "overlapMs": {
+                  "type": "integer",
+                  "description": "Milliseconds of the window the session's bounds cover."
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "overview",
+                    "unbuilt"
+                  ],
+                  "description": "`overview`: numbers from the built artifact. `unbuilt`: no artifact yet, numbers null."
+                },
+                "distanceM": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Metres inside the window; 0 when built but nothing moved."
+                },
+                "movingMs": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "fixes": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Overview points inside the window with an accepted fix."
+                }
+              }
+            }
+          },
+          "distanceM": {
+            "type": "number",
+            "nullable": true,
+            "description": "Sum over the built sessions; null when none is built."
+          },
+          "movingMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "telemetryMs": {
+            "type": "integer",
+            "description": "Milliseconds of the window covered by any session (union)."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "At least one overlapping session has no built overview yet."
+          }
+        }
+      },
       "TelemetrySession": {
         "type": "object",
         "required": [
@@ -3887,6 +4292,409 @@
             "schema": {
               "$ref": "#/components/schemas/ApiError"
             }
+          }
+        }
+      }
+    }
+  },
+  "x-webhooks": {
+    "device.online": {
+      "post": {
+        "operationId": "webhook_device_online",
+        "summary": "device.online",
+        "description": "The device came online (connect message or first telemetry after being offline).\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "device.online",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "serial": "10954137370d4c73988b65d994e76a19",
+                  "name": "Truck 01",
+                  "lastSeenAt": "2026-09-27T14:03:10.100Z",
+                  "status": "online",
+                  "previousStatus": "offline",
+                  "source": "connect"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "device.offline": {
+      "post": {
+        "operationId": "webhook_device_offline",
+        "summary": "device.offline",
+        "description": "The device went offline: graceful disconnect, MQTT last-will, or the stale-telemetry sweeper.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "device.offline",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "serial": "10954137370d4c73988b65d994e76a19",
+                  "name": "Truck 01",
+                  "lastSeenAt": "2026-09-27T14:03:10.100Z",
+                  "status": "offline",
+                  "previousStatus": "online",
+                  "source": "lwt"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "media_session.started": {
+      "post": {
+        "operationId": "webhook_media_session_started",
+        "summary": "media_session.started",
+        "description": "The first segment of a new media session was ingested (\"first data arrived\", not \"recording began\").\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "media_session.started",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "streamKey": "cam0",
+                  "startedAt": "2026-09-27T13:10:00.000Z",
+                  "timeSource": "gps",
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080,
+                  "fps": 30,
+                  "firstSeq": 0
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "media_session.ended": {
+      "post": {
+        "operationId": "webhook_media_session_ended",
+        "summary": "media_session.ended",
+        "description": "No segment arrived for the close window (10 min). A straggler segment reopens the session and it ends again later.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "media_session.ended",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "startedAt": "2026-09-27T13:10:00.000Z",
+                  "endedAt": "2026-09-27T13:52:00.000Z",
+                  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+                  "segmentCount": 42,
+                  "reopened": false,
+                  "streamKey": "cam0",
+                  "totalBytes": 251658240,
+                  "totalDurationMs": 2520000
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "telemetry_session.started": {
+      "post": {
+        "operationId": "webhook_telemetry_session_started",
+        "summary": "telemetry_session.started",
+        "description": "The first segment of a new telemetry session was ingested.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "telemetry_session.started",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "startedAt": "2026-09-27T13:10:00.000Z",
+                  "rateHz": 1,
+                  "timeSource": "gps"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "telemetry_session.ended": {
+      "post": {
+        "operationId": "webhook_telemetry_session_ended",
+        "summary": "telemetry_session.ended",
+        "description": "The telemetry session closed; its overview and insights may not be built yet.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "telemetry_session.ended",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "startedAt": "2026-09-27T13:10:00.000Z",
+                  "endedAt": "2026-09-27T13:52:00.000Z",
+                  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+                  "segmentCount": 42,
+                  "reopened": false,
+                  "sampleCount": 2520,
+                  "byteCount": 409600
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "telemetry_session.completed": {
+      "post": {
+        "operationId": "webhook_telemetry_session_completed",
+        "summary": "telemetry_session.completed",
+        "description": "The closed telemetry session has its overview artifact and insights. The event most consumers want.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "telemetry_session.completed",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "sessionId": "0192f0a4-1111-7000-8000-000000000002",
+                  "deviceId": "0192f0a4-0000-7000-8000-000000000001",
+                  "startedAt": "2026-09-27T13:10:00.000Z",
+                  "endedAt": "2026-09-27T13:52:00.000Z",
+                  "lastSegmentAt": "2026-09-27T13:52:31.000Z",
+                  "segmentCount": 42,
+                  "reopened": false,
+                  "sampleCount": 2520,
+                  "byteCount": 409600,
+                  "distanceM": 38210,
+                  "durationMs": 2520000,
+                  "maxSpeedKph": 104.2,
+                  "insights": {},
+                  "overview": {
+                    "apiPath": "/v1/devices/0192f0a4-0000-7000-8000-000000000001/telemetry/sessions/0192f0a4-1111-7000-8000-000000000002"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "workflow.event": {
+      "post": {
+        "operationId": "webhook_workflow_event",
+        "summary": "workflow.event",
+        "description": "An output.event node whose `webhook` names this endpoint fired, in a production run. Delivered once the run ends. `payload` is producer-defined and not a stable shape.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "workflow.event",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": "0192f0a4-7777-7000-8000-000000000008",
+                "data": {
+                  "eventId": "0192f0a4-2222-7000-8000-000000000003",
+                  "nodeId": "n4",
+                  "webhook": "dispatch",
+                  "kind": "harsh_brake",
+                  "occurredAt": "2026-09-27T13:31:12.000Z",
+                  "confidence": 1,
+                  "payloadSummary": "harsh_brake · observed 0.62",
+                  "payload": {
+                    "signal": "accel.x",
+                    "observed": 0.62,
+                    "operator": "gt",
+                    "threshold": 0.5
+                  },
+                  "run": {
+                    "id": "0192f0a4-3333-7000-8000-000000000004",
+                    "templateId": "0192f0a4-4444-7000-8000-000000000005",
+                    "templateVersion": 3,
+                    "trigger": "event",
+                    "triggerContext": null,
+                    "deviceId": "0192f0a4-0000-7000-8000-000000000001"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
+          }
+        }
+      }
+    },
+    "ping": {
+      "post": {
+        "operationId": "webhook_ping",
+        "summary": "ping",
+        "description": "Sent by POST /webhooks/{id}/test. One attempt, never retried.\n\nHeaders: `webhook-id` (the envelope id), `webhook-timestamp` (unix seconds), `webhook-signature` (`v1,<base64 HMAC-SHA256>`, space-separated when two secrets are valid), `x-xorgate-event`, `x-xorgate-delivery`. Answer 2xx within 10 seconds; anything else is retried (a `ping` is not), and `410` disables the endpoint.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEventEnvelope"
+              },
+              "example": {
+                "id": "0192f0a4-5555-7000-8000-000000000006",
+                "type": "ping",
+                "apiVersion": "2026-09-27",
+                "createdAt": "2026-09-27T14:03:11.412Z",
+                "organizationId": "0192f0a4-6666-7000-8000-000000000007",
+                "workspaceId": null,
+                "data": {
+                  "message": "Test ping from xorgate"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Any 2xx counts as delivered."
           }
         }
       }
@@ -7971,6 +8779,71 @@
         }
       }
     },
+    "/v1/devices/{id}/telemetry/insights": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceTelemetryWindowInsights",
+        "summary": "Distance and moving time inside a window",
+        "description": "What the device drove INSIDE `[from, to)`, integrated over the overview artifacts of the telemetry sessions overlapping the window with the same rules as each session's own `insights.distance` (accepted fixes, the 60 m/s jump reject, the 30 s gap break, the `gps.speed` stationary rule). Use it to roll up a media run, a day or a month: the per-session `insights` on the sessions listing describe WHOLE sessions, and telemetry sessions do not line up with video sessions (the recorder starts at boot, the camera after its GPS gate), so summing whole sessions that merely overlap a run over-counts. The grid is bucketed, so the number is within about a percent of the raw-sample insight (`method: \"overview-haversine\"`). A session whose overview is not built yet (open, or closed within the last minute) is listed with `source: \"unbuilt\"` and no numbers, and `partial` is true. One object read per overlapping built session; the window may span at most 31 days.",
+        "tags": [
+          "Telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The windowed roll-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryWindowInsights"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
     "/v1/devices/{id}/telemetry/sessions": {
       "parameters": [
         {
@@ -8861,6 +9734,847 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listWebhooks",
+        "summary": "List webhook endpoints",
+        "description": "The organization's endpoint registry, paginated with the shared list dialect, newest first by default. Any role may read. A workspace-scoped session token is refused (`403 WORKSPACE_SCOPED`): endpoints are organization resources.",
+        "tags": [
+          "Webhooks"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "name"
+              ],
+              "default": "createdAt"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Endpoints. The signing secret is never included.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhooks",
+                    "page"
+                  ],
+                  "properties": {
+                    "webhooks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookEndpoint"
+                      }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWebhook",
+        "summary": "Register a webhook endpoint (owner/admin only)",
+        "description": "Creates an endpoint and its signing secret, returned exactly once as `secret` (`whsec_` + base64 of 32 random bytes, the Standard Webhooks format). Deliveries carry `webhook-id`, `webhook-timestamp` and `webhook-signature` headers; verify them with any Standard Webhooks library.\n\n`name` is the handle a workflow template's `output.event` node references in its `webhook` field; it is unique within the organization. `url` must be `https://`, carry no credentials, and not be `localhost` or a literal private, loopback or link-local address. Redirects are never followed.\n\nAn endpoint receives nothing until something routes to it: a device route (`PUT /devices/{id}/webhooks`) or a workflow node naming it. `POST /webhooks/{id}/test` sends a `ping`.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "url"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                    "example": "dispatch"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "example": "https://example.com/hooks/xorgate"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created. Save `secret`: it is not retrievable later, only rotatable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhook",
+                    "secret"
+                  ],
+                  "properties": {
+                    "webhook": {
+                      "$ref": "#/components/schemas/WebhookEndpoint"
+                    },
+                    "secret": {
+                      "type": "string",
+                      "example": "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getWebhook",
+        "summary": "Get a webhook endpoint",
+        "description": "The endpoint plus `deliveryStats`: delivery counts by status over the last 24 hours.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "The endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhook"
+                  ],
+                  "properties": {
+                    "webhook": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/WebhookEndpoint"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "deliveryStats": {
+                              "type": "object",
+                              "properties": {
+                                "windowHours": {
+                                  "type": "integer",
+                                  "example": 24
+                                },
+                                "pending": {
+                                  "type": "integer"
+                                },
+                                "delivered": {
+                                  "type": "integer"
+                                },
+                                "failed": {
+                                  "type": "integer"
+                                },
+                                "exhausted": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateWebhook",
+        "summary": "Update a webhook endpoint (owner/admin only)",
+        "description": "Any of `name`, `url`, `description`, `enabled`. Disabling records `disabledAt` and `disabledReason: \"manual\"`; re-enabling clears them and resets `consecutiveFailures`. An endpoint that answered `410 Gone` is disabled automatically (`disabledReason: \"gone\"`).",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhook"
+                  ],
+                  "properties": {
+                    "webhook": {
+                      "$ref": "#/components/schemas/WebhookEndpoint"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWebhook",
+        "summary": "Delete a webhook endpoint (owner/admin only)",
+        "description": "Deletes the endpoint, its device routes, its delivery log and its signing secret. Past events stay in the organization's event history.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "204": {
+            "$ref": "#/components/responses/NoContent"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/test": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "testWebhook",
+        "summary": "Send a ping (owner/admin only)",
+        "description": "Emits a `ping` event to this endpoint only. One attempt, never retried; the result appears in `GET /webhooks/{id}/deliveries` within seconds. `dispatched: false` means the event was recorded but webhook delivery is switched off for this deployment.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "eventId",
+                    "dispatched"
+                  ],
+                  "properties": {
+                    "eventId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "dispatched": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/rotate-secret": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "rotateWebhookSecret",
+        "summary": "Rotate the signing secret (owner/admin only)",
+        "description": "Returns a new `secret` exactly once. For 24 hours deliveries carry TWO `v1,` signatures (new and previous), which Standard Webhooks verifiers accept, so the receiver can switch at its own pace.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "Rotated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhook",
+                    "secret",
+                    "previousSecretValidForHours"
+                  ],
+                  "properties": {
+                    "webhook": {
+                      "$ref": "#/components/schemas/WebhookEndpoint"
+                    },
+                    "secret": {
+                      "type": "string"
+                    },
+                    "previousSecretValidForHours": {
+                      "type": "integer",
+                      "example": 24
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listWebhookDeliveries",
+        "summary": "List deliveries to an endpoint",
+        "description": "The delivery log, newest first by default, paginated with the shared list dialect. Kept for 30 days. `status`: `pending` (queued or waiting to retry), `delivered` (2xx), `failed` (a ping that failed, a 410, or a disabled endpoint), `exhausted` (8 attempts over about 44 hours, all failed).",
+        "tags": [
+          "Webhooks"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OffsetQuery"
+          },
+          {
+            "$ref": "#/components/parameters/OrderQuery"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "delivered",
+                "failed",
+                "exhausted"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deliveries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "deliveries",
+                    "page"
+                  ],
+                  "properties": {
+                    "deliveries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookDelivery"
+                      }
+                    },
+                    "page": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries/{deliveryId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "A delivery of this endpoint."
+        }
+      ],
+      "get": {
+        "operationId": "getWebhookDelivery",
+        "summary": "Get one delivery",
+        "description": "The delivery with the first 1 KB of the response body and the event envelope that was sent.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "The delivery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "delivery"
+                  ],
+                  "properties": {
+                    "delivery": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/WebhookDelivery"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "responseExcerpt": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "event": {
+                              "allOf": [
+                                {
+                                  "$ref": "#/components/schemas/WebhookEventEnvelope"
+                                }
+                              ],
+                              "nullable": true
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries/{deliveryId}/redeliver": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "name": "deliveryId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "A delivery of this endpoint."
+        }
+      ],
+      "post": {
+        "operationId": "redeliverWebhook",
+        "summary": "Redeliver an event (owner/admin only)",
+        "description": "Queues a NEW delivery of the same event (same `webhook-id`, so a receiver that dedupes on it will treat it as a repeat) with a fresh retry schedule. `redeliveryOf` points at the original.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "delivery",
+                    "enqueued"
+                  ],
+                  "properties": {
+                    "delivery": {
+                      "$ref": "#/components/schemas/WebhookDelivery"
+                    },
+                    "enqueued": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/webhook-event-types": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listWebhookEventTypes",
+        "summary": "List webhook event types",
+        "description": "Every event type with how it is routed and a sample `data`. `device` types are routed per device (`PUT /devices/{id}/webhooks`); `workflow.event` by the emitting node's `webhook` field; `ping` by `POST /webhooks/{id}/test`.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "apiVersion",
+                    "eventTypes"
+                  ],
+                  "properties": {
+                    "apiVersion": {
+                      "type": "string",
+                      "example": "2026-09-27"
+                    },
+                    "eventTypes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookEventTypeInfo"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/webhooks": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceWebhooks",
+        "summary": "Get a device's webhook routes",
+        "description": "Which endpoints receive which of this device's presence and session events. owner/admin/member. A workspace-scoped session token may read its own workspace's devices.",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "The routes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "routes"
+                  ],
+                  "properties": {
+                    "routes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DeviceWebhookRoute"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setDeviceWebhooks",
+        "summary": "Replace a device's webhook routes (owner/admin only)",
+        "description": "The body is the complete set; `{\"routes\": []}` removes every route. Each endpoint may appear once, with a non-empty subset of the device event types. Endpoints must belong to the organization. Adding a route applies to events from then on (no backfill). A workspace-scoped session token may manage its own workspace's devices, which is how an integration wires a device at pairing time.",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "routes"
+                ],
+                "properties": {
+                  "routes": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "endpointId",
+                        "eventTypes"
+                      ],
+                      "properties": {
+                        "endpointId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "eventTypes": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "device.online",
+                              "device.offline",
+                              "media_session.started",
+                              "media_session.ended",
+                              "telemetry_session.started",
+                              "telemetry_session.ended",
+                              "telemetry_session.completed"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "routes"
+                  ],
+                  "properties": {
+                    "routes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DeviceWebhookRoute"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

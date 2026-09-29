@@ -70,8 +70,11 @@ Three independent mechanisms report a device as gone, at three different
 latencies, and they do not always agree:
 
 1. **The graceful status publish**, instant, but only on a clean stop.
-2. **The Last-Will**, about 90 seconds at the default keepalive, covering power
-   loss and hard crashes.
+2. **The Last-Will**, covering power loss and hard crashes. About a second
+   when the agent process dies but the network stays up (the kernel closes the
+   socket, so the broker notices at once); about 90 seconds, 1.5 times the
+   default 60 s keepalive, when the device goes silent (power loss, a dead
+   link).
 3. **The cloud-side sweeper**, a scheduled job that ages out devices whose
    telemetry has stopped arriving. It is the backstop for the case where the
    broker held the connection open but the agent stopped producing.
@@ -95,7 +98,13 @@ session ended.
 ## Subscribing to it
 
 The topic is inside the device's own subtree, so the device policy grants it
-without any extra configuration. A browser reaches it through the same
-`POST /live/access` path as telemetry, and inherits the same org-blind
-subscribe caveat described on
-[the overview](/device-sdk/cloud-contract#the-identity-chain).
+without any extra configuration. Only the device and the cloud's status ingest
+use it: **a browser cannot subscribe to it**. The browser IoT policy that
+`POST /live/access` attaches grants the telemetry and workflow (`wf/*`) topics
+only.
+
+To learn about a device's presence, read `status` and `lastSeenAt` from
+`GET /devices/{id}` (poll it), or route the `device.online` and
+`device.offline` [webhooks](/platform-concepts/webhooks) to a server. The
+webhook's `source` (`graceful`, `lwt` or `sweeper`) says which of the three
+mechanisms above reported the device gone.

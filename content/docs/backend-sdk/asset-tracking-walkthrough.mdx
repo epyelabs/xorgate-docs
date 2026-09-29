@@ -342,7 +342,11 @@ const replay = await xg.media.replayManifest(deviceId, {
 
 ## 8. Keep the fleet healthy
 
-A nightly sweep. Everything here is a poll, because there are no webhooks.
+A nightly sweep. Everything here is a poll: agent versions and config
+acknowledgement have no webhook. Presence and new recordings do (`device.online`,
+`device.offline`, `telemetry_session.completed`, see
+[Webhooks](/platform-concepts/webhooks)), so a service that already receives
+them can drop the silence check below and react as it happens.
 
 ```ts
 async function healthSweep(workspaceId: string) {
@@ -422,9 +426,10 @@ properties of the platform rather than of the SDK.
 
 1. **There is no batch telemetry read.** A fleet view is one request per device.
    Fine for a workspace, wrong for thousands.
-2. **Everything interesting is a poll.** Onboarding, config convergence, agent
-   updates, new media, device silence. Webhooks would collapse most of the code
-   above.
+2. **Everything interesting was a poll.** Onboarding, config convergence, agent
+   updates, new media, device silence. [Webhooks](/platform-concepts/webhooks)
+   now push device presence, recording sessions and workflow events; onboarding,
+   config convergence and agent updates are still polls.
 3. **`latest()` never expires.** Every consumer has to re-implement staleness,
    and every one that forgets ships a dashboard that lies.
 4. **No server-side alerting exists.** Geofences and impact thresholds run in

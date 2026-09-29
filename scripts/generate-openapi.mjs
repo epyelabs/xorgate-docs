@@ -17,13 +17,22 @@
  * 2. Generate one MDX page per operation under `content/docs/api-reference/`,
  *    grouped into a folder per tag.
  *
+ * Webhook event payloads: core's document is OAS 3.0.3 and publishes one
+ * entry per event type under the top-level `x-webhooks` extension. Fumadocs
+ * upgrades documents to 3.x on load, which turns `x-webhooks` into the 3.1
+ * `webhooks` section, so every event becomes a `webhook` entry here. Those
+ * pages go to an `events/` subfolder of their tag's folder (the Webhooks tag),
+ * one page per event type, titled by the event type, so the payloads sit
+ * under the routes rather than between them. `lib/openapi-slice.ts` keeps each
+ * page's own webhook entry when it slices the document.
+ *
  * The generator only writes; it never deletes. A hand-written `index.mdx` in a
  * tag folder survives, which is exactly how the prose front-pages live
  * alongside the generated ones. Renaming an operationId leaves the old page
  * behind, so delete it by hand.
  */
 import { readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { generateFiles } from "fumadocs-openapi"
 import { createOpenAPI } from "fumadocs-openapi/server"
 import { resolveApiBaseUrl } from "./api-base-url.mjs"
@@ -32,6 +41,8 @@ const SNAPSHOT = "openapi/xorgate.json"
 const PUBLIC_DOC = "openapi/xorgate.public.json"
 const OUTPUT_DIR = "content/docs/api-reference"
 const SCHEMA_ID = "xorgate"
+/** Subfolder (inside the tag folder) for webhook event payload pages. */
+const EVENTS_DIR = "events"
 
 const apiBaseUrl = await resolveApiBaseUrl()
 
@@ -97,6 +108,8 @@ await generateFiles({
   per: "operation",
   groupBy: "tag",
   name(entry) {
+    if (entry.type === "webhook")
+      return `${EVENTS_DIR}/${kebab(entry.item.name)}`
     if (entry.type !== "operation") return kebab(entry.info.title)
     const operation = this.document.paths[entry.item.path][entry.item.method]
     return kebab(operation.operationId ?? entry.info.title)
@@ -110,14 +123,37 @@ await generateFiles({
     "Do not edit. Change the spec in backend/xorgate-core-service/src/openapi/ " +
     "and re-run `npm run generate-openapi`.",
   beforeWrite(files) {
+    const eventMetas = []
     for (const file of files) {
       if (!file.path.endsWith("meta.json")) continue
       const meta = JSON.parse(file.content)
       const isRoot = file.path === "meta.json"
       if (isRoot) meta.title = "API reference"
+      // Webhook event pages live in `events/`; the tag folder lists that
+      // folder once, last, and the folder gets its own meta in catalog order.
+      const prefix = `${EVENTS_DIR}/`
+      const events = meta.pages.filter((page) => page.startsWith(prefix))
+      if (events.length > 0) {
+        meta.pages = [
+          ...meta.pages.filter((page) => !page.startsWith(prefix)),
+          EVENTS_DIR,
+        ]
+        eventMetas.push({
+          path: join(dirname(file.path), EVENTS_DIR, "meta.json"),
+          content: `${JSON.stringify(
+            {
+              title: "Event payloads",
+              pages: events.map((page) => page.slice(prefix.length)),
+            },
+            null,
+            2
+          )}\n`,
+        })
+      }
       // Every folder gets the hand-written overview first.
       meta.pages = ["index", ...meta.pages.filter((page) => page !== "index")]
       file.content = `${JSON.stringify(meta, null, 2)}\n`
     }
+    files.push(...eventMetas)
   },
 })

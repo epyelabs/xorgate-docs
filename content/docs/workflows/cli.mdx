@@ -19,7 +19,8 @@ xwe function test <template.json> <nodeId> --event <event.json> [--version <n>]
 
 Everything on this page is shipped and verified against the published
 package: `function test` arrived in 0.2.0 with [code function
-nodes](/workflows/functions), the rest in 0.1.0.
+nodes](/workflows/functions), the [webhook](#webhooks) flags in 0.5.0, the rest
+in 0.1.0.
 
 ## `validate`
 
@@ -51,21 +52,25 @@ expects.
 
 ## `run`
 
-| Flag                   | Meaning                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<template.json>`      | The template to run. Mutually exclusive with `--manifest`.                                                                                                                                                                                                                                                                       |
-| `--manifest <file>`    | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest).                                                                                                                                                                                        |
-| `--input <key>=<path>` | Bind a source node to a file. Repeatable. Keys below.                                                                                                                                                                                                                                                                            |
-| `--out <dir>`          | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                                                                                                                                                                                                                 |
-| `--run-id <id>`        | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                                                                                                                                                                                                          |
-| `--models-dir <dir>`   | A model registry root. Repeatable; searched in order before the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`). The checkout's fixture model is one such root: `--models-dir fixtures/models`.                                                                                                                            |
-| `--secrets <file>`     | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment. A file that does not parse is reported by name only; a value never appears in any artifact or output line, and child processes never see it.                                                                                                          |
-| `--progress json`      | Emit one JSON object per line on stdout as the run progresses.                                                                                                                                                                                                                                                                   |
-| `--emit-video`         | After a successful run, mux each visualization node's frames into an MP4.                                                                                                                                                                                                                                                        |
-| `--window <from>,<to>` | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                                                                                                                                                                                                                 |
-| `--pull`               | Fetch a model the graph names from the registry into the cache when it is not on disk (`XWE_MODELS_PULL=1` does the same). See [Models](/workflows/models).                                                                                                                                                                      |
-| `--pack <module>`      | Register a node pack before running: a package name or a path, resolved from the working directory the way `require` is; the module's `pack` or default export is the pack. Repeatable, also on `validate`. Prints `[xwe] pack <name> v<version> (<n> nodes) <- <file>` per pack. See [Extending](/workflows/extending).         |
-| `--log-level <level>`  | On every command. `silent` prints nothing on stderr (the exit code and `result.json` carry the outcome); `error` prints failures only; `info`, the default, prints what this page shows; `debug` adds the engine's trace: the bindings, the graph order, one `[engine]` line per node with its timing. stdout is never affected. |
+| Flag                                  | Meaning                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<template.json>`                     | The template to run. Mutually exclusive with `--manifest`.                                                                                                                                                                                                                                                                       |
+| `--manifest <file>`                   | Run a prebuilt run manifest instead of building one from a template. See [Inputs and outputs](/workflows/run-artifacts#the-run-manifest).                                                                                                                                                                                        |
+| `--input <key>=<path>`                | Bind a source node to a file. Repeatable. Keys below.                                                                                                                                                                                                                                                                            |
+| `--out <dir>`                         | Artifact root, default `./out`. The run writes `<out>/<runId>/`.                                                                                                                                                                                                                                                                 |
+| `--run-id <id>`                       | The run id, default `local-<epoch ms>`. Also the output directory name.                                                                                                                                                                                                                                                          |
+| `--models-dir <dir>`                  | A model registry root. Repeatable; searched in order before the cache (`XWE_MODELS_DIR`, default `~/.xorgate/models`). The checkout's fixture model is one such root: `--models-dir fixtures/models`.                                                                                                                            |
+| `--secrets <file>`                    | A JSON object of `"<logical-name>": "<value>"`. Wins over the environment. A file that does not parse is reported by name only; a value never appears in any artifact or output line, and child processes never see it.                                                                                                          |
+| `--progress json`                     | Emit one JSON object per line on stdout as the run progresses.                                                                                                                                                                                                                                                                   |
+| `--emit-video`                        | After a successful run, mux each visualization node's frames into an MP4.                                                                                                                                                                                                                                                        |
+| `--window <from>,<to>`                | An ISO-8601 run window. Rarely needed: file bindings carry their own timestamps.                                                                                                                                                                                                                                                 |
+| `--pull`                              | Fetch a model the graph names from the registry into the cache when it is not on disk (`XWE_MODELS_PULL=1` does the same). See [Models](/workflows/models).                                                                                                                                                                      |
+| `--pack <module>`                     | Register a node pack before running: a package name or a path, resolved from the working directory the way `require` is; the module's `pack` or default export is the pack. Repeatable, also on `validate`. Prints `[xwe] pack <name> v<version> (<n> nodes) <- <file>` per pack. See [Extending](/workflows/extending).         |
+| `--webhook <name>=<url>`              | Bind an `output.event` node's `webhook` name to a URL, so each of its events is POSTed there. Repeatable, also on `validate`. Since 0.5.0; see [Webhooks](#webhooks).                                                                                                                                                            |
+| `--webhook-secret <name>=<whsec_...>` | Sign that name's POSTs with a Standard Webhooks secret. Repeatable. Without one the POSTs are unsigned.                                                                                                                                                                                                                          |
+| `--webhooks <file>`                   | A JSON object of `"<name>": { "url": "...", "secret"?: "whsec_..." }`.                                                                                                                                                                                                                                                           |
+| `--allow-insecure-webhooks`           | Accept `http:` webhook URLs, for a receiver on your own machine.                                                                                                                                                                                                                                                                 |
+| `--log-level <level>`                 | On every command. `silent` prints nothing on stderr (the exit code and `result.json` carry the outcome); `error` prints failures only; `info`, the default, prints what this page shows; `debug` adds the engine's trace: the bindings, the graph order, one `[engine]` line per node with its timing. stdout is never affected. |
 
 ### Input keys
 
@@ -133,6 +138,43 @@ nothing on stderr at all):
   events: 1
 ```
 
+### Webhooks
+
+An `output.event` node's optional `webhook` field names an endpoint, for
+example `dispatch`. On the platform the organization's endpoint registry binds
+that name; locally you bind it (since 0.5.0):
+
+```bash
+xwe run template.json --input telemetry=window.csv \
+  --webhook dispatch=https://example.com/hooks/xorgate \
+  --webhook-secret dispatch=whsec_...
+xwe validate template.json --webhook dispatch=https://example.com/hooks/xorgate
+```
+
+`validate` lists every webhook name the template references, bound (with the
+URL's origin, signed or unsigned, and where the binding came from) or unbound.
+Bindings come from the flags, then a `--webhooks` file, then the environment
+variables `XWE_WEBHOOK_<NAME>` and `XWE_WEBHOOK_SECRET_<NAME>` (the name
+upper-cased, `-` becoming `_`). URLs must be `https:` with no `user:pass@`;
+`--allow-insecure-webhooks` also accepts `http:`.
+
+Each event of a bound node is one `POST` with the platform's `workflow.event`
+envelope and Standard Webhooks headers, with `data.run.trigger: "local"` and the
+organization, workspace and template fields `null`, so a receiver verifies local
+and platform deliveries with the same code (see
+[Webhooks](/platform-concepts/webhooks#verifying-signatures)).
+
+<Callout type="warn" title="Local delivery is best-effort">
+  One attempt per event, a 10 second timeout, no retry, no outbox and no
+  delivery log. A failed `POST` is logged and never fails the run, and a name
+  with no binding is warned about once and its events are skipped. Retries, the
+  delivery log and redelivery are the platform's.
+</Callout>
+
+Webhook secrets are handled like the run's other secrets: never printed, never
+written to an artifact or a progress message, and every `XWE_WEBHOOK_*`
+variable is removed from child processes' environments.
+
 ### The progress stream
 
 With `--progress json`, stdout carries the engine's progress messages, one
@@ -140,12 +182,12 @@ object per line, each stamped with `at`. The message set is the engine's, not
 the CLI's; the platform's shell publishes the same messages to its message
 topics through `IotRunProgress`, the package's reference transport:
 
-| `t`      | Fields                                                                   | When                                           |
-| -------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
-| `status` | `status` (`running` \| `succeeded` \| `failed`), `error`, `failedNodeId` | once at start, once at the end                 |
-| `step`   | `seq`, `nodeId`, `label`, `status`, `output`, `durationMs`               | as each node finishes                          |
-| `event`  | `kind`, `occurredAt`, `confidence`, `payloadSummary`, `payload`          | as `output.event` fires                        |
-| `record` | `nodeId`, `port`, `tag`, `ts`, `seq`, `payload`                          | for each `json`-channel message leaving a node |
+| `t`      | Fields                                                                                  | When                                           |
+| -------- | --------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `status` | `status` (`running` \| `succeeded` \| `failed`), `error`, `failedNodeId`                | once at start, once at the end                 |
+| `step`   | `seq`, `nodeId`, `label`, `status`, `output`, `durationMs`                              | as each node finishes                          |
+| `event`  | `nodeId` (since 0.5.0), `kind`, `occurredAt`, `confidence`, `payloadSummary`, `payload` | as `output.event` fires                        |
+| `record` | `nodeId`, `port`, `tag`, `ts`, `seq`, `payload`                                         | for each `json`-channel message leaving a node |
 
 `record` covers `json` ports only: connector lookups, VLM verdicts, and the
 like. Detections travel on their own channel and are counted in the detection

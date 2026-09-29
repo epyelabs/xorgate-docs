@@ -16,13 +16,14 @@ type Props = Omit<ClientProps, "payload" | "preloaded"> & {
  *
  * Server component, so the resolution happens at build time. Nothing here runs
  * in the browser except the UI itself, which is why the document is sliced down
- * to the page's own operations first (see `lib/openapi-slice.ts`).
+ * to the page's own operations (or webhook events) first (see `lib/openapi-slice.ts`).
  */
 export async function OpenAPIPage({ document, ...props }: Props) {
   const { bundled } = await openapi.getSchema(document)
   const sliced = sliceDocument(
     bundled as unknown as Record<string, unknown>,
-    props.operations ?? []
+    props.operations ?? [],
+    props.webhooks ?? []
   )
 
   return (

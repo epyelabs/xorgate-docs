@@ -89,25 +89,33 @@ onboard a customer as its own xorgate organization. Map customers onto
 create. Organizations are provisioned out of band. See
 [Authentication](/backend-sdk/authentication).
 
-### There are no webhooks
+### Webhooks cover presence and sessions, not everything
 
-Nothing is pushed. Every "tell me when" is a poll, and the events you would want
-to subscribe to exist internally but have no delivery mechanism.
+xorgate pushes device presence, recording sessions and workflow events as
+signed [webhooks](/platform-concepts/webhooks) to an endpoint you register.
+Everything else is still a poll: registration claims, config convergence and
+agent updates have no event.
 
-The workable patterns:
+| You want to know             | Webhook                                                    | Otherwise poll                             | Signal                     |
+| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------ | -------------------------- |
+| A device finished onboarding | none                                                       | `deviceRegistrations.waitForClaim(code)`   | `status` becomes `claimed` |
+| A config change landed       | none                                                       | `devices.getConfig(id)`                    | `pending` becomes false    |
+| A device came back online    | `device.online`                                            | `devices.get(id)`                          | `status`, `lastSeenAt`     |
+| An agent update succeeded    | none                                                       | `devices.get(id)`                          | `agentVersion` changes     |
+| New recorded media exists    | `media_session.started`, `media_session.ended`             | `media.sessions.list(id, { from: since })` | new or grown sessions      |
+| A drive's telemetry is ready | `telemetry_session.completed`                              | `telemetry.sessions.list(id)`              | a closed session           |
+| A device stopped reporting   | `device.offline` (`source: "sweeper"` for stale telemetry) | `telemetry.latest(id)`                     | `ts` stops advancing       |
+| A workflow flagged something | `workflow.event`, from the `output.event` node's `webhook` | no public route; the console's run history | new events                 |
 
-| You want to know             | Poll                                       | Signal                     |
-| ---------------------------- | ------------------------------------------ | -------------------------- |
-| A device finished onboarding | `deviceRegistrations.waitForClaim(code)`   | `status` becomes `claimed` |
-| A config change landed       | `devices.getConfig(id)`                    | `pending` becomes false    |
-| A device came back online    | `devices.get(id)`                          | `status`, `lastSeenAt`     |
-| An agent update succeeded    | `devices.get(id)`                          | `agentVersion` changes     |
-| New recorded media exists    | `media.sessions.list(id, { from: since })` | new or grown sessions      |
-| A device stopped reporting   | `telemetry.latest(id)`                     | `ts` stops advancing       |
+Webhooks are routed per device (presence and sessions) or per workflow node,
+and go to a server you run, never to a browser. From `@xorgate/sdk` 0.9.0,
+`xg.webhooks` and `xg.devices.webhooks` manage endpoints and routes, and
+`verifyWebhookSignature` checks a delivery's signature.
 
-A fleet-wide sweep is one `devices.iterate()` per interval. Keep the interval
-sane: there is no rate limiting to protect the platform from a tight loop, and
-`GET /devices/{id}/sessions` in particular is around 1090 ms per device.
+For whatever you still poll, a fleet-wide sweep is one `devices.iterate()` per
+interval. Keep the interval sane: there is no rate limiting to protect the
+platform from a tight loop, and `GET /devices/{id}/sessions` in particular is
+around 1090 ms per device.
 
 ### Cross-tenant reads look like missing rows
 

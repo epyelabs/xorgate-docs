@@ -148,12 +148,16 @@ that fact to you, which is why
 you cannot reproduce it is the xorgate dashboard itself, whose broad path
 wildcards both telemetry planes.
 
-### No webhooks, so polling is the only option
+### In the browser, polling is the option
 
-Nothing pushes over the REST plane. Device state, config acknowledgement,
-registration claims and new recording sessions are all discovered by polling.
-`refetchIntervalMs` is the tool; be gentle with it, especially against
-`useRecordingRuns`, which is the slowest endpoint in the API.
+Nothing pushes over the REST plane to a browser. xorgate does send
+[webhooks](/platform-concepts/webhooks) for device presence, recording sessions
+and workflow events, but they are signed server-to-server `POST`s to an
+endpoint you run; relaying them to your own clients is up to your backend. In
+the browser, device state, config acknowledgement, registration claims and new
+recording sessions are discovered by polling. `refetchIntervalMs` is the tool;
+be gentle with it, especially against `useRecordingRuns`, which is the slowest
+endpoint in the API.
 
 Live telemetry **is** push, and it carries more than metrics: the `recording`
 and `media` blocks tell you whether the device is uploading, whether video is

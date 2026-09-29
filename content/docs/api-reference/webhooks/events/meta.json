@@ -1,0 +1,14 @@
+{
+  "title": "Event payloads",
+  "pages": [
+    "device-online",
+    "device-offline",
+    "media-session-started",
+    "media-session-ended",
+    "telemetry-session-started",
+    "telemetry-session-ended",
+    "telemetry-session-completed",
+    "workflow-event",
+    "ping"
+  ]
+}

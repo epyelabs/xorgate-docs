@@ -8,10 +8,17 @@
  * operation pages that was 39 MB of static output for a document that describes
  * one endpoint per page.
  *
- * So each page gets a document containing only its own path items plus the
- * transitive closure of the components those reach. The result is a valid
- * OpenAPI document with the same `info`, `servers` and `security`, which is all
- * the renderer and the playground need.
+ * So each page gets a document containing only its own path items (or, on an
+ * event payload page, its own webhook entries) plus the transitive closure of
+ * the components those reach. The result is a valid OpenAPI document with the
+ * same `info`, `servers` and `security`, which is all the renderer and the
+ * playground need.
+ *
+ * Webhooks: core publishes the per-event payloads of its OAS 3.0.3 document
+ * under the `x-webhooks` extension (3.0 has no `webhooks` section). Fumadocs
+ * upgrades every document to 3.x on load, which moves `x-webhooks` to
+ * `webhooks`, so by the time a page gets here the key is normally `webhooks`.
+ * Both spellings are handled so the slice does not depend on that detail.
  */
 
 type Json = Record<string, unknown>
@@ -53,13 +60,20 @@ export interface OperationRef {
   method: string
 }
 
+export interface WebhookRef {
+  name: string
+  method: string
+}
+
+/** Where a document keeps its webhooks: 3.1+ `webhooks`, 3.0 `x-webhooks`. */
+const WEBHOOK_KEYS = ["webhooks", "x-webhooks"] as const
+
 export function sliceDocument<T extends Json>(
   bundled: T,
-  operations: OperationRef[]
+  operations: OperationRef[],
+  webhooks: WebhookRef[] = []
 ): T {
-  // Webhooks would need the same treatment; this API has none, so rather than
-  // carry untested code, fall back to the whole document if one ever appears.
-  if (bundled.webhooks || operations.length === 0) return bundled
+  if (operations.length === 0 && webhooks.length === 0) return bundled
 
   const allPaths = (bundled.paths ?? {}) as Record<string, Json>
   const paths: Record<string, Json> = {}
@@ -75,6 +89,22 @@ export function sliceDocument<T extends Json>(
     kept[method] = item[method]
   }
 
+  // Webhook entries the page asked for, under whichever key holds them. An
+  // operation page asks for none, so it carries no webhooks at all.
+  const hooks: Partial<Record<(typeof WEBHOOK_KEYS)[number], Json>> = {}
+  for (const { name, method } of webhooks) {
+    const key = WEBHOOK_KEYS.find(
+      (k) => (bundled[k] as Record<string, Json> | undefined)?.[name]
+    )
+    if (!key) return bundled
+    const item = (bundled[key] as Record<string, Json>)[name]
+    const kept = ((hooks[key] ??= {})[name] ??= {}) as Json
+    for (const [k, value] of Object.entries(item)) {
+      if (!HTTP_METHODS.has(k)) kept[k] = value
+    }
+    kept[method] = item[method]
+  }
+
   const allComponents = (bundled.components ?? {}) as Record<string, Json>
   // Security schemes are referenced by NAME from `security`, never by `$ref`,
   // so the closure below would never find them.
@@ -84,6 +114,7 @@ export function sliceDocument<T extends Json>(
 
   const pending = new Set<string>()
   collectRefs(paths, pending)
+  collectRefs(hooks, pending)
   collectRefs(components, pending)
   const seen = new Set<string>()
   while (pending.size > 0) {
@@ -100,5 +131,10 @@ export function sliceDocument<T extends Json>(
     collectRefs(value, pending)
   }
 
-  return { ...bundled, paths, components }
+  const sliced: Json = { ...bundled, paths, components }
+  for (const key of WEBHOOK_KEYS) {
+    if (hooks[key]) sliced[key] = hooks[key]
+    else delete sliced[key]
+  }
+  return sliced as T
 }

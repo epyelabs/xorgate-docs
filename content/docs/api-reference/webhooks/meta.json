@@ -1,0 +1,21 @@
+{
+  "title": "Webhooks",
+  "description": "Signed HTTPS callbacks when something happens: a device goes online or offline, a recording session starts, ends or completes, a workflow emits an event. Register an endpoint once, then route to it from a device (`PUT /devices/{id}/webhooks`) or from a workflow's Emit Event node. Deliveries follow Standard Webhooks and are retried for about 44 hours. The payload of each event type is under `x-webhooks`.",
+  "pages": [
+    "index",
+    "list-webhooks",
+    "create-webhook",
+    "get-webhook",
+    "update-webhook",
+    "delete-webhook",
+    "test-webhook",
+    "rotate-webhook-secret",
+    "list-webhook-deliveries",
+    "get-webhook-delivery",
+    "redeliver-webhook",
+    "list-webhook-event-types",
+    "get-device-webhooks",
+    "set-device-webhooks",
+    "events"
+  ]
+}

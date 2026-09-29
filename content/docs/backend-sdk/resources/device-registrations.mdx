@@ -64,9 +64,9 @@ Do not compare `expiresAt` against your own clock and conclude anything: call
 
 ## `waitForClaim(code, options)`
 
-The whole point of the flow is waiting for the device to finish. There are no
-webhooks, so this is a poll loop, and the SDK ships the one you would otherwise
-write.
+The whole point of the flow is waiting for the device to finish. A claim has no
+[webhook](/platform-concepts/webhooks), so this is a poll loop, and the SDK
+ships the one you would otherwise write.
 
 ```ts
 const claimed = await xg.deviceRegistrations.waitForClaim(reg.code, {

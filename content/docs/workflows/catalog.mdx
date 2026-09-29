@@ -90,11 +90,24 @@ Every logic node emits `condition:condition` and runs on any target.
 
 ## Output
 
-| Type                   | Inputs                                                                                                           | Target | Configuration                                                                                                                                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output.event`         | `condition:condition`                                                                                            | any    | `kind` (`detection`): the event kind, e.g. `overspeed`; `attachClip` (false): honored on the media target when video is in the graph; `cooldownSeconds` (0). **Emits on rising edges**: a condition that turns true once and stays true produces exactly one event. |
-| `output.data_capture`  | `records:json` (any tag)                                                                                         | any    | `format` (`jsonl` \| `json`, default `jsonl`). Every record on the input becomes a line, or an element, of `outputs/<nodeId>/records.*`.                                                                                                                            |
-| `output.visualization` | `frames:frames`, plus at least one of `detections:json/detections`, `depth:json/depth`, `segments:json/segments` | media  | `overlays` (`boxes` \| `labels` \| `confidence` \| `depth_map` \| `masks`, default `["boxes", "labels"]`). Writes one annotated JPEG per frame to `frames/<nodeId>/`; the [`--emit-video`](/workflows/run-artifacts#annotated-video) flag muxes them.               |
+| Type                   | Inputs                                                                                                           | Target | Configuration                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `output.event`         | `condition:condition`                                                                                            | any    | `kind` (`detection`): the event kind, e.g. `overspeed`; `webhook` (none): the name of the [webhook endpoint](/platform-concepts/webhooks) each event is delivered to; `attachClip` (false): **not implemented**, nothing reads it and every event's `clipKey` is `null`; `cooldownSeconds` (0). **Emits on rising edges**: a condition that turns true once and stays true produces exactly one event. |
+| `output.data_capture`  | `records:json` (any tag)                                                                                         | any    | `format` (`jsonl` \| `json`, default `jsonl`). Every record on the input becomes a line, or an element, of `outputs/<nodeId>/records.*`.                                                                                                                                                                                                                                                               |
+| `output.visualization` | `frames:frames`, plus at least one of `detections:json/detections`, `depth:json/depth`, `segments:json/segments` | media  | `overlays` (`boxes` \| `labels` \| `confidence` \| `depth_map` \| `masks`, default `["boxes", "labels"]`). Writes one annotated JPEG per frame to `frames/<nodeId>/`; the [`--emit-video`](/workflows/run-artifacts#annotated-video) flag muxes them.                                                                                                                                                  |
+
+Every event record carries `nodeId`, the id of the `output.event` node that
+emitted it, in `events.jsonl`, `result.json` and the progress stream. The
+engine stamps it; an executor cannot set it.
+
+`webhook` holds an endpoint **name**, never a URL or a secret, so a template
+stays portable. On the platform, events of a production run are delivered to
+the organization's endpoint of that name once the run ends, and simulation runs
+show `wouldDeliverTo` instead of delivering; see
+[Webhooks](/platform-concepts/webhooks). Locally, the CLI's
+`--webhook <name>=<url>` flag binds the name ([CLI](/workflows/cli#webhooks)).
+Both fields arrived in engine 0.5.0, whose core `catalogVersion` is
+`f8861576c807e382`.
 
 ## Function
 

@@ -103,9 +103,9 @@ SDK translates.
 `ioCapabilities` client-side, because the API accepts any JSON object there but
 provisioning parses it strictly, and a document that fails that parse gives the
 device **zero video channels with no error anywhere**. And
-`deviceRegistrations.waitForClaim()` exists because there are no webhooks, so
-every "wait for this to finish" is a poll loop somebody would otherwise write
-badly.
+`deviceRegistrations.waitForClaim()` exists because a registration claim has
+no webhook, so "wait for this to finish" is a poll loop somebody would
+otherwise write badly.
 
 **Be honest in the types.** `Device.status` is machine-managed, so
 `UpdateDeviceInput` does not include it. `MediaSession.segmentCount` is present

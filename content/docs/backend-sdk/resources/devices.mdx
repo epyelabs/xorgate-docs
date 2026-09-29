@@ -233,7 +233,7 @@ Semantics worth knowing:
 
 ### Watching a config change land
 
-There is no push notification, so this is a poll. The pattern:
+A config change has no [webhook](/platform-concepts/webhooks), so this is a poll. The pattern:
 
 ```ts
 await xg.devices.patchConfig(deviceId, { gnssAntBias: true })
