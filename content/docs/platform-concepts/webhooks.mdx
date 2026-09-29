@@ -541,13 +541,25 @@ the same event again (same `id`) on a fresh schedule; it and `test` answer
 `409` while the endpoint is disabled. Re-enable it with
 `PATCH /webhooks/{id}` and `{"enabled": true}`.
 
-<Callout title="Planned: automatic disable after repeated failures">
-  Disabling an endpoint automatically after five exhausted deliveries in a row,
-  with an email to the organization's owners, is planned and **not live yet**.
-  Today only a `410` or a manual `PATCH` disables an endpoint, and
-  `consecutiveFailures` on the endpoint counts exhausted deliveries for you to
-  watch.
-</Callout>
+### Disabled endpoints
+
+An endpoint stops receiving in three ways, recorded as `disabledReason`:
+
+| `disabledReason` | Why                                                                                                                                                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `manual`         | An owner or admin disabled it (`PATCH` with `{"enabled": false}`, or the console).                                                                                                                                                                                             |
+| `gone`           | It answered `410 Gone`.                                                                                                                                                                                                                                                        |
+| `failing`        | Five deliveries in a row were `exhausted`, and the oldest of those five gave up at least 24 hours before the latest. The organization's owners get an email naming the endpoint, with a link to its page. A burst of events lost in one outage does not trigger it on its own. |
+
+`consecutiveFailures` on the endpoint counts exhausted deliveries since the
+last success; watch it to act before the switch-off.
+
+While an endpoint is disabled nothing is sent to it. Events that happen
+meanwhile are **not queued** for it (they create no delivery), and a
+delivery whose next retry comes due fails with `endpoint disabled`. Enabling
+it (`PATCH /webhooks/{id}` with `{"enabled": true}`) clears
+`disabledReason` and resets `consecutiveFailures`; redeliver what you need
+from the delivery log afterwards.
 
 ## Idempotency and ordering
 

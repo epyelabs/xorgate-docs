@@ -293,7 +293,8 @@
           "disabledReason": {
             "type": "string",
             "nullable": true,
-            "example": "manual"
+            "example": "manual",
+            "description": "`manual` (PATCH), `gone` (the endpoint answered 410) or `failing` (auto-disabled after repeated exhausted deliveries)."
           },
           "consecutiveFailures": {
             "type": "integer",
@@ -9974,7 +9975,7 @@
       "patch": {
         "operationId": "updateWebhook",
         "summary": "Update a webhook endpoint (owner/admin only)",
-        "description": "Any of `name`, `url`, `description`, `enabled`. Disabling records `disabledAt` and `disabledReason: \"manual\"`; re-enabling clears them and resets `consecutiveFailures`. An endpoint that answered `410 Gone` is disabled automatically (`disabledReason: \"gone\"`).",
+        "description": "Any of `name`, `url`, `description`, `enabled`. Disabling records `disabledAt` and `disabledReason: \"manual\"`; re-enabling clears them and resets `consecutiveFailures`. An endpoint that answered `410 Gone` is disabled automatically (`disabledReason: \"gone\"`), and so is one with 5 exhausted deliveries in a row whose oldest exhaustion is at least 24 h old (`disabledReason: \"failing\"`; the org owners are emailed).",
         "tags": [
           "Webhooks"
         ],
