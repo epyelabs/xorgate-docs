@@ -92,14 +92,16 @@ either.
 
 ### `delete(id)`
 
-Cascades to the device's identity, video channel rows, media sessions and
-telemetry.
+`owner` or `admin`. Final and thorough: it cascades the device's rows (identity,
+video channel rows, media and telemetry sessions, workflow attachments and runs,
+webhook routes) and tears down the AWS side (the IoT thing and its X.509
+certificate, the KVS signaling channels, the uploaded media and telemetry
+objects, the FK-less telemetry history). There is no soft delete and no restore.
 
-<Callout type="warn" title="The AWS IoT thing is not torn down">
-  Deleting a device removes its rows. The AWS IoT thing and its X.509
-  certificate are **not** deleted by this endpoint, so the certificate remains
-  valid until someone revokes it out of band. Treat device deletion as a
-  database operation, not a decommissioning procedure.
+<Callout title="To keep the device and drop only its history, purge instead">
+  `delete()` is a decommissioning: the device has to be re-enrolled afterwards.
+  [`purges`](#purge-data) removes what the device recorded and leaves it
+  enrolled and running.
 </Callout>
 
 ## Configuration
@@ -401,6 +403,172 @@ the full picture of what moves is in
 [Device ownership and transfer](/platform-concepts/device-ownership); if your
 app also renders the live plane, read
 [Scope and transfers](/frontend-sdk/device-scope) before you ship.
+
+## Purge data
+
+```ts
+purges.preview(deviceId: string): Promise<DevicePurgePreview>
+purges.create(deviceId: string, params: DevicePurgeCreateParams): Promise<DevicePurge>
+purges.get(deviceId: string, purgeId: string): Promise<DevicePurge>
+purges.list(deviceId: string, params?: ListDevicePurgesParams): Promise<DevicePurge[]>
+```
+
+`owner` or `admin`, organization-wide. The companion of a transfer: a transfer
+moves every reading and every recorded second with the device and purges
+nothing, and `delete()` takes the device along with its history.
+`xg.devices.purges` wipes the history and **keeps the device enrolled**: its
+row, identity and certificate, live video channels, configuration, webhook
+routes and latest-value cache stay, and the agent keeps running.
+
+What goes is chosen per scope, and the scopes combine in one request:
+
+<TypeTable
+  type={{
+    workflows: {
+      type: "scope",
+      description:
+        "Every attached workflow is detached; every production run of this device (including runs of workflows detached earlier) goes with its steps, events and S3 artifacts. Runs still executing are stopped. The organization's templates and their simulation runs are untouched.",
+    },
+    telemetry: {
+      type: "scope",
+      description:
+        "Recorded telemetry sessions, their segments and overview artifacts, the ingest log, and every stored reading. The latest-value view the roster reads stays.",
+    },
+    media: {
+      type: "scope",
+      description:
+        "Recorded video sessions, their segments and thumbnails. Live channels stay.",
+    },
+  }}
+/>
+
+Everything older than the moment of the request (the purge's `cutoff`) is
+removed; what the device uploads afterwards is kept. There is no undo.
+
+<Callout type="warn" title="A recording in progress is cut">
+  An open telemetry or video session that started before the cutoff is deleted,
+  and the segments the device uploads afterwards re-create it as a partial
+  session. Stop recording before you purge.
+</Callout>
+
+### `purges.preview(deviceId)` first
+
+What a purge would remove, as of now, for the confirmation dialog. It writes
+nothing. Stored readings come back as a **time span** rather than a count,
+because counting them is the expensive part of the purge itself.
+
+```ts
+const preview = await xg.devices.purges.preview(deviceId)
+console.log(
+  `${preview.workflows.attachments} workflows, ${preview.workflows.runs} runs, ` +
+    `${preview.telemetry.sessions} telemetry sessions ` +
+    `(readings ${preview.telemetry.readingsFrom} to ${preview.telemetry.readingsTo}), ` +
+    `${preview.media.sessions} video sessions`,
+)
+```
+
+`readingsFrom` and `readingsTo` are `null` when the device has no stored
+readings.
+
+### `purges.create(deviceId, { scopes })`, then poll
+
+The API answers `202` with the purge row in `status: "queued"` and a worker does
+the deleting in resumable chunks. Nothing has been removed when `create()`
+returns. Poll `get()` every few seconds until `status` is `succeeded` or
+`failed`.
+
+```ts
+let purge = await xg.devices.purges.create(deviceId, {
+  scopes: ["workflows", "telemetry", "media"],
+})
+
+while (purge.status === "queued" || purge.status === "running") {
+  await new Promise((r) => setTimeout(r, 2_500))
+  purge = await xg.devices.purges.get(deviceId, purge.id)
+}
+
+if (purge.status === "failed") throw new Error(`purge failed: ${purge.error}`)
+console.log(purge.counts.runs, purge.counts.readings, purge.counts.mediaSessions)
+```
+
+<TypeTable
+  type={{
+    status: {
+      type: '"queued" | "running" | "succeeded" | "failed"',
+      description:
+        "A failed purge may have removed part of the data; counts says how much, and a new purge picks up the rest.",
+    },
+    counts: {
+      type: "DevicePurgeCounts",
+      description:
+        "What has gone so far. {} until the worker starts; then every key is present and scopes that were not requested stay at 0.",
+    },
+    cursor: {
+      type: "{ step: string } | null",
+      description:
+        "Where the job is. step walks workflows.attachments, workflows.stop, workflows.runs, telemetry.s3, telemetry.sessions, telemetry.ingestLog, telemetry.readings, media.s3, media.sessions, done. The other keys are not a stable contract.",
+    },
+    cutoff: {
+      type: "string",
+      description:
+        "ISO-8601. Data older than this is removed; uploads after it are kept.",
+    },
+    stalled: {
+      type: "boolean",
+      description:
+        "True when the purge is running but no worker has renewed its lease for over 30 minutes: the job died mid-way. A new create() closes it as failed and starts over.",
+    },
+    requestedBy: {
+      type: "string",
+      description: "User id or API key id of the principal that asked.",
+    },
+  }}
+/>
+
+### Failures
+
+One purge per device at a time, and none while a cross-organization transfer
+offer for the device is open, because the handover detaches attachments itself.
+
+```ts
+try {
+  await xg.devices.purges.create(deviceId, { scopes: ["telemetry"] })
+} catch (e) {
+  if (!isXorgateError(e)) throw e
+  switch (e.code) {
+    case "PURGE_IN_PROGRESS":
+      // `e.details.purgeId` names the one still running; poll it instead.
+      break
+    case "TRANSFER_PENDING":
+      // Cancel or resolve the transfer offer first.
+      break
+    case "PURGE_DISPATCH_FAILED":
+      // Recorded but never queued. Nothing was deleted. Safe to retry.
+      break
+    case "WORKSPACE_SCOPED":
+      // A workspace-scoped session token cannot purge; use an org-wide credential.
+      break
+    default:
+      throw e
+  }
+}
+```
+
+`PURGE_IN_PROGRESS` and `TRANSFER_PENDING` are `409`s. `PURGE_DISPATCH_FAILED`
+is a `502` that means the purge row was recorded but never queued: the row is
+marked `failed`, nothing was deleted, and the call is safe to retry. An empty or
+unknown scope is a `400`, a device outside your reach a `404`, and a
+workspace-scoped session token a `403 WORKSPACE_SCOPED` whatever its role.
+
+### `purges.list(deviceId, { limit? })`
+
+The audit trail: who purged what, and when. Newest first, at most 20 (`limit`
+defaults to 10), and **not paginated**: it returns an array.
+
+```ts
+const [latest] = await xg.devices.purges.list(deviceId, { limit: 1 })
+if (latest) console.log(latest.status, latest.scopes, latest.requestedBy, latest.finishedAt)
+```
 
 ## Commands
 

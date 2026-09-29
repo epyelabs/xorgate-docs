@@ -46,15 +46,15 @@ device id rather than by tenant:
 | **Its device model**      | The hardware catalog is platform-wide, so the model survives any move. |
 
 <Callout type="warn" title="For a cross-organization transfer this is a data-disclosure event">
-  History is **never purged** on transfer, and there is no option to purge it.
-  The new owner can read every reading the device ever published and play back
-  every second it ever recorded, including everything collected while you owned
-  it.
+  History is **never purged** on transfer, and a transfer has no option to purge
+  it. The new owner can read every reading the device ever published and play
+  back every second it ever recorded, including everything collected while you
+  owned it.
 
 This is deliberate: a device's history is the device's, and silently dropping
-it would make a handover lossy in a way nobody could audit. If footage must
-not travel, delete it before you transfer — that is a separate, destructive
-operation you perform knowingly.
+it would make a handover lossy in a way nobody could audit. If history must
+not travel, [purge it](#purging-device-data) before you transfer: a separate,
+destructive operation you perform knowingly.
 
 [`GET /devices/{id}/transfer/preview`](/api-reference/devices/preview-device-transfer)
 returns `carriesHistory: true` so a confirmation dialog can say this out loud
@@ -75,6 +75,53 @@ the device _under its former owner_ rather than properties of the device:
 - **Dataset items** built from its footage. Datasets are organization-scoped;
   the frames were collected and annotated under the old organization, and the
   dataset stays there.
+
+## Purging device data
+
+A transfer moves history and never removes it. The companion action is a
+**purge**:
+[`POST /devices/{id}/purges`](/api-reference/devices/create-device-purge) wipes
+what a device has accumulated while keeping the device itself enrolled. Use it
+to clean a bench device before it goes to a customer, to drop what a device
+collected before a cross-organization handover, or to get rid of junk without
+re-provisioning. Deleting the device is the other option, and it destroys the
+identity too.
+
+What goes is chosen per `scope`, and the three combine in one request:
+
+|             | Removed                                                                                                                                                                                                 | Kept                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `workflows` | Every attached workflow is detached; every production run of this device, including runs of workflows detached earlier, goes with its steps, events and S3 artifacts. Runs still executing are stopped. | The organization's workflow templates and their simulation runs. |
+| `telemetry` | Recorded telemetry sessions, their segments and overview artifacts, the ingest log, and every stored reading.                                                                                           | The latest-value view the fleet roster reads.                    |
+| `media`     | Recorded video sessions, their segments and thumbnails.                                                                                                                                                 | The live video channels.                                         |
+
+Whatever the scopes, the device row, its IoT identity and certificate, its
+configuration, its webhook routes and its latest-value cache stay, and the
+agent keeps running. Dataset items built from its footage are copies under the
+dataset and stay too. Everything older than the moment of the request (the
+purge's `cutoff`) is removed and what the device uploads afterwards is kept, so
+a recording in progress is cut at that point: stop recording first. There is no
+undo.
+
+**Owner or admin**, and organization-wide like a transfer: a workspace-scoped
+session token is refused with `403 WORKSPACE_SCOPED` whatever its role. A
+device outside the caller's reach is a `404`, never a `403`.
+
+**It is asynchronous.** The request answers `202` with a purge row in
+`status: "queued"`, and a worker deletes in resumable chunks. Poll
+[`GET /devices/{id}/purges/{purgeId}`](/api-reference/devices/get-device-purge)
+every few seconds until `status` is `succeeded` or `failed`; `counts` says what
+has gone so far and `cursor.step` where the job is. One purge per device at a
+time (`409 PURGE_IN_PROGRESS`), and none while a transfer offer for the device
+is pending (`409 TRANSFER_PENDING`), because the handover detaches attachments
+itself.
+[`GET /devices/{id}/purges/preview`](/api-reference/devices/preview-device-purge)
+returns the counts a confirmation dialog should show, and
+[`GET /devices/{id}/purges`](/api-reference/devices/list-device-purges) is the
+audit trail: who purged what, and when.
+
+From `@xorgate/sdk` 0.10.0 the same routes are
+[`xg.devices.purges`](/backend-sdk/resources/devices#purge-data).
 
 ## What is broken on purpose
 
@@ -265,6 +312,11 @@ list.
     title="Transfer offers reference"
     href="/api-reference/transfer-offers"
     description="Every offer route, and what the code does and does not buy."
+  />
+  <Card
+    title="Purge a device's data"
+    href="/api-reference/devices/create-device-purge"
+    description="Wipe workflows, telemetry or media while keeping the device enrolled."
   />
   <Card
     title="Scope and transfers"

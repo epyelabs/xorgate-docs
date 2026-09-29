@@ -412,6 +412,63 @@ The remaining envelope types are `TransferResult` (`{ device, transfer }`),
 `TransferDeviceInput`, `TransferWorkflowAttachment`, `TransferBlocker` and
 `ListTransferOffersParams`.
 
+## Purge
+
+```ts
+type DevicePurgeScope = "workflows" | "telemetry" | "media"
+type DevicePurgeStatus = "queued" | "running" | "succeeded" | "failed"
+
+interface DevicePurge {
+  id: string // UUIDv7, sorts by request time
+  deviceId: string
+  workspaceId: string
+  organizationId: string
+  scopes: DevicePurgeScope[]
+  status: DevicePurgeStatus
+  cutoff: string // ISO-8601; older data goes, later uploads stay
+  cursor: ({ step: string } & Record<string, unknown>) | null
+  counts: DevicePurgeCounts // {} until the worker starts
+  error: string | null
+  requestedBy: string // user id or API key id
+  requestedAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  leaseUntil: string | null
+  stalled: boolean
+}
+
+interface DevicePurgeCounts {
+  attachments?: number
+  runs?: number
+  runObjects?: number
+  telemetrySessions?: number
+  telemetryObjects?: number
+  ingestLogRows?: number
+  readings?: number
+  mediaSessions?: number
+  mediaObjects?: number
+}
+
+interface DevicePurgePreview {
+  workflows: { attachments: number; runs: number }
+  telemetry: { sessions: number; readingsFrom: string | null; readingsTo: string | null }
+  media: { sessions: number }
+}
+
+interface DevicePurgeCreateParams {
+  scopes: readonly DevicePurgeScope[] // non-empty
+  signal?: AbortSignal
+}
+```
+
+Every key of `DevicePurgeCounts` is optional because the row is `{}` until a
+worker claims the purge; once it has, every key is present and the scopes that
+were not requested stay at `0`. `cursor.step` is the only stable part of the
+cursor. `stalled` is computed by the API, not stored: it is `true` when a
+`running` purge has had no lease renewal for over 30 minutes, and the next
+`purges.create()` closes such a row as `failed` before starting over. See
+[Purge data](/backend-sdk/resources/devices#purge-data).
+
 ## Pagination and errors
 
 ```ts

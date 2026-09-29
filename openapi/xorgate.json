@@ -556,7 +556,7 @@
             "properties": {
               "code": {
                 "type": "string",
-                "description": "Stable error code. The full set a client can see: `UNAUTHORIZED` (401), `ORGANIZATION_REQUIRED` (400, multi-org caller sent no `X-Organization-Id`), `BAD_REQUEST` (400), `FORBIDDEN` / `NO_ORGANIZATION` / `INSUFFICIENT_ROLE` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `CONFLICT` (409), `SERVER_ERROR` (500, an unhandled failure; quote `requestId` when reporting it), `CONFIG_PUBLISH_FAILED` / `COMMAND_PUBLISH_FAILED` / `DIST_MANIFEST_UNAVAILABLE` / `DIST_MANIFEST_INVALID` (502).",
+                "description": "Stable error code. The full set a client can see: `UNAUTHORIZED` (401), `ORGANIZATION_REQUIRED` (400, multi-org caller sent no `X-Organization-Id`), `BAD_REQUEST` (400), `FORBIDDEN` / `NO_ORGANIZATION` / `INSUFFICIENT_ROLE` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `CONFLICT` / `PURGE_IN_PROGRESS` / `TRANSFER_PENDING` (409), `PURGE_DISPATCH_FAILED` (502), `SERVER_ERROR` (500, an unhandled failure; quote `requestId` when reporting it), `CONFIG_PUBLISH_FAILED` / `COMMAND_PUBLISH_FAILED` / `DIST_MANIFEST_UNAVAILABLE` / `DIST_MANIFEST_INVALID` (502).",
                 "example": "NOT_FOUND"
               },
               "message": {
@@ -3732,6 +3732,231 @@
           "count": {
             "type": "integer",
             "description": "Templates in this organization carrying the tag."
+          }
+        }
+      },
+      "DevicePurgeScope": {
+        "type": "string",
+        "enum": [
+          "workflows",
+          "telemetry",
+          "media"
+        ],
+        "description": "`workflows`: attached workflows, their production runs and artifacts. `telemetry`: recorded telemetry sessions and every stored reading. `media`: recorded video sessions and thumbnails."
+      },
+      "DevicePurgeCreate": {
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/DevicePurgeScope"
+            },
+            "description": "Which kinds of data to remove. Duplicates are ignored."
+          }
+        }
+      },
+      "DevicePurgeCounts": {
+        "type": "object",
+        "description": "What the purge has removed so far. Every key is present once the job has started; scopes that were not requested stay at 0.",
+        "properties": {
+          "attachments": {
+            "type": "integer"
+          },
+          "runs": {
+            "type": "integer"
+          },
+          "runObjects": {
+            "type": "integer",
+            "description": "S3 objects under the deleted runs."
+          },
+          "telemetrySessions": {
+            "type": "integer"
+          },
+          "telemetryObjects": {
+            "type": "integer"
+          },
+          "ingestLogRows": {
+            "type": "integer"
+          },
+          "readings": {
+            "type": "integer",
+            "description": "Stored telemetry rows."
+          },
+          "mediaSessions": {
+            "type": "integer"
+          },
+          "mediaObjects": {
+            "type": "integer"
+          }
+        }
+      },
+      "DevicePurge": {
+        "type": "object",
+        "required": [
+          "id",
+          "deviceId",
+          "workspaceId",
+          "organizationId",
+          "scopes",
+          "status",
+          "cutoff",
+          "counts",
+          "requestedBy",
+          "requestedAt",
+          "stalled"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspaceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DevicePurgeScope"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "description": "`queued` until a worker picks it up, `running` while it walks its steps, then `succeeded` or `failed` (see `error`). A failed purge may have removed part of the data; `counts` says how much, and a new purge picks up the rest."
+          },
+          "cutoff": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data older than this is removed; uploads after it are kept."
+          },
+          "cursor": {
+            "type": "object",
+            "nullable": true,
+            "description": "Where the job is. `step` is one of `workflows.attachments`, `workflows.stop`, `workflows.runs`, `telemetry.s3`, `telemetry.sessions`, `telemetry.ingestLog`, `telemetry.readings`, `media.s3`, `media.sessions`, `done`; the other keys are the step's own position and are not a stable contract.",
+            "properties": {
+              "step": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          },
+          "counts": {
+            "$ref": "#/components/schemas/DevicePurgeCounts"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "User id or API key id of the principal that asked."
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "leaseUntil": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Worker lease. Operational detail; clients read `status` and `stalled`."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "True when the purge is `running` but no worker has renewed its lease for over 30 minutes: the job died mid-way. A new `POST` closes it and starts over."
+          }
+        }
+      },
+      "DevicePurgePreview": {
+        "type": "object",
+        "required": [
+          "workflows",
+          "telemetry",
+          "media"
+        ],
+        "properties": {
+          "workflows": {
+            "type": "object",
+            "required": [
+              "attachments",
+              "runs"
+            ],
+            "properties": {
+              "attachments": {
+                "type": "integer",
+                "description": "Workflows attached to the device."
+              },
+              "runs": {
+                "type": "integer",
+                "description": "Production runs the purge would delete."
+              }
+            }
+          },
+          "telemetry": {
+            "type": "object",
+            "required": [
+              "sessions",
+              "readingsFrom",
+              "readingsTo"
+            ],
+            "properties": {
+              "sessions": {
+                "type": "integer",
+                "description": "Recorded telemetry sessions."
+              },
+              "readingsFrom": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "Oldest stored reading, or null when there are none."
+              },
+              "readingsTo": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              }
+            }
+          },
+          "media": {
+            "type": "object",
+            "required": [
+              "sessions"
+            ],
+            "properties": {
+              "sessions": {
+                "type": "integer",
+                "description": "Recorded video sessions."
+              }
+            }
           }
         }
       },
@@ -7448,6 +7673,253 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/purges": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listDevicePurges",
+        "summary": "List purges of a device (owner/admin only)",
+        "description": "The purge history of a device, newest first: the audit record of who wiped what and when, and the way a client finds a purge that is still running. At most 20.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 10
+            }
+          }
+        ],
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "Purges, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "purges"
+                  ],
+                  "properties": {
+                    "purges": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DevicePurge"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createDevicePurge",
+        "summary": "Purge a device's data (owner/admin only)",
+        "description": "Deletes the history a device has accumulated while keeping the device itself: its row, identity and certificate, live video channels, settings, webhook routes and the latest-value cache all stay, and the agent keeps running. What goes is chosen per `scope`:\n\n- `workflows`: every workflow attached to the device is detached, and every production run those attachments produced (and the runs of workflows detached earlier) is deleted with its steps, events and S3 artifacts. Runs still executing are stopped. The organization's workflow templates and their simulation runs are untouched.\n- `telemetry`: recorded telemetry sessions, their segments, overview artifacts, ingest log and every stored reading.\n- `media`: recorded video sessions, their segments and thumbnails.\n\nEverything older than the moment of the request (`cutoff`) is removed; what the device uploads afterwards stays. A recording in progress is cut at that point. The work runs asynchronously: this returns `202` with the purge row, and `GET /devices/{id}/purges/{purgeId}` reports progress until `status` is `succeeded` or `failed`. One purge per device at a time. There is no undo.\n\nOrganization-wide: a workspace-scoped session token is refused (`WORKSPACE_SCOPED`).",
+        "tags": [
+          "Devices"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevicePurgeCreate"
+              },
+              "example": {
+                "scopes": [
+                  "workflows",
+                  "telemetry",
+                  "media"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Purge queued. Poll `GET /devices/{id}/purges/{purgeId}` for the outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "purge"
+                  ],
+                  "properties": {
+                    "purge": {
+                      "$ref": "#/components/schemas/DevicePurge"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "A purge of this device is already queued or running (`PURGE_IN_PROGRESS`; `details.purgeId` names it), or a cross-organization transfer offer for the device is pending (`TRANSFER_PENDING`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The purge was recorded but could not be queued (`PURGE_DISPATCH_FAILED`). Nothing was deleted; the row is marked `failed`. Safe to retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/purges/preview": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "previewDevicePurge",
+        "summary": "What a purge would remove, without removing it",
+        "description": "Counts per scope for the confirmation step of `POST /devices/{id}/purges`. Writes nothing. Stored readings are reported as a time span rather than a count: counting them is the expensive part of the purge itself.",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "What a purge of each scope would remove, as of now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePurgePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/purges/{purgeId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "name": "purgeId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getDevicePurge",
+        "summary": "Get a purge (owner/admin only)",
+        "description": "One purge: its status, what it has removed so far (`counts`) and where it is (`cursor.step`). Poll every few seconds while `status` is `queued` or `running`.",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "The purge.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "purge"
+                  ],
+                  "properties": {
+                    "purge": {
+                      "$ref": "#/components/schemas/DevicePurge"
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

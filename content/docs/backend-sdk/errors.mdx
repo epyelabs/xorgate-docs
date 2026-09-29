@@ -129,6 +129,9 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 | `TRANSFER_IN_PROGRESS`      | 409    | Another transfer of this device has not finished. Stale ones are swept lazily, so retry once before investigating.                   |
 | `CONCURRENT_MODIFICATION`   | 409    | The device moved while the request was being prepared. Re-read it and try again.                                                     |
 | `TRANSFER_FAILED`           | 502    | The transfer was **rolled back**; nothing changed. The one write on this API that is safe to retry blindly.                          |
+| `PURGE_IN_PROGRESS`         | 409    | A purge of this device is already queued or running. `details.purgeId` names it; poll that one instead of starting another.          |
+| `TRANSFER_PENDING`          | 409    | A cross-organization transfer offer for the device is open. Cancel it, or wait for it to resolve, before purging.                    |
+| `PURGE_DISPATCH_FAILED`     | 502    | The purge row was recorded but never queued; it is marked `failed` and nothing was deleted. Safe to retry.                           |
 | `CONFIG_PUBLISH_FAILED`     | 502    | Config was **saved** but not delivered to the device.                                                                                |
 | `COMMAND_PUBLISH_FAILED`    | 502    | Publishing a device command failed. Nothing happened.                                                                                |
 | `DIST_BUCKET_UNCONFIGURED`  | 500    | This stage has no agent distribution bucket.                                                                                         |
