@@ -4593,7 +4593,7 @@
                   "maxSpeedKph": 104.2,
                   "insights": {},
                   "overview": {
-                    "apiPath": "/v1/devices/0192f0a4-0000-7000-8000-000000000001/telemetry/sessions/0192f0a4-1111-7000-8000-000000000002"
+                    "apiPath": "/v1/devices/0192f0a4-0000-7000-8000-000000000001/replay-manifest?from=2026-09-27T13%3A10%3A00.000Z&to=2026-09-27T13%3A52%3A00.000Z"
                   }
                 }
               }
