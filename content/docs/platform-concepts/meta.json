@@ -5,6 +5,7 @@
     "metrics",
     "device-models",
     "device-ownership",
+    "simulated-devices",
     "media-sessions",
     "telemetry-sessions",
     "live-vs-recorded",

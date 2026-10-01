@@ -1,0 +1,148 @@
+---
+title: "Simulated devices"
+description: "A device with no hardware: the real device agent replaying a recorded drive on a loop. What it does, the scenarios it can replay, how to switch between them, what power off means, and the quotas."
+---
+
+A **simulated device** is a device you can create without owning any hardware.
+It is the real device agent, running in a hosted container, with two inputs
+swapped: its sensors read a recorded telemetry trace, and its camera reads the
+video recorded on the same drive. Everything downstream of those two inputs is
+the code a physical device runs.
+
+So it behaves like a device in every way the platform can see. It comes online,
+streams live video, moves on the map, takes config and commands, records and
+uploads sessions, fires webhooks and runs workflows. Use one to build or demo
+against the platform before hardware arrives.
+
+## What you get
+
+Within a minute or two of creating one:
+
+- **Online**, with the usual presence and status.
+- **Live video** on `cam0` at 1280×720, 15 fps. `cam1` is disabled, exactly
+  like the device the footage came from.
+- **A moving map pin** and the full live telemetry set (GPS, speed, IMU,
+  system metrics) from the recorded trace, stamped with the current time.
+- **Five recorded sessions** under Media Recordings, one per scenario, with
+  thumbnails and synced replays. They upload over the first few minutes through
+  the device's own uploader, the same way a backlog drains on real hardware.
+
+A simulated device reports the device model **Argus CM5 Rev1** and is a normal
+row under [`/devices`](/api-reference/devices/list-devices). The one thing that
+marks it is `simulated: true`, which is fixed when it is created and can never
+be changed. Filter on it with `GET /devices?simulated=true`.
+
+<Callout title="The agent mode reads `replay`">
+  A simulated device's reported agent mode
+  (`reportedConfig.effective.agent.mode`) is `replay`. Key anything you build on
+  `device.simulated`, not on the mode: the mode is reported by the device,
+  `simulated` is a fact the platform holds.
+</Callout>
+
+## Scenarios
+
+A scenario is one recorded drive, replayed as a lap. The device drives the lap,
+parks for a gap (30 s by default), then drives it again.
+
+| Scenario             | What it is                     | Lap    | Distance | Max speed |
+| -------------------- | ------------------------------ | ------ | -------- | --------- |
+| `highway-2026-09-20` | Highway drive west             | 27 min | 19 km    | 115 km/h  |
+| `niagara-2026-09-25` | Long fast drive toward Niagara | 46 min | 57 km    | 142 km/h  |
+| `city-2026-09-27`    | City drive with stops          | 16 min | 7.9 km   | 109 km/h  |
+| `urban-2026-09-18`   | Short stop-and-go urban        | 15 min | 6.1 km   | 69 km/h   |
+| `parked-2026-09-17`  | Parked (stationary)            | 10 min | 0 km     | 2 km/h    |
+
+The catalog is served by
+[`GET /device-simulations/scenarios`](/api-reference/device-simulations/list-simulation-scenarios),
+with a thumbnail per scenario and the default (`city-2026-09-27`). Read it rather
+than hard-coding this table.
+
+## Creating one
+
+In the console: **Devices → Register simulation**, pick a name and a scenario.
+The device is created in the workspace you are in. Or with the SDK:
+
+```ts
+const { device, simulation } = await xg.devices.simulations.create({
+  workspaceId,
+  name: "Demo truck",
+  scenarioId: "urban-2026-09-18", // optional; the catalog default otherwise
+})
+```
+
+Owners and admins only. The call creates and provisions the device (its
+certificate, its video channels, its config) before it answers `201`. The
+container starts shortly after: follow it with
+[`GET /device-simulations/{id}`](/api-reference/device-simulations/get-device-simulation),
+whose `hostState` goes `pending` → `starting` → `running`. `running` means the
+agent inside is connected, which is also when the device turns `online`.
+
+A `502 SIMULATION_PROVISION_FAILED` was rolled back. Nothing was created, so it
+is safe to retry.
+
+## Switching scenario
+
+The scenario is device config: the `simulation` namespace,
+`{scenarioId, loop, gapSeconds}`, accepted only by simulated devices. Write it
+and the device switches in place within a few seconds. In the console, the
+**Reboot** dialog of a simulated device has a scenario picker that does exactly
+this, then reboots so the switch is visible as offline → online.
+
+```ts
+await xg.devices.mergeConfig(deviceId, {
+  simulation: { scenarioId: "parked-2026-09-17" },
+})
+await xg.devices.reboot(deviceId) // optional: the visible restart
+```
+
+<Callout type="warn" title="Send the whole namespace">
+  All three fields are required and the namespace is replaced whole, so
+  `patchConfig` with only `scenarioId` is a `400`. `mergeConfig` reads the
+  current namespace and merges into it, which is why it is the call to use.
+</Callout>
+
+The choice is stored desired state like any other config, so it survives a
+reboot or a restart of the container.
+
+## Power
+
+Commands behave as they do on hardware, with one difference that follows from
+there being no power button to press:
+
+| Command       | On a simulated device                                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reboot**    | The agent restarts. Offline for a few seconds, then online on the configured scenario.                                                                                                                                     |
+| **Power off** | The device goes offline and **stays off**. `hostState` reads `stopped`.                                                                                                                                                    |
+| **Power on**  | [`POST /device-simulations/{id}/start`](/api-reference/device-simulations/start-device-simulation) (owner/admin). Online again within about a minute. In the console it is in the device's **⋮** menu while it is offline. |
+| **Update**    | Rejected. A simulated device runs the agent build of its host, not one you install.                                                                                                                                        |
+
+Commands need the device online, so a powered-off simulated device takes none
+of them. Power on is the one thing it accepts.
+
+## Recording
+
+Recording is **off** by default, as it is on hardware. The laps are then
+live-only: video and telemetry stream, nothing is uploaded and nothing new is
+stored. The five seeded sessions are there to cover "show me recordings".
+
+Turn recording on in the device's settings and each lap records one media
+session and one telemetry session, closed shortly after the next lap starts,
+just as one drive does on a physical device. Expect around 200 MB of footage per
+lap, and webhooks and workflows that fire on session events to fire on every
+lap.
+
+## Quotas
+
+At most **2 simulated devices per organization**, and a platform-wide limit
+across all organizations. Past either, create answers
+`409 SIMULATION_QUOTA_EXCEEDED` with `details.scope` (`organization` or
+`global`), `details.limit` and `details.count`. Delete a simulated device to free
+its place.
+
+## Deleting
+
+Delete it like any device: the console's **Danger zone**, or
+[`DELETE /devices/{id}`](/api-reference/devices/delete-device). That removes its
+recordings, telemetry, certificate and video channels, and stops its container
+within about half a minute. `GET /device-simulations/{id}` answers `404` from
+then on.

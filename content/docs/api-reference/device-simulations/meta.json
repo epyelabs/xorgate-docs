@@ -1,0 +1,11 @@
+{
+  "title": "Device Simulations",
+  "description": "Devices with no hardware: the real device agent replaying a recorded drive on a loop, hosted for you. Create one here; everything else about it is a normal device under /devices.",
+  "pages": [
+    "index",
+    "create-device-simulation",
+    "list-simulation-scenarios",
+    "get-device-simulation",
+    "start-device-simulation"
+  ]
+}

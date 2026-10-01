@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.10.0",
+    "version": "0.11.0",
     "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates`, `GET /webhooks` and `GET /webhooks/{id}/deliveries` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
@@ -61,6 +61,11 @@
       "name": "Devices",
       "x-displayName": "Devices",
       "description": "Device records, their configuration document, their IoT identity, and the one-shot commands you can send them."
+    },
+    {
+      "name": "Device Simulations",
+      "x-displayName": "Device Simulations",
+      "description": "Devices with no hardware: the real device agent replaying a recorded drive on a loop, hosted for you. Create one here; everything else about it is a normal device under /devices."
     },
     {
       "name": "Transfer Offers",
@@ -540,6 +545,138 @@
           }
         }
       },
+      "DeviceSimulation": {
+        "type": "object",
+        "required": [
+          "deviceId",
+          "scenarioId",
+          "desiredState",
+          "hostState",
+          "createdBy",
+          "createdAt"
+        ],
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scenarioId": {
+            "type": "string",
+            "description": "The scenario the device is on now: its `simulation` config namespace, or the one it was created with when the namespace is absent."
+          },
+          "desiredState": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          },
+          "startRequestedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "hostId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The host that last reported this simulation."
+          },
+          "hostState": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "starting",
+              "running",
+              "stopped",
+              "error"
+            ],
+            "description": "`pending` until a host first reports it. `running` means the agent in the container is connected, not merely that the container is up; `stopped` is a sim parked by `power_off` (see `POST /device-simulations/{id}/start`)."
+          },
+          "hostMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "hostReportedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdBy": {
+            "type": "string",
+            "description": "User id or API key id."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SimulationScenario": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "streams"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "city-2026-09-27"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "durationMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "One lap."
+          },
+          "distanceM": {
+            "type": "number",
+            "nullable": true
+          },
+          "maxKph": {
+            "type": "number",
+            "nullable": true
+          },
+          "streams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "streamKey"
+              ],
+              "properties": {
+                "streamKey": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "height": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "fps": {
+                  "type": "number",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "thumbnailUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Presigned, one hour."
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "required": [
@@ -556,7 +693,7 @@
             "properties": {
               "code": {
                 "type": "string",
-                "description": "Stable error code. The full set a client can see: `UNAUTHORIZED` (401), `ORGANIZATION_REQUIRED` (400, multi-org caller sent no `X-Organization-Id`), `BAD_REQUEST` (400), `FORBIDDEN` / `NO_ORGANIZATION` / `INSUFFICIENT_ROLE` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `CONFLICT` / `PURGE_IN_PROGRESS` / `TRANSFER_PENDING` (409), `PURGE_DISPATCH_FAILED` (502), `SERVER_ERROR` (500, an unhandled failure; quote `requestId` when reporting it), `CONFIG_PUBLISH_FAILED` / `COMMAND_PUBLISH_FAILED` / `DIST_MANIFEST_UNAVAILABLE` / `DIST_MANIFEST_INVALID` (502).",
+                "description": "Stable error code. The full set a client can see: `UNAUTHORIZED` (401), `ORGANIZATION_REQUIRED` (400, multi-org caller sent no `X-Organization-Id`), `BAD_REQUEST` (400), `FORBIDDEN` / `NO_ORGANIZATION` / `INSUFFICIENT_ROLE` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `CONFLICT` / `PURGE_IN_PROGRESS` / `TRANSFER_PENDING` / `SIMULATION_QUOTA_EXCEEDED` (409), `PURGE_DISPATCH_FAILED` / `SIMULATION_PROVISION_FAILED` (502), `SERVER_ERROR` (500, an unhandled failure; quote `requestId` when reporting it), `CONFIG_PUBLISH_FAILED` / `COMMAND_PUBLISH_FAILED` / `DIST_MANIFEST_UNAVAILABLE` / `DIST_MANIFEST_INVALID` (502).",
                 "example": "NOT_FOUND"
               },
               "message": {
@@ -1604,6 +1741,10 @@
             ],
             "description": "Machine-managed: telemetry ingest, the MQTT last-will and the offline sweeper own this. Writing it through `PUT /devices/{id}` is rejected 400."
           },
+          "simulated": {
+            "type": "boolean",
+            "description": "A device-simulator device: the real agent replaying a recorded drive in a container, created by `POST /device-simulations`. Fixed at creation and never writable. Everything else about it is a normal device; only a simulated device accepts the `simulation` config namespace."
+          },
           "needsModel": {
             "type": "boolean",
             "description": "Probe-at-claim could not pick a device model unambiguously; the device carries its registration's fallback model until an operator confirms one via `PUT /devices/{id}` `{deviceModelId}`, which clears this."
@@ -2086,6 +2227,33 @@
         "additionalProperties": false,
         "description": "Camera mounting rotation (`cameraMount` namespace): per-camera 0/180 applied at the image sensor via the camera overlay in /boot/firmware/config.txt, so live video, recordings, replays and workflow frames are all corrected at zero CPU cost. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports the namespace with a `rebootRequired` detail; it never reboots the device itself. An absent camera key is unmanaged (the boot config is left as found); an explicit `rotationDeg: 0` forces that camera upright."
       },
+      "SimulationConfig": {
+        "type": "object",
+        "properties": {
+          "scenarioId": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "Catalog id of the scenario to replay (demo-assets/v1/<scenarioId>/)."
+          },
+          "loop": {
+            "type": "boolean",
+            "description": "Replay the scenario again after the parked gap; false parks at the end of the lap until changed."
+          },
+          "gapSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600,
+            "description": "Parked pause between laps, seconds."
+          }
+        },
+        "required": [
+          "scenarioId",
+          "loop",
+          "gapSeconds"
+        ],
+        "additionalProperties": false,
+        "description": "Device-simulator scenario selection (`simulation` namespace). Accepted only for devices created as simulated; a simulated device replays the catalog scenario `scenarioId` from `demo-assets/v1/`, parks for `gapSeconds` between laps, and loops while `loop` is true. Applied live by the replay source (5 s settings poll, and forced on every cloud config message); a changed scenarioId ends the current lap in place."
+      },
       "DeviceConfig": {
         "type": "object",
         "additionalProperties": false,
@@ -2137,6 +2305,13 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/CameraMountConfig"
+              }
+            ]
+          },
+          "simulation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SimulationConfig"
               }
             ]
           }
@@ -6807,6 +6982,19 @@
               ]
             },
             "description": "Filter by device status. An empty value or the literal `any` means \"no filter\"; any other unknown value is a 400."
+          },
+          {
+            "name": "simulated",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "`true` lists only simulated devices (see Device Simulations), `false` only real ones. Absent lists both. Any other value is a 400."
           }
         ],
         "tags": [
@@ -7234,6 +7422,15 @@
                     ],
                     "nullable": true,
                     "description": "Camera mounting rotation (`cameraMount` namespace): per-camera 0/180 applied at the image sensor via the camera overlay in /boot/firmware/config.txt, so live video, recordings, replays and workflow frames are all corrected at zero CPU cost. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports the namespace with a `rebootRequired` detail; it never reboots the device itself. An absent camera key is unmanaged (the boot config is left as found); an explicit `rotationDeg: 0` forces that camera upright. Apply class: `agent-poll`. null reverts to device defaults."
+                  },
+                  "simulation": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/SimulationConfig"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Device-simulator scenario selection (`simulation` namespace). Accepted only for devices created as simulated; a simulated device replays the catalog scenario `scenarioId` from `demo-assets/v1/`, parks for `gapSeconds` between laps, and loops while `loop` is true. Applied live by the replay source (5 s settings poll, and forced on every cloud config message); a changed scenarioId ends the current lap in place. Apply class: `agent-poll`. null reverts to device defaults."
                   }
                 }
               }
@@ -8367,6 +8564,262 @@
           },
           "500": {
             "description": "Server misconfiguration. Body is a failing shell script."
+          }
+        }
+      }
+    },
+    "/v1/device-simulations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createDeviceSimulation",
+        "summary": "Register a simulated device",
+        "description": "Creates a device that is the real device agent replaying a recorded drive in a container on a simulator host: online within a couple of minutes, live video, moving on the map, five seeded recorded sessions, and no hardware. In order: a quota check (`409 SIMULATION_QUOTA_EXCEEDED`; 2 per organization and 8 overall by default), a device row (serial `SIM-<8 hex>`, model Argus CM5 Rev1, `simulated: true`, cam1 disabled, the `simulation` namespace set), the same IoT thing, certificate and video channels a real device gets, the first config publish, and the credentials handed to the host. Any failure after the row exists is rolled back and is a `502 SIMULATION_PROVISION_FAILED`. From then on it is a normal device: configure, command, browse and DELETE it through `/devices/{id}`. To switch scenario, PATCH the device's `simulation` namespace (whole) and send `POST /devices/{id}/reboot`.",
+        "tags": [
+          "Device Simulations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "workspaceId"
+                ],
+                "properties": {
+                  "workspaceId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Must belong to the active organization, else 400."
+                  },
+                  "name": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 120,
+                    "description": "Defaults to `Simulator SIM-<8 hex>`."
+                  },
+                  "scenarioId": {
+                    "type": "string",
+                    "nullable": true,
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                    "description": "A scenario from `GET /device-simulations/scenarios`; an id the catalog does not carry is a 400. Defaults to the catalog default."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The simulated device and its simulation. The host picks it up within one pass.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "device",
+                    "simulation"
+                  ],
+                  "properties": {
+                    "device": {
+                      "$ref": "#/components/schemas/Device"
+                    },
+                    "simulation": {
+                      "$ref": "#/components/schemas/DeviceSimulation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "description": "Provisioning failed and was rolled back (`SIMULATION_PROVISION_FAILED`). Retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/device-simulations/scenarios": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "listSimulationScenarios",
+        "summary": "List the scenarios a simulated device can replay",
+        "description": "The scenario catalog of the current asset pack: recorded drives a simulated device replays on a loop. Thumbnail URLs are presigned and expire after an hour.",
+        "tags": [
+          "Device Simulations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "assetsVersion",
+                    "defaultScenarioId",
+                    "scenarios"
+                  ],
+                  "properties": {
+                    "assetsVersion": {
+                      "type": "string",
+                      "example": "v1"
+                    },
+                    "defaultScenarioId": {
+                      "type": "string",
+                      "description": "What `POST /device-simulations` uses when no `scenarioId` is sent."
+                    },
+                    "scenarios": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SimulationScenario"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/device-simulations/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "The simulated DEVICE id. A simulation is 1:1 with its device and has no id of its own."
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceSimulation",
+        "summary": "Read a simulated device's simulation state",
+        "description": "What the host has been asked to do (`desiredState`, `startRequestedAt`) and what it last reported (`hostState`, `hostMessage`, `hostReportedAt`). A device that is not simulated is a 404.",
+        "tags": [
+          "Device Simulations"
+        ],
+        "responses": {
+          "200": {
+            "description": "The simulation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "simulation"
+                  ],
+                  "properties": {
+                    "simulation": {
+                      "$ref": "#/components/schemas/DeviceSimulation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/device-simulations/{id}/start": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "The simulated DEVICE id. A simulation is 1:1 with its device and has no id of its own."
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "startDeviceSimulation",
+        "summary": "Power on a simulated device",
+        "description": "The power button a powered-off simulated device lacks. A `power_off` command parks the sim and it stays off (the host reports `hostState: stopped`); this sets `desiredState: running` and stamps `startRequestedAt`, and the host powers the sim on at its next pass. Idempotent; on a running sim it changes nothing the device notices.",
+        "tags": [
+          "Device Simulations"
+        ],
+        "responses": {
+          "200": {
+            "description": "Start requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "simulation"
+                  ],
+                  "properties": {
+                    "simulation": {
+                      "$ref": "#/components/schemas/DeviceSimulation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }

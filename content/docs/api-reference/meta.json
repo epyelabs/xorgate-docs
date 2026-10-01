@@ -10,6 +10,7 @@
     "device-models",
     "devices",
     "device-registrations",
+    "device-simulations",
     "transfer-offers",
     "telemetry",
     "media-sessions",
