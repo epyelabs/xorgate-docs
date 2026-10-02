@@ -44,13 +44,13 @@ be changed. Filter on it with `GET /devices?simulated=true`.
 A scenario is one recorded drive, replayed as a lap. The device drives the lap,
 parks for a gap (30 s by default), then drives it again.
 
-| Scenario             | What it is                     | Lap    | Distance | Max speed |
-| -------------------- | ------------------------------ | ------ | -------- | --------- |
-| `highway-2026-09-20` | Highway drive west             | 27 min | 19 km    | 115 km/h  |
-| `niagara-2026-09-25` | Long fast drive toward Niagara | 46 min | 57 km    | 142 km/h  |
-| `city-2026-09-27`    | City drive with stops          | 16 min | 7.9 km   | 109 km/h  |
-| `urban-2026-09-18`   | Short stop-and-go urban        | 15 min | 6.1 km   | 69 km/h   |
-| `parked-2026-09-17`  | Parked (stationary)            | 10 min | 0 km     | 2 km/h    |
+| Scenario                   | What it is                     | Lap    | Distance | Max speed |
+| -------------------------- | ------------------------------ | ------ | -------- | --------- |
+| `highway-2026-09-20`       | Highway drive west             | 27 min | 19 km    | 115 km/h  |
+| `niagara-2026-09-25`       | Long fast drive toward Niagara | 46 min | 57 km    | 142 km/h  |
+| `city-2026-09-27`          | City drive with stops          | 16 min | 7.9 km   | 109 km/h  |
+| `urban-2026-09-18`         | Short stop-and-go urban        | 15 min | 6.1 km   | 69 km/h   |
+| `neighbourhood-2026-09-27` | Short neighbourhood drive      | 9 min  | 3.7 km   | 58 km/h   |
 
 The catalog is served by
 [`GET /device-simulations/scenarios`](/api-reference/device-simulations/list-simulation-scenarios),
@@ -90,7 +90,7 @@ this, then reboots so the switch is visible as offline → online.
 
 ```ts
 await xg.devices.mergeConfig(deviceId, {
-  simulation: { scenarioId: "parked-2026-09-17" },
+  simulation: { scenarioId: "neighbourhood-2026-09-27" },
 })
 await xg.devices.reboot(deviceId) // optional: the visible restart
 ```
