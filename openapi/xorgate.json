@@ -9770,6 +9770,99 @@
         }
       }
     },
+    "/v1/devices/{id}/telemetry/insights/batch": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "getDeviceTelemetryWindowInsightsBatch",
+        "summary": "Distance and moving time inside many windows",
+        "description": "The batch form of `GET /devices/{id}/telemetry/insights`: one windowed roll-up per entry of `windows`, returned in the same order and computed by exactly the same rules. Use it to roll up a page of media runs in one request instead of one request per run: the device's telemetry sessions are listed once for the whole batch, and each overview artifact is read once however many windows overlap it. At most 100 windows per request; each window is validated like the single read (`to` after `from`, at most 31 days), and the first invalid one answers `400` naming its index. POST only because the windows ride in the body; the route reads, it creates nothing.",
+        "tags": [
+          "Telemetry"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "windows"
+                ],
+                "properties": {
+                  "windows": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "to": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One roll-up per window, in request order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TelemetryWindowInsights"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
     "/v1/devices/{id}/telemetry/sessions": {
       "parameters": [
         {

@@ -8,6 +8,7 @@
     "get-device-telemetry-recent",
     "get-device-telemetry-readings",
     "get-device-telemetry-window-insights",
+    "get-device-telemetry-window-insights-batch",
     "list-device-telemetry-sessions"
   ]
 }
