@@ -240,13 +240,13 @@ the integral of `gps.speed` over the same fixes. The two agree within a percent
 or two on a real drive; a large disagreement marks a suspect trace, typically
 GPS scatter while parked.
 
-### The `vehicle` insight (OBD-II)
+### The OBD-II insight
 
 A device whose model declares
 [`peripherals.obd`](/device-sdk/cloud-contract/telemetry) records an `obd` group,
-and its sessions gain a `vehicle` block. GPS and OBD stay separate sensors:
-`distance` and `speed` keep their GPS methods, and `vehicle` summarises what
-the adapter saw while it was talking to the ECU. Everything in it is gated on
+and its sessions gain an OBD-II insight block (field name `vehicle`). GPS and
+OBD stay separate sensors: `distance` and `speed` keep their GPS methods, and
+`vehicle` summarises what the adapter saw while it was talking to the ECU. Everything in it is gated on
 `obd.link` being `2` ("ECU answering"); with the adapter absent (`0`) or
 answering alone (`1`) the other `obd.*` fields are stale or missing and count
 for nothing. A session in which the link never reached `2` has no `vehicle`
@@ -256,7 +256,7 @@ key at all (and no `vehicle` entry in `computed`).
 |---|---|
 | `link.liveMs` | Time with `obd.link === 2`, accumulated per leg between consecutive OBD samples; a leg longer than `breakGapMs` (30 s) is a recording hole, not time. `samples` / `liveSamples` count the OBD samples seen and the live ones. |
 | `engineOn.ms` | Live time with `obd.rpm > 0`. |
-| `idle.ms` | Engine-on time while not moving: `obd.speed` when the vehicle reports it, else the last `gps.speed` seen within the gap break (`speedSource` says which; `mixed` when both were used), at or under `movingThresholdKph` (2, the shared threshold). `{ "value": null, "reason": "no-speed" }` without any speed. |
+| `idle.ms` | Engine-on time while not moving: `obd.speed` when the ECU reports it, else the last `gps.speed` seen within the gap break (`speedSource` says which; `mixed` when both were used), at or under `movingThresholdKph` (2, the shared threshold). `{ "value": null, "reason": "no-speed" }` without any speed. |
 | `rpm.max`, `rpm.maxAt` | Highest `obd.rpm` while live and when. |
 | `coolant.max` | Highest `obd.coolant_temp` (C) while live. |
 | `fuel.startPct`, `endPct`, `usedPct` | First and last valid `obd.fuel_level` (0..100) while live; `usedPct = max(0, start - end)`, so a session with a refuel reads `0`: check `refuels`. |
@@ -265,7 +265,7 @@ key at all (and no `vehicle` entry in `computed`).
 | `truncated` | `true` when a kind of event hit its cap of 50. |
 
 Each sub-block is `{ "value": null, "reason": "no-metric" }` when its metric
-was never seen while live (a vehicle that does not provide PID 2F has no
+was never seen while live (an ECU that does not provide PID 2F has no
 `fuel`). Two event kinds come from it: `refuel` (`obd.fuel_level` rose by more
 than `refuelMinPct` between consecutive readings; `fromPct`, `toPct`, and the
 rise as `value` in `%`) and `dtc` (`obd.dtc_count` rose, or `obd.mil` went
