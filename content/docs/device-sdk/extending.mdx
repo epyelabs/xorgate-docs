@@ -130,6 +130,16 @@ _should_ be reporting.
 `io_capabilities` is still consulted at provisioning time, where it determines
 the KVS stream keys. It is just not consulted at collection time.
 
+The exception is a **peripheral**: a data source that is not on the board but
+attached to the kit, which the model declares under `peripherals` (schema
+version 2). `peripherals.obd` is the first entry, an ELM327 OBD-II reader over
+Bluetooth SPP or USB serial, and it is what tells the agent to run the vehicle
+collector at all; its `fields` list is the contract for which `obd.*` metrics
+the kit reports (see
+[the catalog](/device-sdk/cloud-contract/telemetry#obd-elm327-obd-ii-reader-a-peripheralsobd-model-capability)).
+The adapter's address is per vehicle, so it is a device setting, not a model
+fact. Later peripherals (`j1939`, `modbus`, `ble`) take the same shape.
+
 <Callout title="`io_capabilities` is a declaration, not an observation">
   It describes what a hardware model can do, it is not validated when written,
   and nothing reconciles it against what a device actually publishes. A frontend

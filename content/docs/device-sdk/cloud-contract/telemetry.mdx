@@ -81,8 +81,8 @@ live device.
 
 Every metric leaf is `{ value: number, unit?: string }`. **Values are always
 numbers.** Anything categorical is encoded numerically, because the ingest path
-flattens leaves into a numeric readings table. `gps.sky_state` and
-`lte.gnss_health` are the two places you will notice.
+flattens leaves into a numeric readings table. `gps.sky_state`,
+`lte.gnss_health` and `obd.link` are the places you will notice.
 
 ## The metric catalog
 
@@ -151,6 +151,49 @@ Always all ten fields together, or the whole group is absent.
 | `system.throttled`       | none | yes         | Firmware throttle bitmask, CURRENT state. `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit. Needs `vcgencmd`. |
 | `system.rail_5v`         | `V`  | yes         | EXT5V input rail. Pi 5 family only.                                                                                                            |
 | `system.psu_max_current` | `mA` | yes         | Negotiated at boot: `5000` on a 5 V/5 A PD supply, `3000` otherwise.                                                                           |
+
+### `obd` (ELM327 OBD-II reader, a `peripherals.obd` model capability)
+
+Only on models whose `io_capabilities` declare `peripherals.obd`. The model's
+`fields` list is the contract: it names which of the metrics below the kit is
+expected to report, in display order, and consoles render every declared field.
+The device polls the vehicle at `rateHz` (default 1 Hz) and derives the actual
+PID list from the ECU's supported-PID bitmaps at connect, so **a field the
+vehicle does not provide is never polled and never emitted** (no `null`, no
+zero). A declared field with no reading while `obd.link` is `2` therefore means
+"not provided by this vehicle"; consoles say so in words rather than hiding
+the row, and it is not an error.
+
+| Metric                     | Unit   | Conditional | Notes                                                                                                                                  |
+| -------------------------- | ------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `obd.link`                 | none   | no          | Health code, always present while the collector runs: `0` no adapter, `1` adapter reachable but the ECU silent, `2` vehicle answering. |
+| `obd.rpm`                  | `rpm`  | yes         | Engine speed (PID 0C).                                                                                                                 |
+| `obd.speed`                | `km/h` | yes         | Vehicle speed from the ECU (PID 0D). Separate from `gps.speed`; both exist.                                                            |
+| `obd.coolant_temp`         | `°C`   | yes         | PID 05.                                                                                                                                |
+| `obd.engine_load`          | `%`    | yes         | Calculated load (PID 04).                                                                                                              |
+| `obd.throttle`             | `%`    | yes         | Throttle position (PID 11).                                                                                                            |
+| `obd.pedal`                | `%`    | yes         | Accelerator pedal position (PID 49).                                                                                                   |
+| `obd.intake_temp`          | `°C`   | yes         | Intake air temperature (PID 0F, or 68 where the ECU reports it there).                                                                 |
+| `obd.ambient_temp`         | `°C`   | yes         | PID 46.                                                                                                                                |
+| `obd.intake_map`           | `kPa`  | yes         | Intake manifold absolute pressure (PID 0B).                                                                                            |
+| `obd.baro`                 | `kPa`  | yes         | Barometric pressure (PID 33).                                                                                                          |
+| `obd.fuel_level`           | `%`    | yes         | PID 2F.                                                                                                                                |
+| `obd.fuel_rate`            | `L/h`  | yes         | PID 9D or 5E, whichever the ECU supports.                                                                                              |
+| `obd.module_voltage`       | `V`    | yes         | Control module voltage (PID 42).                                                                                                       |
+| `obd.adapter_voltage`      | `V`    | yes         | The adapter's own reading (`ATRV`), the fallback while the ECU is silent.                                                              |
+| `obd.run_time`             | `s`    | yes         | Time since engine start (PID 1F).                                                                                                      |
+| `obd.odometer`             | `km`   | yes         | PID A6. Not driver-resettable.                                                                                                         |
+| `obd.gear`                 | none   | yes         | PID A4. `0` park/neutral, otherwise the engaged gear.                                                                                  |
+| `obd.distance_since_clear` | `km`   | yes         | Distance since the codes were last cleared (PID 31).                                                                                   |
+| `obd.mil`                  | none   | yes         | Malfunction indicator lamp, `0` off, `1` on (PID 01).                                                                                  |
+| `obd.dtc_count`            | none   | yes         | Stored trouble-code count (PID 01), an integer. The codes themselves are strings and travel in the config report, not here.             |
+
+<Callout title="`obd.link` is the state the other readings depend on">
+  When the ECU stops answering the device publishes `obd.link: 1` once and then
+  omits the group, so the last `obd.rpm` a consumer holds is stale. Treat any
+  `obd.*` reading as current only while the latest `obd.link` is `2`; a console
+  shows "cannot read the OBD adapter right now" for `0` and `1`.
+</Callout>
 
 ### Derived metrics the cloud adds
 
