@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.11.0",
+    "version": "0.16.0",
     "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates`, `GET /webhooks` and `GET /webhooks/{id}/deliveries` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
@@ -1640,6 +1640,76 @@
                   "platform"
                 ],
                 "additionalProperties": false
+              },
+              "peripherals": {
+                "type": "object",
+                "properties": {
+                  "obd": {
+                    "type": "object",
+                    "properties": {
+                      "adapter": {
+                        "type": "string",
+                        "enum": [
+                          "elm327"
+                        ]
+                      },
+                      "transport": {
+                        "type": "string",
+                        "enum": [
+                          "bt-spp",
+                          "usb-serial"
+                        ]
+                      },
+                      "rateHz": {
+                        "type": "number",
+                        "exclusiveMinimum": true,
+                        "minimum": 0
+                      },
+                      "fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "rpm",
+                            "speed",
+                            "coolant_temp",
+                            "engine_load",
+                            "throttle",
+                            "pedal",
+                            "intake_temp",
+                            "ambient_temp",
+                            "intake_map",
+                            "baro",
+                            "fuel_level",
+                            "fuel_rate",
+                            "module_voltage",
+                            "adapter_voltage",
+                            "run_time",
+                            "odometer",
+                            "gear",
+                            "distance_since_clear",
+                            "mil",
+                            "dtc_count",
+                            "link"
+                          ]
+                        }
+                      },
+                      "info": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "adapter",
+                      "transport",
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "required": [
@@ -1649,7 +1719,7 @@
             "additionalProperties": false
           }
         ],
-        "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a video channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces.\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero video channels and live video silently never works. Validate against this schema yourself before writing."
+        "description": "What a device model can do (`device_models.io_capabilities`). Each declared leaf maps to one telemetry metric namespace and/or one media stream key, and every section is optional so partial-capability hardware is describable. `media.video[].key` is what becomes a video channel at provisioning time; `sensors.imu` field lists become the `imu.<prefix>_<field>` metrics; `comm` and `system` field lists become the `gps`, `signal` and `system` metric namespaces; a v2 `peripherals.obd.fields` list becomes the `obd` namespace (an attached ELM327 OBD-II reader; the adapter address itself is a per-device setting, not a model fact).\n\nIMPORTANT: this shape is NOT enforced when you write a device model. `POST`/`PUT /device-models` accept any JSON object here. It IS parsed at provisioning time, and a document that fails to parse yields NO video stream keys, so the device is provisioned with zero video channels and live video silently never works. Validate against this schema yourself before writing."
       },
       "DeviceModel": {
         "type": "object",
@@ -1744,6 +1814,12 @@
           "simulated": {
             "type": "boolean",
             "description": "A device-simulator device: the real agent replaying a recorded drive in a container, created by `POST /device-simulations`. Fixed at creation and never writable. Everything else about it is a normal device; only a simulated device accepts the `simulation` config namespace."
+          },
+          "obdScanRequestedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the last `POST /devices/{id}/commands/obd-scan` was accepted for this device; the server refuses another inside 60 s of it. null = never scanned. Machine-managed."
           },
           "needsModel": {
             "type": "boolean",
@@ -2254,6 +2330,73 @@
         "additionalProperties": false,
         "description": "Device-simulator scenario selection (`simulation` namespace). Accepted only for devices created as simulated; a simulated device replays the catalog scenario `scenarioId` from `demo-assets/v1/`, parks for `gapSeconds` between laps, and loops while `loop` is true. Applied live by the replay source (5 s settings poll, and forced on every cloud config message); a changed scenarioId ends the current lap in place."
       },
+      "ObdConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "OBD polling kill switch. false (default) keeps the helper stopped and the vehicle card in its \"not configured\" state; true starts polling once an adapter is set."
+          },
+          "adapterMac": {
+            "type": "string",
+            "pattern": "^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$",
+            "nullable": true,
+            "description": "Bluetooth MAC of the ELM327 adapter (AA:BB:CC:DD:EE:FF, stored uppercase). null = no adapter configured; the device never pairs by name, so this is the only way it learns which dongle is its own."
+          },
+          "pin": {
+            "type": "string",
+            "pattern": "^[0-9]{4,6}$",
+            "description": "Pairing PIN for a legacy-pairing adapter, 4 to 6 digits (default 1234). Ignored by SSP adapters."
+          },
+          "pollHz": {
+            "type": "number",
+            "minimum": 0.2,
+            "maximum": 2,
+            "description": "Poll cycles per second, 0.2 to 2 (default 1). One cycle reads every configured field once."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "rpm",
+                "speed",
+                "coolant_temp",
+                "engine_load",
+                "throttle",
+                "pedal",
+                "intake_temp",
+                "ambient_temp",
+                "intake_map",
+                "baro",
+                "fuel_level",
+                "fuel_rate",
+                "module_voltage",
+                "adapter_voltage",
+                "run_time",
+                "odometer",
+                "gear",
+                "distance_since_clear",
+                "mil",
+                "dtc_count",
+                "link"
+              ]
+            },
+            "maxItems": 21,
+            "description": "Fields to poll, a subset of the model's declared `peripherals.obd.fields`. Empty (default) = every field the model declares. The device skips any field the vehicle does not support regardless."
+          },
+          "powerSource": {
+            "type": "string",
+            "enum": [
+              "switched",
+              "constant"
+            ],
+            "description": "How the device is powered in the vehicle. \"switched\" (default): the 12 V socket dies with the ignition, so the helper only needs to stop cleanly when the ECU goes silent. \"constant\": hardwired; the helper additionally stops polling below 11.8 V and resumes above 12.4 V so it can never drain the battery."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`."
+      },
       "DeviceConfig": {
         "type": "object",
         "additionalProperties": false,
@@ -2312,6 +2455,13 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/SimulationConfig"
+              }
+            ]
+          },
+          "obd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ObdConfig"
               }
             ]
           }
@@ -3059,7 +3209,7 @@
           "events"
         ],
         "additionalProperties": true,
-        "description": "Per-session summaries computed from the segments when the overview is built, one namespace per insight. Versioned PER INSIGHT: `computed` maps each insight id to the version that produced it, so a consumer can tell `distance` v1 from a future v2 without a format bump. Additive: new insight ids appear as new keys, so read the ones you know and ignore the rest. A scalar that could not be computed is `{ \"value\": null, \"reason\": ... }`. Every insight is a pure function of the recorded segments (nothing that depends on a geofence, an org setting or a model), which is what makes a rebuild reproducible. The v1 set: `duration`, `distance`, `speed`, `position`, `altitude`, `gpsQuality`, `system`, `lte`, and `stops` (an event list). See the platform-concepts page on telemetry sessions for each block's fields.",
+        "description": "Per-session summaries computed from the segments when the overview is built, one namespace per insight. Versioned PER INSIGHT: `computed` maps each insight id to the version that produced it, so a consumer can tell `distance` v1 from a future v2 without a format bump. Additive: new insight ids appear as new keys, so read the ones you know and ignore the rest. A scalar that could not be computed is `{ \"value\": null, \"reason\": ... }`. Every insight is a pure function of the recorded segments (nothing that depends on a geofence, an org setting or a model), which is what makes a rebuild reproducible. The v1 set: `duration`, `distance`, `speed`, `position`, `altitude`, `gpsQuality`, `system`, `lte`, `stops` (an event list) and, for a device whose model declares `peripherals.obd`, `vehicle` (OBD-II: engine-on and idle time, rpm and coolant maxima, fuel start/end/used with refuel events, odometer start/end/delta as a GPS cross-check, DTC events, live-link time; present only when `obd.link` reached 2 in the session). See the platform-concepts page on telemetry sessions for each block's fields.",
         "properties": {
           "computed": {
             "type": "object",
@@ -3076,7 +3226,8 @@
               "gpsQuality": 1,
               "system": 1,
               "lte": 1,
-              "stops": 1
+              "stops": 1,
+              "vehicle": 1
             }
           },
           "computedAt": {
@@ -3166,9 +3317,63 @@
               "resets": 0
             }
           },
+          "vehicle": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OBD-II summary, gated on `obd.link === 2` (ECU answering). `link.liveMs`; `engineOn.ms` (`obd.rpm > 0`); `idle.ms` (engine on and `obd.speed`, else `gps.speed`, at or under `movingThresholdKph`; `speedSource` says which); `rpm.max` + `maxAt`; `coolant.max` (C); `fuel.startPct/endPct/usedPct` (`usedPct = max(0, start - end)`, so a session with a refuel reads 0: check `refuels`); `odometer.startKm/endKm/deltaKm` (`role: cross-check`, never the distance); `dtc.maxCount/endCount/milEnd/events`; `truncated` when an event kind hit its 50 cap. Each sub-block is `{ value: null, reason }` when its metric was never seen while live. Refuel (`fromPct`, `toPct`) and DTC (`count`) findings are in `events`.",
+            "example": {
+              "link": {
+                "liveMs": 598000,
+                "samples": 660,
+                "liveSamples": 600,
+                "liveValue": 2
+              },
+              "engineOn": {
+                "ms": 598000,
+                "source": "obd.rpm"
+              },
+              "idle": {
+                "ms": 298000,
+                "speedSource": "obd.speed",
+                "movingThresholdKph": 2
+              },
+              "rpm": {
+                "max": 2800,
+                "maxAt": 1791914528000,
+                "unit": "rpm"
+              },
+              "coolant": {
+                "max": 100,
+                "unit": "C"
+              },
+              "fuel": {
+                "startPct": 76.86,
+                "endPct": 95,
+                "usedPct": 0,
+                "refuels": 1,
+                "refuelMinPct": 5,
+                "unit": "%"
+              },
+              "odometer": {
+                "startKm": 47318.8,
+                "endKm": 47322.9,
+                "deltaKm": 4.1,
+                "unit": "km",
+                "role": "cross-check"
+              },
+              "dtc": {
+                "maxCount": 1,
+                "endCount": 1,
+                "milEnd": 1,
+                "events": 1
+              },
+              "breakGapMs": 30000,
+              "truncated": false
+            }
+          },
           "events": {
             "type": "array",
-            "description": "Timestamped findings (stops in v1), bounded per kind, so a timeline can pin them and a click can seek. Never a per-sample series.",
+            "description": "Timestamped findings (`stop`; `refuel` with `fromPct`/`toPct` and `dtc` with `count` from the `vehicle` insight), bounded per kind, so a timeline can pin them and a click can seek. Never a per-sample series.",
             "items": {
               "type": "object",
               "required": [
@@ -3178,7 +3383,8 @@
               "properties": {
                 "kind": {
                   "type": "string",
-                  "example": "stop"
+                  "example": "stop",
+                  "description": "`stop`, `refuel` or `dtc` in v1; more may follow."
                 },
                 "ts": {
                   "type": "integer",
@@ -3218,7 +3424,7 @@
           "telemetryMs",
           "partial"
         ],
-        "description": "Distance and moving time inside a window (GET /devices/{id}/telemetry/insights).",
+        "description": "Distance, moving time and (for an OBD-II device) the vehicle roll-up inside a window (GET /devices/{id}/telemetry/insights).",
         "properties": {
           "from": {
             "type": "string",
@@ -3290,6 +3496,15 @@
                   "type": "integer",
                   "nullable": true,
                   "description": "Overview points inside the window with an accepted fix."
+                },
+                "vehicle": {
+                  "nullable": true,
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/TelemetryWindowVehicle"
+                    }
+                  ],
+                  "description": "Null when unbuilt, or when the overview has no `obd` grid with a live bucket inside the window."
                 }
               }
             }
@@ -3310,6 +3525,80 @@
           "partial": {
             "type": "boolean",
             "description": "At least one overlapping session has no built overview yet."
+          },
+          "vehicle": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryWindowVehicle"
+              }
+            ],
+            "description": "Roll-up over the sessions that have one: `liveMs`, `engineOnMs`, `idleMs`, `fuelUsedPct`, `odometerDeltaKm`, `refuels` and `dtcEvents` are SUMMED; `rpmMax` and `coolantMax` are the MAX. Fuel and odometer start/end values and the event lists are per session only (read the session insight). Null when no session has one."
+          }
+        }
+      },
+      "TelemetryWindowVehicle": {
+        "type": "object",
+        "required": [
+          "liveMs",
+          "engineOnMs",
+          "idleMs",
+          "fuelUsedPct",
+          "odometerDeltaKm",
+          "rpmMax",
+          "coolantMax",
+          "refuels",
+          "dtcEvents",
+          "method"
+        ],
+        "description": "The `vehicle` insight's rules run over an overview's `obd` grid clipped to the window (`method: \"overview-obd\"`): gated on `obd.link === 2`, legs broken at 30 s, bucket-averaged so within one bucket width of the raw-sample session insight.",
+        "properties": {
+          "liveMs": {
+            "type": "integer",
+            "description": "Milliseconds with `obd.link === 2` inside the window."
+          },
+          "engineOnMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "`obd.rpm > 0`; null when the vehicle reports no rpm."
+          },
+          "idleMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Engine on and not moving (`obd.speed`, else `gps.speed`); null without a speed."
+          },
+          "fuelUsedPct": {
+            "type": "number",
+            "nullable": true,
+            "description": "`max(0, first - last)` of `obd.fuel_level` inside the window."
+          },
+          "odometerDeltaKm": {
+            "type": "number",
+            "nullable": true,
+            "description": "`last - first` of `obd.odometer` inside the window: a GPS cross-check, never the distance."
+          },
+          "rpmMax": {
+            "type": "number",
+            "nullable": true
+          },
+          "coolantMax": {
+            "type": "number",
+            "nullable": true,
+            "description": "Celsius."
+          },
+          "refuels": {
+            "type": "integer",
+            "description": "Rises of `obd.fuel_level` over 5 points between consecutive buckets."
+          },
+          "dtcEvents": {
+            "type": "integer",
+            "description": "`obd.dtc_count` rises or `obd.mil` 0 to 1 transitions."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "overview-obd"
+            ]
           }
         }
       },
@@ -4135,6 +4424,236 @@
           }
         }
       },
+      "SmsReadCreate": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10,
+            "description": "How many of the newest messages to return. Out-of-range numbers are clamped to 1..50; a non-number is a 400 (`VALIDATION_ERROR`)."
+          }
+        }
+      },
+      "SmsMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "storage",
+          "indexes",
+          "from",
+          "fromType",
+          "sentAt",
+          "unread",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Storage and index of each part joined by `+` (e.g. `SM:3+SM:4`). Stable within one read only."
+          },
+          "storage": {
+            "type": "string",
+            "enum": [
+              "SM",
+              "ME"
+            ],
+            "description": "Store of the first part: SIM (`SM`) or modem (`ME`)."
+          },
+          "indexes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "Sender as decoded; alphanumeric senders verbatim."
+          },
+          "fromType": {
+            "type": "string",
+            "enum": [
+              "international",
+              "national",
+              "alphanumeric",
+              "other"
+            ]
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Service-centre timestamp with its own UTC offset, or null if undecodable.",
+            "example": "2026-08-11T20:05:59-04:00"
+          },
+          "unread": {
+            "type": "boolean",
+            "description": "Unread on the SIM. Reading does not change it."
+          },
+          "text": {
+            "type": "string",
+            "description": "Decoded text; a hex string when `binary`."
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "incomplete": {
+            "type": "boolean",
+            "description": "A concatenated message with parts missing."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Text cut at 4000 characters."
+          }
+        }
+      },
+      "SmsReadResult": {
+        "type": "object",
+        "required": [
+          "storage",
+          "total",
+          "skipped",
+          "partial",
+          "messages"
+        ],
+        "properties": {
+          "storage": {
+            "type": "object",
+            "description": "Used and total slots per store that answered (`SM`, `ME`).",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "used",
+                "total"
+              ],
+              "properties": {
+                "used": {
+                  "type": "integer"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Messages on the device after joining parts, before the limit."
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Stored items that were not readable messages."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "The device ran out of time; fewer messages than stored."
+          },
+          "durationMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SmsMessage"
+            },
+            "description": "Newest first, at most `limit`."
+          },
+          "cleared": {
+            "type": "object",
+            "description": "Clears only (`action: \"clear\"`): how many messages each store (`SM`, `ME`) held before the delete. The rest of the result is the device's sweep after the delete, normally empty.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": {
+              "SM": 7,
+              "ME": 23
+            }
+          }
+        }
+      },
+      "SmsRead": {
+        "type": "object",
+        "required": [
+          "id",
+          "deviceId",
+          "status",
+          "errorCode",
+          "errorMessage",
+          "limit",
+          "action",
+          "requestedBy",
+          "createdAt",
+          "completedAt",
+          "result"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deviceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ok",
+              "error",
+              "expired"
+            ],
+            "description": "`pending` until the device answers (usually within a few seconds), then `ok` or `error`. A read still pending after 45 s is reported as `expired`; a reply that arrives later still lands."
+          },
+          "errorCode": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why it failed: the device's status (`no_modem`, `no_sim`, `modem_busy`, `error`), `timeout` on expiry, or `publish_failed` when the command never reached the broker."
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true,
+            "description": "The device's own error detail, if any."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "clear"
+            ],
+            "description": "`read` (`POST /devices/{id}/sms-reads`) or `clear` (`POST /devices/{id}/sms/clear`). A clear is polled and stored like a read; its `result` is the device's state after the delete, plus `cleared`."
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "User id or API key id of the principal that asked."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "result": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SmsReadResult"
+              }
+            ],
+            "nullable": true,
+            "description": "Present only when `status` is `ok`."
+          }
+        }
+      },
       "TransferTenancy": {
         "type": "object",
         "required": [
@@ -4673,7 +5192,9 @@
                     "reboot",
                     "power_off",
                     "refresh",
-                    "update"
+                    "update",
+                    "obd_scan",
+                    "obd_forget"
                   ]
                 },
                 "expiresAt": {
@@ -7346,7 +7867,7 @@
       "patch": {
         "operationId": "patchDeviceConfig",
         "summary": "Update device config namespaces",
-        "description": "Writes one or more namespaces of the device config document, bumps `configRev`, and publishes the whole document as a retained MQTT message on `xorgate/devices/{id}/config`. Each present namespace is validated and replaced WHOLE, because the device replaces namespaces the same way and a partial namespace would silently drop the keys it omits. `null` reverts a namespace to device defaults. Returns 502 when the row was written but the retained publish failed: the device has NOT been told yet, though it self-heals on its next config report.",
+        "description": "Writes one or more namespaces of the device config document, bumps `configRev`, and publishes the whole document as a retained MQTT message on `xorgate/devices/{id}/config`. Each present namespace is validated and replaced WHOLE, because the device replaces namespaces the same way and a partial namespace would silently drop the keys it omits. `null` reverts a namespace to device defaults. Two namespaces are gated on the device: `simulation` is accepted only for a simulated device and `obd` only for a device whose model declares `peripherals.obd` (400 otherwise, naming the namespace). Returns 502 when the row was written but the retained publish failed: the device has NOT been told yet, though it self-heals on its next config report.",
         "tags": [
           "Devices"
         ],
@@ -7431,6 +7952,15 @@
                     ],
                     "nullable": true,
                     "description": "Device-simulator scenario selection (`simulation` namespace). Accepted only for devices created as simulated; a simulated device replays the catalog scenario `scenarioId` from `demo-assets/v1/`, parks for `gapSeconds` between laps, and loops while `loop` is true. Applied live by the replay source (5 s settings poll, and forced on every cloud config message); a changed scenarioId ends the current lap in place. Apply class: `agent-poll`. null reverts to device defaults."
+                  },
+                  "obd": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/ObdConfig"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`. Apply class: `agent-poll`. null reverts to device defaults."
                   }
                 }
               }
@@ -8133,6 +8663,283 @@
         }
       }
     },
+    "/v1/devices/{id}/sms-reads": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "createDeviceSmsRead",
+        "summary": "Read the SMS stored on a device's SIM and modem",
+        "description": "Asks the device to read the text messages its cellular modem holds (SIM and modem storage) and return the newest `limit`. Reading is non-destructive: nothing is deleted and unread messages stay unread. Returns `202` with a `pending` read; poll `GET /devices/{id}/sms-reads/{readId}` (every second or two) until `status` is no longer `pending`. A read takes a few seconds and expires after 45 s.\n\nXorgate keeps only the device's latest successful read (served by `GET /devices/{id}/sms-reads/latest`, also while the device is offline); each new successful read replaces it. Any member of the organization may read, viewers included.",
+        "tags": [
+          "Devices"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmsReadCreate"
+              },
+              "example": {
+                "limit": 10
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Read requested. Poll it by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`limit` is not a number, or the body is not a JSON object (`VALIDATION_ERROR`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The device is not online (`DEVICE_OFFLINE`), or its agent predates SMS reading (`UNSUPPORTED_AGENT`; update the device agent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The command could not be delivered to the broker (`COMMAND_PUBLISH_FAILED`; `details.readId` names the read, now `error`). Safe to retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/sms-reads/latest": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "get": {
+        "operationId": "getLatestDeviceSmsRead",
+        "summary": "The device's stored messages (its latest successful read)",
+        "description": "The newest read whose `status` is `ok`, with its messages. Works whatever the device's status, which is the point: an offline device still shows what was last fetched. A successful clear (`action: \"clear\"`) counts too, so after one this serves its (normally empty) result until the next read. 404 `NO_SMS_READ` when the device has never been read.",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest successful read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such device (`NOT_FOUND`), or it has never been read (`NO_SMS_READ`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/sms-reads/{readId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "name": "readId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getDeviceSmsRead",
+        "summary": "Get an SMS read",
+        "description": "One read: `pending` while the device works, then `ok` (with `result`) or `error`. A read still `pending` 45 s after it was requested is returned, and stored, as `expired` (`errorCode: \"timeout\"`). Unknown ids, ids of another device and non-uuid ids are 404.",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "The read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/sms/clear": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "clearDeviceSms",
+        "summary": "Delete every SMS stored on a device's SIM and modem (owner/admin only)",
+        "description": "Asks the device to delete every text message its cellular modem holds (SIM and modem storage), then read the stores again. A full store makes the modem refuse new messages; this empties it. **Destructive and irreversible**, so only owners and admins may clear (members and viewers get `403` `INSUFFICIENT_ROLE`).\n\nReturns `202` with a `pending` `SmsRead` whose `action` is `clear`; poll `GET /devices/{id}/sms-reads/{readId}` exactly as for a read. On `ok`, `result` is the device's state after the delete (normally no messages, with fresh storage counts) plus `cleared`, how many messages each store held before. A successful clear replaces the stored copy, so `GET /devices/{id}/sms-reads/latest` serves it until the next read and the previously stored message text is gone from Xorgate too. `limit` sizes that follow-up read, with the same rules as a read.",
+        "tags": [
+          "Devices"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmsReadCreate"
+              },
+              "example": {
+                "limit": 10
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Clear requested. Poll it by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`limit` is not a number, or the body is not a JSON object (`VALIDATION_ERROR`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Not an owner or admin of the organization (`INSUFFICIENT_ROLE`), or not a member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "The device is not online (`DEVICE_OFFLINE`), or its agent predates clearing (`UNSUPPORTED_AGENT`; update the device agent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The command could not be delivered to the broker (`COMMAND_PUBLISH_FAILED`; `details.readId` names the clear, now `error`). Nothing was deleted. Safe to retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/devices/{id}/reboot": {
       "parameters": [
         {
@@ -8275,6 +9082,118 @@
         "responses": {
           "202": {
             "$ref": "#/components/responses/DeviceCommandAccepted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/DeviceCommandPublishFailed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/commands/obd-scan": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "scanDeviceObdAdapters",
+        "summary": "Ask an OBD-II kit to scan for nearby Bluetooth adapters",
+        "description": "Publishes a one-shot `obd_scan` command over MQTT. The device runs one bounded Bluetooth discovery (it never pairs with anything it finds) and writes the candidates into its next config report as `effective.obd.scan = { ts, candidates: [{ mac, name, rssi }] }`. Observe the outcome by re-reading `GET /devices/{id}` until `reportedConfig.effective.obd.scan.ts` advances past the request (typically 10 to 20 s); there is no result row to poll and the command ack is not consumed, because the answer travels on the reported config plane the device already maintains. The operator then picks a MAC and writes it with `PATCH /devices/{id}/config {\"obd\": {\"adapterMac\": \"...\"}}`. Only for a device whose model declares `peripherals.obd` (`400` `NOT_OBD_DEVICE` otherwise). Rate-limited server-side to one scan per device per 60 s (`429` `RATE_LIMITED`, `details.retryAfterMs`), because discovery stalls the helper's polling while it runs. Ordinary member access, since nothing on the device changes. The device must be online (409 otherwise).",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/DeviceCommandAccepted"
+          },
+          "400": {
+            "description": "The device's model does not declare `peripherals.obd` (`NOT_OBD_DEVICE`): it has no OBD reader to scan with.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "description": "A scan was requested for this device inside the last 60 s (`RATE_LIMITED`; `details.retryAfterMs` says how long to wait). Read the candidates it produced instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/DeviceCommandPublishFailed"
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}/commands/obd-forget": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/IdPath"
+        },
+        {
+          "$ref": "#/components/parameters/OrganizationIdHeader"
+        }
+      ],
+      "post": {
+        "operationId": "forgetDeviceObdAdapter",
+        "summary": "Ask an OBD-II kit to forget its paired adapter",
+        "description": "Publishes a one-shot `obd_forget` command over MQTT. The device drops the Bluetooth bond for its configured adapter and stops polling it; the next config report shows `effective.obd.status` back at \"not configured\". The cloud-side setting is NOT cleared by this call: pair it with `PATCH /devices/{id}/config {\"obd\": null}` (revert the whole namespace) or `{\"obd\": {\"adapterMac\": null, ...}}`, otherwise the retained config re-pairs the same adapter on the device's next settings poll. Reversible (set an adapter again), so it takes the ordinary write gate (owner/admin/member). Only for a device whose model declares `peripherals.obd` (`400` `NOT_OBD_DEVICE` otherwise). The device must be online (409 otherwise).",
+        "tags": [
+          "Devices"
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/DeviceCommandAccepted"
+          },
+          "400": {
+            "description": "The device's model does not declare `peripherals.obd` (`NOT_OBD_DEVICE`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -9717,7 +10636,7 @@
       "get": {
         "operationId": "getDeviceTelemetryWindowInsights",
         "summary": "Distance and moving time inside a window",
-        "description": "What the device drove INSIDE `[from, to)`, integrated over the overview artifacts of the telemetry sessions overlapping the window with the same rules as each session's own `insights.distance` (accepted fixes, the 60 m/s jump reject, the 30 s gap break, the `gps.speed` stationary rule). Use it to roll up a media run, a day or a month: the per-session `insights` on the sessions listing describe WHOLE sessions, and telemetry sessions do not line up with video sessions (the recorder starts at boot, the camera after its GPS gate), so summing whole sessions that merely overlap a run over-counts. The grid is bucketed, so the number is within about a percent of the raw-sample insight (`method: \"overview-haversine\"`). A session whose overview is not built yet (open, or closed within the last minute) is listed with `source: \"unbuilt\"` and no numbers, and `partial` is true. One object read per overlapping built session; the window may span at most 31 days.",
+        "description": "What the device drove INSIDE `[from, to)`, integrated over the overview artifacts of the telemetry sessions overlapping the window with the same rules as each session's own `insights.distance` (accepted fixes, the 60 m/s jump reject, the 30 s gap break, the `gps.speed` stationary rule). Use it to roll up a media run, a day or a month: the per-session `insights` on the sessions listing describe WHOLE sessions, and telemetry sessions do not line up with video sessions (the recorder starts at boot, the camera after its GPS gate), so summing whole sessions that merely overlap a run over-counts. The grid is bucketed, so the number is within about a percent of the raw-sample insight (`method: \"overview-haversine\"`). A session whose overview is not built yet (open, or closed within the last minute) is listed with `source: \"unbuilt\"` and no numbers, and `partial` is true. One object read per overlapping built session; the window may span at most 31 days. For a device whose model declares `peripherals.obd`, each session and the total also carry `vehicle` (engine-on, idle, live-link time, fuel used, odometer delta, rpm and coolant maxima, refuel and DTC counts) from the same overview, clipped to the window.",
         "tags": [
           "Telemetry"
         ],

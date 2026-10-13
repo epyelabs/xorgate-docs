@@ -18,10 +18,16 @@
     "create-device-purge",
     "preview-device-purge",
     "get-device-purge",
+    "create-device-sms-read",
+    "get-latest-device-sms-read",
+    "get-device-sms-read",
+    "clear-device-sms",
     "reboot-device",
     "power-off-device",
     "refresh-device-state",
     "update-device-agent",
+    "scan-device-obd-adapters",
+    "forget-device-obd-adapter",
     "get-latest-agent-build"
   ]
 }
