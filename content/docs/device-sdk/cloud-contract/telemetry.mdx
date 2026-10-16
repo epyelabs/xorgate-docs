@@ -187,6 +187,9 @@ the row, and it is not an error.
 | `obd.distance_since_clear` | `km`   | yes         | Distance since the codes were last cleared (PID 31).                                                                                   |
 | `obd.mil`                  | none   | yes         | Malfunction indicator lamp, `0` off, `1` on (PID 01).                                                                                  |
 | `obd.dtc_count`            | none   | yes         | Stored trouble-code count (PID 01), an integer. The codes themselves are strings and travel in the config report, not here.             |
+| `obd.engine_torque_pct`    | `%`    | yes         | Actual engine torque as a percentage of the reference torque (PID 62, `A - 125`). Negative while the engine is being driven (engine braking). |
+| `obd.reference_torque`     | `Nm`   | yes         | Engine reference torque (PID 63), a constant per engine; it scales the percentage. |
+| `obd.engine_torque`        | `Nm`   | yes         | Derived on the device: `engine_torque_pct / 100 x reference_torque`, published only when both PIDs answered in the same poll cycle. |
 
 <Callout title="`obd.link` is the state the other readings depend on">
   When the ECU stops answering the device publishes `obd.link: 1` once and then
