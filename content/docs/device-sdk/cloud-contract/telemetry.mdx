@@ -151,6 +151,14 @@ Always all ten fields together, or the whole group is absent.
 | `system.throttled`       | none | yes         | Firmware throttle bitmask, CURRENT state. `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit. Needs `vcgencmd`. |
 | `system.rail_5v`         | `V`  | yes         | EXT5V input rail. Pi 5 family only.                                                                                                            |
 | `system.psu_max_current` | `mA` | yes         | Negotiated at boot: `5000` on a 5 V/5 A PD supply, `3000` otherwise.                                                                           |
+| `system.led_state`       | none | no          | What the status LED shows, as a severity-ascending code: `0` healthy, `1` starting, `2` gps_wait, `3` network, `4` thermal, `5` undervoltage (`6` agent_down is reserved). Emitted on kits without an LED too. |
+| `system.health_flags`    | none | no          | Bitmask of the conditions behind the code: `1` undervoltage, `2` thermal, `4` lte_down, `8` mqtt_down, `16` gps_no_fix, `32` gps_gate_hold, `64` dead_zone, `128` power_shed, `256` live_block. |
+
+`system.led_state` and `system.health_flags` are on **every** sample (1 Hz live
+and recorded), not only on change: live telemetry is not retained and replay
+treats a `system` value older than 10 s as stale, so a publish-on-change value
+would blank out. The full code and bit tables, with the LED colour for each
+code, are on [Metrics](/platform-concepts/metrics#every-value-is-a-number).
 
 ### `obd` (ELM327 OBD-II reader, a `peripherals.obd` model capability)
 
