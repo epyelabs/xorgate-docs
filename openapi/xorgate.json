@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.16.0",
+    "version": "0.18.0",
     "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates`, `GET /webhooks` and `GET /webhooks/{id}/deliveries` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
@@ -1690,7 +1690,10 @@
                             "distance_since_clear",
                             "mil",
                             "dtc_count",
-                            "link"
+                            "link",
+                            "engine_torque_pct",
+                            "reference_torque",
+                            "engine_torque"
                           ]
                         }
                       },
@@ -2379,10 +2382,13 @@
                 "distance_since_clear",
                 "mil",
                 "dtc_count",
-                "link"
+                "link",
+                "engine_torque_pct",
+                "reference_torque",
+                "engine_torque"
               ]
             },
-            "maxItems": 21,
+            "maxItems": 24,
             "description": "Fields to poll, a subset of the model's declared `peripherals.obd.fields`. Empty (default) = every field the model declares. The device skips any field the vehicle does not support regardless."
           },
           "powerSource": {
@@ -2391,11 +2397,11 @@
               "switched",
               "constant"
             ],
-            "description": "How the device is powered in the vehicle. \"switched\" (default): the 12 V socket dies with the ignition, so the helper only needs to stop cleanly when the ECU goes silent. \"constant\": hardwired; the helper additionally stops polling below 11.8 V and resumes above 12.4 V so it can never drain the battery."
+            "description": "How the tracker device itself is powered, NOT the adapter (the vehicle's OBD port powers the adapter either way). \"switched\" (default): the device sits on a 12 V socket that dies with the ignition, so polling simply ends when the device loses power; the helper only needs to stop cleanly when the ECU goes silent. \"constant\": the device is hardwired, always on; the helper stops polling when the ECU goes silent and additionally pauses below 11.8 V, resuming above 12.4 V, so it can never drain the battery."
           }
         },
         "additionalProperties": false,
-        "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`."
+        "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` says how the tracker device (not the adapter) is powered, which selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`."
       },
       "DeviceConfig": {
         "type": "object",
@@ -3209,7 +3215,7 @@
           "events"
         ],
         "additionalProperties": true,
-        "description": "Per-session summaries computed from the segments when the overview is built, one namespace per insight. Versioned PER INSIGHT: `computed` maps each insight id to the version that produced it, so a consumer can tell `distance` v1 from a future v2 without a format bump. Additive: new insight ids appear as new keys, so read the ones you know and ignore the rest. A scalar that could not be computed is `{ \"value\": null, \"reason\": ... }`. Every insight is a pure function of the recorded segments (nothing that depends on a geofence, an org setting or a model), which is what makes a rebuild reproducible. The v1 set: `duration`, `distance`, `speed`, `position`, `altitude`, `gpsQuality`, `system`, `lte`, `stops` (an event list) and, for a device whose model declares `peripherals.obd`, `vehicle` (OBD-II: engine-on and idle time, rpm and coolant maxima, fuel start/end/used with refuel events, odometer start/end/delta as a GPS cross-check, DTC events, live-link time; present only when `obd.link` reached 2 in the session). See the platform-concepts page on telemetry sessions for each block's fields.",
+        "description": "Per-session summaries computed from the segments when the overview is built, one namespace per insight. Versioned PER INSIGHT: `computed` maps each insight id to the version that produced it, so a consumer can tell `distance` v1 from a future v2 without a format bump. Additive: new insight ids appear as new keys, so read the ones you know and ignore the rest. A scalar that could not be computed is `{ \"value\": null, \"reason\": ... }`. Every insight is a pure function of the recorded segments (nothing that depends on a geofence, an org setting or a model), which is what makes a rebuild reproducible. The v1 set: `duration`, `distance`, `speed`, `position`, `altitude`, `gpsQuality`, `system`, `lte`, `stops` (an event list) and, for a device whose model declares `peripherals.obd`, `vehicle` (OBD-II: engine-on and idle time, rpm and coolant maxima, fuel start/end/used with refuel events, odometer start/end/delta as a GPS cross-check, DTC events, live-link time; present only when `obd.link` reached 2 in the session) and, for a device that reports `system.led_state`, `deviceStatus` (time per status-LED code and per health flag, the worst code, and the contiguous LED-state intervals). See the platform-concepts page on telemetry sessions for each block's fields.",
         "properties": {
           "computed": {
             "type": "object",
@@ -3227,7 +3233,8 @@
               "system": 1,
               "lte": 1,
               "stops": 1,
-              "vehicle": 1
+              "vehicle": 1,
+              "deviceStatus": 1
             }
           },
           "computedAt": {
@@ -3369,6 +3376,55 @@
               },
               "breakGapMs": 30000,
               "truncated": false
+            }
+          },
+          "deviceStatus": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "What the kit's status LED showed, from the 1 Hz `system.led_state` code (severity-ascending: 0 healthy, 1 starting, 2 gps_wait, 3 network, 4 thermal, 5 undervoltage, 6 agent_down reserved) and `system.health_flags` bitmask (1 undervoltage, 2 thermal, 4 lte_down, 8 mqtt_down, 16 gps_no_fix, 32 gps_gate_hold, 64 dead_zone, 128 power_shed, 256 live_block). `version` (1); `worstCode`; `byCodeMs` (code -> ms, every code \"0\"..\"6\" present); `byFlagMs` (bit value -> ms the bit was set, every known bit present); `events`, the contiguous LED-state runs `{ kind: \"led_state\", ts, endTs, value }` with sub-2 s blips folded into a neighbour, at most 500 (the longest kept, `truncated: true`). A sample holds until the next one, at most 10 s. Present only when the session carries `system.led_state`. These intervals live in this block, not in the top-level `events`.",
+            "example": {
+              "version": 1,
+              "worstCode": 3,
+              "byCodeMs": {
+                "0": 3410000,
+                "1": 6000,
+                "2": 95000,
+                "3": 41000,
+                "4": 0,
+                "5": 0,
+                "6": 0
+              },
+              "byFlagMs": {
+                "1": 0,
+                "2": 0,
+                "4": 41000,
+                "8": 12000,
+                "16": 95000,
+                "32": 0,
+                "64": 0,
+                "128": 0,
+                "256": 0
+              },
+              "events": [
+                {
+                  "kind": "led_state",
+                  "ts": 1791914400000,
+                  "endTs": 1791914406000,
+                  "value": 1
+                },
+                {
+                  "kind": "led_state",
+                  "ts": 1791914406000,
+                  "endTs": 1791914501000,
+                  "value": 2
+                },
+                {
+                  "kind": "led_state",
+                  "ts": 1791914501000,
+                  "endTs": 1791916000000,
+                  "value": 0
+                }
+              ]
             }
           },
           "events": {
@@ -7960,7 +8016,7 @@
                       }
                     ],
                     "nullable": true,
-                    "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`. Apply class: `agent-poll`. null reverts to device defaults."
+                    "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` says how the tracker device (not the adapter) is powered, which selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`. Apply class: `agent-poll`. null reverts to device defaults."
                   }
                 }
               }

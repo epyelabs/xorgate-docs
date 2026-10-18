@@ -79,6 +79,7 @@ the object directly. Real sizes are 15 to 40 KB for an hour-long drive.
 {
   "v": 1,
   "kind": "telemetry-overview",
+  "builder": 2, // builder revision; absent on objects built before 2026-10-18
   "deviceId": "…",
   "sessionId": "…",
   "rateHz": 1,
@@ -132,6 +133,8 @@ the object directly. Real sizes are 15 to 40 KB for an hour-long drive.
       "ts": [/* … */],
       "units": {/* … */},
       "values": {/* … */},
+      // Metrics in this group whose buckets are not averages (see below).
+      "agg": { "system.led_state": "max", "system.health_flags": "or", "system.throttled": "or" },
     },
   },
 
@@ -151,6 +154,17 @@ The rules a reader can rely on:
   other group at or under 500. A session with fewer samples than the target
   ships at its native period with no averaging at all. Averaged values are
   rounded to 6 decimals; `ts` is the bucket **start**.
+- **Coded metrics are not averaged.** A mean of codes is a state that never
+  happened (a bucket mixing `1` and `5` would read `3`) and a mean of a bitmask
+  is meaningless, so four metrics use another rule per bucket:
+  `system.led_state` and `lte.gnss_health` take the **max** (both are
+  severity-ascending, so the bucket shows its worst state), and
+  `system.health_flags` and `system.throttled` take the bitwise **OR** (every
+  bit that was set at least once in the bucket). Every other metric is the
+  mean, exactly as before. A group lists the metrics it did not average in
+  `agg`; objects without `builder` (built before this rule) averaged
+  everything, and get the rule only when rebuilt. For exact time in each
+  state, read the `deviceStatus` insight rather than counting buckets.
 - **Units come from the segment lines**, not from the device model, so the
   object is self-describing even for a model that later changed.
 - **`bbox` frames the map before a single value is parsed**, and `source` is
@@ -162,7 +176,9 @@ The rules a reader can rely on:
 `v: 1` in the body and in the key (`overview.v1.json.gz`); the manifest reports
 the format as `overview.v1`. **Additive fields keep `v: 1`**: a reader must
 ignore keys it does not know. A breaking change is a new format name and a new
-key, and the manifest says which one it serves.
+key, and the manifest says which one it serves. `builder` is the server's
+builder revision (`2` added per-metric aggregation); it tells a rebuilt object
+from an old one and never changes the format.
 
 ## Insights
 
@@ -175,7 +191,8 @@ both return it.
 ```jsonc
 "insights": {
   "computed": { "duration": 1, "distance": 1, "speed": 1, "position": 1, "altitude": 1,
-                "gpsQuality": 1, "system": 1, "lte": 1, "stops": 1, "vehicle": 1 },
+                "gpsQuality": 1, "system": 1, "lte": 1, "stops": 1, "vehicle": 1,
+                "deviceStatus": 1 },
   "computedAt": 1786318000000,
 
   "duration":   { "totalMs": 3153000, "movingMs": 2011000, "idleMs": 1142000, "movingThresholdKph": 2 },
@@ -204,6 +221,17 @@ both return it.
                                 "role": "cross-check" },
                   "dtc": { "maxCount": 1, "endCount": 1, "milEnd": 1, "events": 1 },
                   "breakGapMs": 30000, "truncated": false },
+
+  // Only when the session carries `system.led_state`; see below.
+  "deviceStatus": { "version": 1, "worstCode": 3,
+                    "byCodeMs": { "0": 3010000, "1": 6000, "2": 95000, "3": 41000, "4": 0, "5": 0, "6": 0 },
+                    "byFlagMs": { "1": 0, "2": 0, "4": 41000, "8": 12000, "16": 95000, "32": 0,
+                                  "64": 0, "128": 0, "256": 0 },
+                    "events": [
+                      { "kind": "led_state", "ts": 1786314223000, "endTs": 1786314229000, "value": 1 },
+                      { "kind": "led_state", "ts": 1786314229000, "endTs": 1786314324000, "value": 2 },
+                      { "kind": "led_state", "ts": 1786314324000, "endTs": 1786317339000, "value": 0 } /* … */
+                    ] },
 
   "events": [
     { "kind": "stop", "ts": 1786314900000, "endTs": 1786315020000, "position": [-79.5612, 43.6103] },
@@ -278,6 +306,40 @@ reports a flat `vehicle` per session and in the totals: `liveMs`, `engineOnMs`,
 `idleMs`, `fuelUsedPct`, `odometerDeltaKm`, `refuels` and `dtcEvents` are
 summed across sessions; `rpmMax` and `coolantMax` are the maximum. Fuel and
 odometer start/end values and the event lists are per session only.
+
+### The device-status insight
+
+A device that reports
+[`system.led_state` and `system.health_flags`](/platform-concepts/metrics#device-status-systemled_state-and-systemhealth_flags)
+gets a `deviceStatus` block: what its status LED showed over the session and
+why. It is computed from the raw 1 Hz samples, so the times are exact (the
+overview's `max` / `or` buckets are right for drawing a band, not for adding
+up durations). A session recorded before the device reported `led_state` has
+no `deviceStatus` key and no entry in `computed`.
+
+| Field | Meaning |
+|---|---|
+| `version` | `1`. |
+| `worstCode` | The highest `system.led_state` seen on any sample. |
+| `byCodeMs` | Code (`"0"` to `"6"`, every code present) to milliseconds in that state. |
+| `byFlagMs` | Flag bit value (`"1"`, `"2"`, `"4"` … `"256"`, every known bit present) to milliseconds that bit was set. |
+| `events` | The run-length encoding of `system.led_state`: `{ "kind": "led_state", "ts", "endTs", "value" }`, in time order, contiguous and non-overlapping, healthy (`0`) runs included, so a state lane drawn from it is blank only across a recording hole. |
+| `truncated` | `true` when there were more than 500 runs; the 500 longest are kept, in time order. |
+
+How time is counted: each sample's value holds until the next sample of the
+same metric, at most 10 s, so a recording hole does not inflate a state; the
+last sample holds for 0. A run ends at a code change or at a hole longer than
+10 s. A run shorter than 2 s is folded into the run before it (or the one
+after it, at the start of a stretch), so a one-sample blip does not paint a
+sliver; it still counts in `byCodeMs` and `worstCode`. These intervals stay
+inside `deviceStatus` and are not repeated in the block-level `events`.
+
+The block reaches the session row, the replay manifest, the
+`telemetry_session.completed` webhook and the workflow trigger below like
+every other insight. `system.undervoltageMs` (from the firmware's
+`system.throttled`) is unchanged and complementary: it is the SoC's own
+under-voltage flag, while `byFlagMs["1"]` is the agent's live-blocking
+under-voltage condition.
 
 ## The `telemetry_session_completed` workflow trigger
 

@@ -54,14 +54,54 @@ this is a hard constraint rather than a convention: readings are stored in a
 single numeric column.
 
 Anything categorical is therefore encoded. Booleans become `1` and `0` with the
-unit `"bool"`. Enumerations become small integers, and the two you will actually
+unit `"bool"`. Enumerations become small integers, and the ones you will actually
 meet are:
 
-| Metric             | Encoding                                                                                     |
-| ------------------ | -------------------------------------------------------------------------------------------- |
-| `gps.sky_state`    | `0` clear, `1` obstructed, `2` no RF                                                         |
-| `lte.gnss_health`  | `0` ok, `1` acquiring, `2` degraded, `3` unhealthy                                           |
-| `system.throttled` | a bitmask: `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit |
+| Metric                | Encoding                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `gps.sky_state`       | `0` clear, `1` obstructed, `2` no RF                                                         |
+| `lte.gnss_health`     | `0` ok, `1` acquiring, `2` degraded, `3` unhealthy                                           |
+| `system.throttled`    | a bitmask: `1` undervoltage, `2` frequency capped, `4` throttled, `8` soft temperature limit |
+| `system.led_state`    | the status-LED code, severity-ascending (table below)                                        |
+| `system.health_flags` | a bitmask of the conditions behind the LED code (table below)                                |
+
+### Device status: `system.led_state` and `system.health_flags`
+
+The kit's RGB status LED follows a priority ladder: the most severe active
+condition wins. `system.led_state` reports the state the LED is showing, coded
+so that a higher number is worse (`max` over a window is the worst state, and
+`gt 0` means "struggling"). Kits without an LED (the CM4 reference model)
+resolve and report the same code.
+
+| Code | State          | LED                | Meaning                                                                     |
+| ---- | -------------- | ------------------ | --------------------------------------------------------------------------- |
+| `0`  | `healthy`      | green heartbeat    | Nothing below applies.                                                      |
+| `1`  | `starting`     | white, solid       | The agent's first ticks after start.                                        |
+| `2`  | `gps_wait`     | blue, slow blink   | GPS gate holding, or a receiver is present without a fix.                   |
+| `3`  | `network`      | purple, fast blink | LTE disconnected or connecting, or MQTT not connected (not in a dead zone). |
+| `4`  | `thermal`      | cyan, slow blink   | Live streaming blocked for temperature.                                     |
+| `5`  | `undervoltage` | red, fast blink    | Live streaming blocked for supply voltage, or power shedding.               |
+| `6`  | `agent_down`   | red, solid         | Reserved: set by the OS when the agent has crashed, never reported.         |
+
+`system.health_flags` says why, because one code hides concurrent faults (a
+device can be waiting for GPS while LTE is also down). Each bit is
+independent:
+
+| Bit   | Flag            | Set while                                                            |
+| ----- | --------------- | -------------------------------------------------------------------- |
+| `1`   | `undervoltage`  | supply under-voltage is blocking live                                |
+| `2`   | `thermal`       | temperature is blocking live                                         |
+| `4`   | `lte_down`      | the LTE link is disconnected or connecting                           |
+| `8`   | `mqtt_down`     | the MQTT connection is down                                          |
+| `16`  | `gps_no_fix`    | a GPS receiver is present without a fix                              |
+| `32`  | `gps_gate_hold` | the GPS gate is holding live streaming                               |
+| `64`  | `dead_zone`     | the LTE daemon has settled on "dead zone" (this suppresses code `3`) |
+| `128` | `power_shed`    | the agent is shedding load (live off)                                |
+| `256` | `live_block`    | live streaming is blocked for any reason                             |
+
+Test a bit with `(flags & bit) !== 0`. Workflow `telemetry_condition` triggers
+compare numbers only (no bitwise operator), so trigger on `system.led_state`
+(for example `gt 0`, or `gte 3`) rather than on the flags.
 
 <Callout title="Absence is meaningful">
   A metric that is missing is not zero. A device with no GPS fix omits `gps.lat`
