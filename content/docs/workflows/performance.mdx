@@ -1,6 +1,6 @@
 ---
-title: "Performance"
-description: "Measured numbers for the golden runs on a laptop, in a container, and on a Compute Module 5, and what they mean for graph design."
+title: "Runtime and performance"
+description: "Measured numbers for the golden runs on a laptop, in a container, and on a Compute Module 5; how channels buffer per run mode; the stall detector; and the cancelled step status."
 ---
 
 The engine is CPU-only ONNX by decision, and **sampled or batch graphs are its
@@ -53,6 +53,113 @@ column as "Pi 5 class".
   the same single overspeed event at the same timestamp. The suite still
   asserts detection counts with a tolerance, because floating-point variance
   on other hardware is possible even if it was not observed.
+
+## Channels, stalls and cancelled steps
+
+Every node's executor runs at once, and every edge is an in-process channel.
+How a channel behaves when its consumer falls behind depends on the run mode
+and on what the edge carries. Engine 0.5.1 changed the batch policy, added a
+stall detector, and added the step status `cancelled`.
+
+### Channels
+
+| Run mode                                                        | `frames` and `video` edges                                                            | Every other edge           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------- |
+| `live`                                                          | `frames` drop the oldest when full (latest wins); `video` blocks at `channelCapacity` | block at `channelCapacity` |
+| `batch`, `simulation` (0.5.1 default, `channelMode: "elastic"`) | block at `channelCapacity` (32)                                                       | **unbounded**              |
+| `batch`, `simulation` with `channelMode: "bounded"`             | block at `channelCapacity`                                                            | block at `channelCapacity` |
+
+"Block" means a producer that finds the channel full waits for its consumer:
+backpressure. "Unbounded" means a push always buffers and never waits.
+
+In batch and simulation runs only frames and video still backpressure, so
+decoded frames never pile up in memory; telemetry, `json` and `condition`
+edges buffer. The source already holds its whole window in memory, so an
+unbounded edge holds at most what its producer emits. Bounding those edges
+used to pace the graph and nothing else, and it deadlocked a common shape: a
+source fanned out to two branches that a later node merges by timestamp. When
+one branch went quiet (a connector with no answer, a lookup cap, samples
+without a position), the merge waited on it, the busy branch filled its
+channel, the source blocked pushing to it, and the quiet branch never got the
+samples it needed to speak. The run sat there until its deadline. On 0.5.1
+that graph runs to completion; `channelMode: "bounded"` keeps the 0.5.0
+behaviour for backpressure tests.
+
+`live` runs are unchanged and ignore `channelMode`.
+
+### The stall detector
+
+A graph can still park: a bounded channel, a custom node waiting on an input
+nobody feeds. Rather than wait out the run's deadline, the engine samples the
+graph every 2 s (every `stallMs / 4` when that is shorter). When no channel
+has moved for `stallMs` (default **30 s**) and every node still running is
+parked on a channel, taking from an empty one or pushing to a full one, the
+run fails with an error that names who waits on whom:
+
+```
+Graph stalled: rs blocked pushing to cmp (32/32); roads waiting on rs (0 queued); cmp waiting on roads (0 queued) (no progress for 30 s)
+```
+
+A node busy in its own await (an HTTP request, a model, a child process, a
+timer) is never a stall, however long it takes; that is what the deadline is
+for. Detection lands between `stallMs` and `stallMs` plus two check
+intervals. A stalled run fails like a deadline: `failedNodeId` is `null`,
+`result.json` is written, and `xwe run` exits 1. `stallMs: 0` turns the
+detector off.
+
+### Step statuses
+
+| `status`    | Meaning                                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok`        | The node ran to the end of its input.                                                                                                             |
+| `failed`    | The node threw. The run fails with this node's id.                                                                                                |
+| `skipped`   | Downstream of a failed node, so never ran to completion. `output` is `skipped (upstream failure)`.                                                |
+| `cancelled` | 0.5.1. Still running when the deadline or the stall detector stopped the run. Nothing failed upstream of it; the run ran out of time or progress. |
+
+A cancelled step's `output` says what it was doing at the time:
+`cancelled: run exceeded its max runtime (<n> ms) while <wait>` or
+`cancelled: graph stalled while <wait>`, where `<wait>` is
+`waiting on <node> (<n> queued)`, `blocked pushing to <node> (<n>/<cap>)` or
+`busy`, followed by `(after <n> message(s))` when the node had emitted
+anything. Before 0.5.1 these nodes were reported `skipped (upstream failure)`,
+which pointed at a failure that never happened. The run-level `error` for a
+deadline is unchanged (`Run exceeded its max runtime`).
+
+<Callout title="Readers must accept cancelled">
+  `cancelled` is a new value of the step `status` enum in `result.json`
+  (`steps[].status`), in the `step` progress message (NDJSON and the topic
+  plane), and in the `EngineStep` type. A reader that validates against the
+  0.5.0 enum rejects a 0.5.1 `result.json` that carries it, so update readers
+  before or together with the engine. Nothing else in `result.json` changed.
+</Callout>
+
+### For embedders
+
+Both settings are options on `engine.run` and on `runGraph`'s deps
+([library](/workflows/library)):
+
+```ts
+await engine.run({ template, inputs, channelMode: "bounded", stallMs: 10_000 })
+
+await runGraph(spec, { sources, artifacts, secrets, progress, channelCapacity: 32, stallMs: 0 })
+```
+
+| Option            | Default   | Meaning                                                                                            |
+| ----------------- | --------- | -------------------------------------------------------------------------------------------------- |
+| `channelMode`     | `elastic` | `elastic` or `bounded`, for `batch` and `simulation` runs; `live` ignores it.                      |
+| `stallMs`         | 30000     | No progress for this long, with every running node parked on a channel, fails the run. 0 disables. |
+| `channelCapacity` | 32        | The capacity of every bounded channel (`runGraph` deps).                                           |
+| `deadlineMs`      | none      | Wall-clock budget; on expiry running nodes are cancelled and the run fails.                        |
+
+At `debug` log level the engine names the policy at the start
+(`channels (batch, elastic): 7 unbounded`) and, after the run, one line per
+edge with the deepest its queue got
+(`channel e1 src -> cmp (telemetry, unbounded): maxDepth 150`). The in-memory
+outcome carries the same figures as `outcome.channels` (edge, policy,
+capacity, `maxDepth`); they are not written to `result.json`. A large
+`maxDepth` on an unbounded edge is a slow consumer holding samples in memory,
+which is the thing to look at when a long batch run uses more memory than
+expected.
 
 ## Reproducing
 

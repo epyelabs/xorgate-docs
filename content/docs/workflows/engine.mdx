@@ -49,14 +49,14 @@ drawn on [What this does not cover](/workflows/not-covered#the-platform-integrat
 
 ## What is in the repository
 
-| Directory      | What it is                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------- |
-| `src/engine/`  | `runGraph`, the bounded channels, ffmpeg and ONNX plumbing, the manifest and result schemas |
-| `src/catalog/` | The 28 node definitions and executors                                                       |
-| `src/models/`  | The model manifest schema (the registry layout)                                             |
-| `src/local/`   | The local host shell: file sources, the artifact writer, secrets, progress, video muxing    |
-| `src/cli/`     | The `xwe` command                                                                           |
-| `fixtures/`    | Real templates, a real drive's video and telemetry, and `yolov8n`, for the golden tests     |
+| Directory      | What it is                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------ |
+| `src/engine/`  | `runGraph`, the channels and stall detector, ffmpeg and ONNX plumbing, the manifest and result schemas |
+| `src/catalog/` | The 28 node definitions and executors                                                                  |
+| `src/models/`  | The model manifest schema (the registry layout)                                                        |
+| `src/local/`   | The local host shell: file sources, the artifact writer, secrets, progress, video muxing               |
+| `src/cli/`     | The `xwe` command                                                                                      |
+| `fixtures/`    | Real templates, a real drive's video and telemetry, and `yolov8n`, for the golden tests                |
 
 The engine core (`src/engine/`, `src/catalog/`) is storage-free by design.
 Every source reads through a seam, every artifact leaves through a seam, and a
@@ -168,19 +168,19 @@ The engine is a set of contracts with code behind them, and the package
 version is about the contracts. The policy applies from 0.1.0. `docs/compatibility.md` in the repository is
 the full table with the file each contract lives in; the short form:
 
-| Contract            | Identity                                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Workflow definition | `schemaVersion: 2`; v1 graphs are upgraded on the way in                                                                                         |
-| Run manifest        | `manifestVersion: 2`                                                                                                                             |
-| `result.json`       | `resultVersion: 2`, `engineVersion: 2`; written last in the artifact tree                                                                        |
-| Catalog payload     | `schemaVersion: 2`; `catalogVersion` is the content hash of the node definitions, `08c8c39436928e5e` for the core catalog; `packs[]` is additive |
-| Model manifest      | v1; the `files` block is additive; `family` is an open string                                                                                    |
-| Host seams          | `EngineSourceReader`, `EngineArtifactSink`, `EngineSecretReader`, `EngineProgressSink`, and `EngineHost.bind` over them                          |
-| Progress messages   | `status`, `step`, `event`, `record`, each stamped `at`; the same objects as NDJSON on stdout and as callbacks                                    |
-| CLI                 | the commands, their flags, and the exit codes `0`, `1`, `2`                                                                                      |
-| Node packs          | `NodePack`, `createCatalog`, `corePacks`, the namespace rules                                                                                    |
-| Environment         | `XWE_MODELS_DIR`, `XWE_MODELS_PULL`, `XWE_MODEL_REGISTRY`, `XORGATE_SECRET_<LOGICAL_NAME>`, `FFMPEG_PATH`                                        |
-| Node.js             | 20 or newer                                                                                                                                      |
+| Contract            | Identity                                                                                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workflow definition | `schemaVersion: 2`; v1 graphs are upgraded on the way in                                                                                                    |
+| Run manifest        | `manifestVersion: 2`                                                                                                                                        |
+| `result.json`       | `resultVersion: 2`, `engineVersion: 2`; written last in the artifact tree                                                                                   |
+| Catalog payload     | `schemaVersion: 2`; `catalogVersion` is the content hash of the node definitions, `92697a69913738c4` for the core catalog from 0.5.1; `packs[]` is additive |
+| Model manifest      | v1; the `files` block is additive; `family` is an open string                                                                                               |
+| Host seams          | `EngineSourceReader`, `EngineArtifactSink`, `EngineSecretReader`, `EngineProgressSink`, and `EngineHost.bind` over them                                     |
+| Progress messages   | `status`, `step`, `event`, `record`, each stamped `at`; the same objects as NDJSON on stdout and as callbacks                                               |
+| CLI                 | the commands, their flags, and the exit codes `0`, `1`, `2`                                                                                                 |
+| Node packs          | `NodePack`, `createCatalog`, `corePacks`, the namespace rules                                                                                               |
+| Environment         | `XWE_MODELS_DIR`, `XWE_MODELS_PULL`, `XWE_MODEL_REGISTRY`, `XORGATE_SECRET_<LOGICAL_NAME>`, `FFMPEG_PATH`                                                   |
+| Node.js             | 20 or newer                                                                                                                                                 |
 
 The version number follows semantic versioning over that table. A breaking
 change to any contract is a major: a field removed or retyped, a seam method

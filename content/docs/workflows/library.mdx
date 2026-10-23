@@ -32,17 +32,19 @@ with `result.json` written last.
 
 ### `engine.run(options)`
 
-| Option        | Type                              | Meaning                                                                                                 |
-| ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `template`    | path, or a parsed template object | A bare definition or an API snapshot; v1 graphs are upgraded. Mutually exclusive with `manifest`.       |
-| `manifest`    | path, or a parsed run manifest    | A prebuilt [run manifest](/workflows/run-artifacts#the-run-manifest), bindings included.                |
-| `inputs`      | `Record<string, string>`          | Source bindings by key, the same keys as `--input`: `video`, `telemetry`, or a node id, to a file path. |
-| `runId?`      | string                            | Default `local-<epoch ms>`. Also the output directory name.                                             |
-| `window?`     | `{ from: string; to: string }`    | ISO-8601 run window. File bindings carry their own timestamps, so rarely needed.                        |
-| `secrets?`    | `Record<string, string>`          | Logical name to value. Wins over `XORGATE_SECRET_*` in the environment.                                 |
-| `emitVideo?`  | boolean                           | After a successful run, mux each visualization node's frames into `video/<nodeId>.mp4`.                 |
-| `progress?`   | `(message) => void`               | Receives the same messages `--progress json` prints, as objects, as the run proceeds.                   |
-| `deadlineMs?` | number                            | Wall-clock budget. On expiry everything is cancelled and the run fails.                                 |
+| Option         | Type                              | Meaning                                                                                                      |
+| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `template`     | path, or a parsed template object | A bare definition or an API snapshot; v1 graphs are upgraded. Mutually exclusive with `manifest`.            |
+| `manifest`     | path, or a parsed run manifest    | A prebuilt [run manifest](/workflows/run-artifacts#the-run-manifest), bindings included.                     |
+| `inputs`       | `Record<string, string>`          | Source bindings by key, the same keys as `--input`: `video`, `telemetry`, or a node id, to a file path.      |
+| `runId?`       | string                            | Default `local-<epoch ms>`. Also the output directory name.                                                  |
+| `window?`      | `{ from: string; to: string }`    | ISO-8601 run window. File bindings carry their own timestamps, so rarely needed.                             |
+| `secrets?`     | `Record<string, string>`          | Logical name to value. Wins over `XORGATE_SECRET_*` in the environment.                                      |
+| `emitVideo?`   | boolean                           | After a successful run, mux each visualization node's frames into `video/<nodeId>.mp4`.                      |
+| `progress?`    | `(message) => void`               | Receives the same messages `--progress json` prints, as objects, as the run proceeds.                        |
+| `deadlineMs?`  | number                            | Wall-clock budget. On expiry everything is cancelled and the run fails.                                      |
+| `channelMode?` | `"elastic"` \| `"bounded"`        | 0.5.1. Batch and simulation channel policy; default `elastic` ([channels](/workflows/performance#channels)). |
+| `stallMs?`     | number                            | 0.5.1. [Stall detector](/workflows/performance#the-stall-detector) window, default 30000; 0 disables.        |
 
 It resolves to `{ result, runDir, outcome }`: `result` is the parsed
 [`result.json`](/workflows/run-artifacts#resultjson), `runDir` the directory it
