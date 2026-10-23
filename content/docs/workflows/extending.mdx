@@ -53,17 +53,19 @@ export const executor = async function* (inputs: EngineInChannel[], config: unkn
 
 What the definition promises:
 
-| Field               | Rule                                                                                                                                                            |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`              | `namespace.name`, lowercase. The namespace is yours; `source`, `video`, `telemetry`, `model`, `logic`, `output`, `connector` and `function` belong to the core. |
-| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `function`. It places the node in the editor palette.                                        |
-| `inputs`, `outputs` | Ports with a [channel](/workflows/definitions#channels), a cardinality and `required`. A `json` output must declare its `tag`.                                  |
-| `config`            | A zod schema. It is parsed at run time, unknown keys are rejected, and it is serialized to JSON Schema for the editor's config form.                            |
-| `requires`          | Capability tokens (`secret:<name>`, `metric:<name>`, `video`) so `validate` can say what a graph needs before it runs.                                          |
-| `runtime`           | `target: "any"` runs wherever the engine runs; `"media"` says the node needs ffmpeg or ONNX Runtime. `modelRef.family` for model nodes.                         |
+| Field               | Rule                                                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`              | `namespace.name`, lowercase. The namespace is yours; `source`, `video`, `telemetry`, `model`, `logic`, `output`, `connector` and `function` belong to the core.                                                                                                                |
+| `group`             | One of `source`, `video`, `telemetry`, `model`, `logic`, `output`, `function`. It places the node in the editor palette.                                                                                                                                                       |
+| `inputs`, `outputs` | Ports with a [channel](/workflows/definitions#channels), a cardinality and `required`. A `json` output must declare its `tag`.                                                                                                                                                 |
+| `config`            | A zod schema. It is parsed when a template is validated and again at run time, and serialized to JSON Schema for the editor's config form. Unknown keys are not rejected: as of 0.5.1 a plain `z.object` drops them at publish and run time (a publish-time check is planned). |
+| `requires`          | Capability tokens (`secret:<name>`, `metric:<name>`, `video`) so `validate` can say what a graph needs before it runs.                                                                                                                                                         |
+| `runtime`           | `target: "any"` runs wherever the engine runs; `"media"` says the node needs ffmpeg or ONNX Runtime. `modelRef.family` for model nodes.                                                                                                                                        |
 
 What the executor promises: it is an async generator; it reads its inputs
-through bounded channels and therefore applies backpressure by awaiting; it
+through channels by awaiting them, so it applies backpressure wherever the
+channel is bounded (every edge in a live run, frames and video edges in a batch
+run; see [channels](/workflows/performance#channels)); it
 yields messages on a channel with a timestamp; it throws to fail its step; and
 it reports through `ctx` (`setSummary`, `log`, `emitEvent`, `captureRecord`)
 rather than through side effects. A node that needs a file, a model, a secret
@@ -172,18 +174,18 @@ The serialized catalog payload's `catalogVersion` is a content hash of every
 node definition the host registered, sorted by group and label. With no packs
 it is the core hash the [catalog page](/workflows/catalog) quotes, and two
 hosts that print the same value run the same nodes with the same defaults.
-With packs the value changes, by design, and the payload says why. Measured
+With packs the value changes, by design, and the payload says why. Measured on 0.5.1
 with the example pack registered next to the core
-(`buildCatalogPayload(createCatalog([...corePacks, pack]))`, `nodes` elided):
+(`buildCatalogPayload(createCatalog([...corePacks, pack]))`, `nodes` and
+`aliases` elided):
 
 ```json
 {
-  "catalogVersion": "d5dd472d2ef514eb",
+  "catalogVersion": "91a870fc5fc7b64c",
   "schemaVersion": 2,
-  "aliases": {},
   "nodes": [],
   "packs": [
-    { "name": "core", "version": "0.2.0", "hash": "08c8c39436928e5e" },
+    { "name": "core", "version": "0.5.1", "hash": "92697a69913738c4" },
     {
       "name": "@acme/xwe-nodes-scale",
       "version": "1.0.0",
@@ -199,7 +201,8 @@ is registered, whatever else is (the eight core packs collapse into that one
 entry; a host that dropped `core/model` reports a different core hash). With
 no packs registered the payload is exactly what it was before packs existed
 plus a one-entry `packs` list, and `catalogVersion` is the core hash
-(`08c8c39436928e5e` since 0.2.0, `e481243f5ffe4678` in 0.1.0).
+(`92697a69913738c4` in 0.5.1; the [catalog page](/workflows/catalog) lists the
+earlier ones).
 
 `packs` is additive to the payload; a consumer that only knows
 `catalogVersion` keeps working. A consumer that reads `packs` can say "the

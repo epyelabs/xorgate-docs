@@ -182,12 +182,12 @@ object per line, each stamped with `at`. The message set is the engine's, not
 the CLI's; the platform's shell publishes the same messages to its message
 topics through `IotRunProgress`, the package's reference transport:
 
-| `t`      | Fields                                                                                  | When                                           |
-| -------- | --------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `status` | `status` (`running` \| `succeeded` \| `failed`), `error`, `failedNodeId`                | once at start, once at the end                 |
-| `step`   | `seq`, `nodeId`, `label`, `status`, `output`, `durationMs`                              | as each node finishes                          |
-| `event`  | `nodeId` (since 0.5.0), `kind`, `occurredAt`, `confidence`, `payloadSummary`, `payload` | as `output.event` fires                        |
-| `record` | `nodeId`, `port`, `tag`, `ts`, `seq`, `payload`                                         | for each `json`-channel message leaving a node |
+| `t`      | Fields                                                                                                    | When                                           |
+| -------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `status` | `status` (`running` \| `succeeded` \| `failed`), `error`, `failedNodeId`                                  | once at start, once at the end                 |
+| `step`   | `seq`, `nodeId`, `label`, `status` (`ok` \| `failed` \| `skipped` \| `cancelled`), `output`, `durationMs` | as each node finishes                          |
+| `event`  | `nodeId` (since 0.5.0), `kind`, `occurredAt`, `confidence`, `payloadSummary`, `payload`                   | as `output.event` fires                        |
+| `record` | `nodeId`, `port`, `tag`, `ts`, `seq`, `payload`                                                           | for each `json`-channel message leaving a node |
 
 `record` covers `json` ports only: connector lookups, VLM verdicts, and the
 like. Detections travel on their own channel and are counted in the detection
@@ -271,11 +271,11 @@ fix on the same line. The output is on
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                         |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | The run succeeded, or the template validated.                                                                                                                   |
-| `1`  | The run failed (a node threw, or the deadline hit). `result.json` is still written, with `status: "failed"` and the node id. `validate` also exits 1 on issues. |
-| `2`  | Usage or configuration: an unbindable input key, a template that does not parse, a missing file argument. Nothing was run.                                      |
+| Code | Meaning                                                                                                                                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | The run succeeded, or the template validated.                                                                                                                                                                                                                                  |
+| `1`  | The run failed (a node threw, the deadline hit, or since 0.5.1 the [graph stalled](/workflows/performance#the-stall-detector)). `result.json` is still written, with `status: "failed"` and the node id (`null` for a deadline or a stall). `validate` also exits 1 on issues. |
+| `2`  | Usage or configuration: an unbindable input key, a template that does not parse, a missing file argument. Nothing was run.                                                                                                                                                     |
 
 The distinction between 1 and 2 is the useful one for scripting: 2 means the
 invocation was wrong, 1 means the graph was. The three codes are stable: a

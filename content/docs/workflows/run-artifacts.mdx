@@ -169,7 +169,9 @@ a local run directory and a platform run are interchangeable for tooling.
 
 `steps` is one row per node in completion order with the executor's own
 one-line summary in `output`; a skipped node (downstream of a failure) has
-`status: "skipped"`. `events` is the same list as `events.jsonl`; since 0.5.0
+`status: "skipped"`, and since 0.5.1 a node still running when the deadline or
+the stall detector stopped the run has `status: "cancelled"`, with what it was
+waiting on in `output` ([step statuses](/workflows/performance#step-statuses)). `events` is the same list as `events.jsonl`; since 0.5.0
 each event carries the `nodeId` of the `output.event` node that emitted it, and
 `clipKey` is always `null` (`attachClip` is not implemented). `artifacts`
 points at the events file and at each capture node's records file with its

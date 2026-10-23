@@ -87,11 +87,16 @@ the engine's golden test.
 }
 ```
 
-Every node's executor starts at once and the edges are bounded in-process
-channels, so a source never reads faster than its slowest consumer. A node that
-throws fails its step, every node downstream of it is skipped, independent
-branches run to completion, and the run is marked failed with the first failing
-node's id. Those semantics belong to the engine, not to where it runs.
+Every node's executor starts at once and the edges are in-process channels.
+Frames and video edges are bounded, so a decoder never runs far ahead of its
+model; in batch and simulation runs every other edge buffers, so a fan-out
+that merges again by timestamp cannot deadlock
+([channels](/workflows/performance#channels)). A node that throws fails its
+step, every node downstream of it is skipped, independent branches run to
+completion, and the run is marked failed with the first failing node's id. A
+run stopped by its deadline or by the stall detector reports the nodes still
+running as `cancelled`. Those semantics belong to the engine, not to where it
+runs.
 
 ## One engine, several hosts
 

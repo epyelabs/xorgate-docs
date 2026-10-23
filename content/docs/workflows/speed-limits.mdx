@@ -1,0 +1,461 @@
+---
+title: "Speed limits"
+description: "connector.third_party and logic.comparator in depth: providers, pacing, retries, timeouts, the error budget, no-answer records, HERE trace mode, and comparing against a stale or missing limit."
+---
+
+An overspeed graph is two nodes doing the real work: `connector.third_party`
+looks up the posted speed limit along the GPS stream, and `logic.comparator`
+compares a speed signal against it. The [catalog](/workflows/catalog) gives
+each a one-line row; this page is the detail.
+
+<Callout title="New in engine 0.5.1">
+  Every key and field marked 0.5.1 below arrived in that release (core
+  `catalogVersion` `92697a69913738c4`). An older engine does not reject them:
+  unknown config keys are dropped when the config is parsed, so a template that
+  sets `lookupMode: "trace"` runs in point mode on 0.5.0 without a word. Compare
+  the catalog hash before relying on them.
+</Callout>
+
+## `connector.third_party`
+
+In `positions:telemetry`, out `speed_limit:json/speed_limit`, runs on any
+target. Positions come from `gps.latitude` and `gps.longitude` (`gps.lat` and
+`gps.lon` also work); a sample without both is skipped and counted in the step
+summary.
+
+### Providers
+
+| `provider`               | Secret                 | Default pacing                               | Notes                                                                                                                |
+| ------------------------ | ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `google_roads` (default) | `google-roads-api-key` | 10 requests a second                         | Best snap-to-road quality; the key needs Google's speed-limits licensing. Records carry `placeId`.                   |
+| `here`                   | `here-api-key`         | 5 requests a second                          | Standard tier. The only provider with [trace mode](#trace-mode-here).                                                |
+| `osm`                    | none                   | 1 request a second, plus up to 0.25 s jitter | OpenStreetMap through Overpass: no key, no bill, community coverage. `osmEndpoint` points at a self-hosted instance. |
+
+[Secrets](/workflows/run-artifacts#secrets) resolve through the host's secrets
+seam; locally that is `XORGATE_SECRET_HERE_API_KEY` or
+`XORGATE_SECRET_GOOGLE_ROADS_API_KEY`. A key the provider rejects (HTTP 401 or 403) always fails the node, whatever `onLookupError` says.
+
+### Configuration
+
+Every key is optional; `{}` is a complete config.
+
+| Key                    | Default                                      | Meaning                                                                                                                                                         |
+| ---------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | `google_roads`                               | `google_roads`, `here` or `osm`.                                                                                                                                |
+| `cacheTtlSeconds`      | 300                                          | How long a looked-up position's answer is reused (point mode).                                                                                                  |
+| `maxLookupsPerRun`     | 500                                          | Hard cap on provider requests in one run, at most 100000. Positions past it get no lookup; cached positions still emit. In trace mode it counts chunk requests. |
+| `maxRequestsPerSecond` | per provider: OSM 1, HERE 5, Google Roads 10 | 0.5.1. Request pacing, a token bucket with a burst of 1. At most 100.                                                                                           |
+| `retry`                | `{ attempts: 4, baseMs: 500, maxMs: 8000 }`  | 0.5.1. Retries on HTTP 429 and 5xx; see [Pacing, retries and timeouts](#pacing-retries-and-timeouts).                                                           |
+| `requestTimeoutMs`     | 10000 (30000 per trace chunk)                | 0.5.1. Per request, reading the body included. At most 120000.                                                                                                  |
+| `onLookupError`        | `fail`                                       | 0.5.1. `fail` or `skip`; see [Failed lookups](#failed-lookups-and-the-error-budget).                                                                            |
+| `maxErrorRatio`        | 0.2                                          | 0.5.1. With `skip`, the share of failed lookups that fails the node.                                                                                            |
+| `emitNoAnswer`         | false                                        | 0.5.1. Emit a null record for a position without a limit; see [No-answer records](#no-answer-records).                                                          |
+| `osmEndpoint`          | `https://overpass-api.de/api/interpreter`    | 0.5.1. The Overpass interpreter URL. Public instances are for light use; production volume belongs on your own.                                                 |
+| `lookupMode`           | `point`                                      | 0.5.1. `point` or `trace` (HERE only, batch and simulation runs only).                                                                                          |
+| `traceChunkPoints`     | 1000                                         | 0.5.1. Trace points per route-matching request, 2 to 10000.                                                                                                     |
+| `traceOverlapPoints`   | 10                                           | 0.5.1. Points shared by consecutive chunks, 0 to 1000, capped below half a chunk.                                                                               |
+| `traceMinSpacingM`     | 0                                            | 0.5.1. Drop points closer than this (metres) to the last kept one before sending; 0 sends every positioned sample.                                              |
+
+### Point mode
+
+The default, and the mode every provider and every run mode supports. Each
+position is rounded to four decimals (about 11 m) and looked up once, then
+cached for `cacheTtlSeconds`, so a vehicle at 1 Hz on a cache-cold road costs
+about one request a second and a parked one costs one request. An answered
+lookup emits:
+
+```json
+{ "ts": 1792269412000, "speedLimitKph": 50, "source": "here" }
+```
+
+`ts` is the triggering sample's, so the comparator applies the limit to that
+same sample. `source` names the provider that answered, and `placeId` is added
+by Google Roads only.
+
+### Pacing, retries and timeouts
+
+From 0.5.1 every provider is paced and retried. Earlier releases paced OSM
+only and failed a HERE or Google Roads lookup on its first 429.
+
+- **Pacing.** A token bucket with a burst of 1 at `maxRequestsPerSecond`, or the
+  provider default above. HERE and Google Roads were unpaced before 0.5.1, so a
+  large point-mode run now takes longer: 1,000 cache-cold HERE positions take
+  at least 200 s at the default 5 a second.
+- **Retries.** HTTP 429 and 5xx are retried with full-jitter exponential
+  back-off: attempt _n_ waits a random time up to `baseMs × 2^n`, never more
+  than `maxMs`. `attempts` counts the first request, so the default makes at
+  most four. A `Retry-After` header (seconds or an HTTP date) is honoured
+  instead of the back-off, up to 60 s; a longer one ends that lookup's
+  attempts. A lookup that runs out of attempts fails with a message ending
+  `after N attempts`, and `onLookupError` decides what that means.
+- **Timeouts.** `requestTimeoutMs` covers the request and the body read. It is
+  enforced even when the host's `fetch` ignores the abort signal. A timeout is
+  a failed attempt like any other.
+
+### Failed lookups and the error budget
+
+`onLookupError` decides what a lookup that still fails after its retries does:
+
+- **`fail`** (the default): the node fails. The message ends with the lookup
+  counts in brackets, and the step summary is set either way, so a failed step
+  still says how far it got.
+- **`skip`**: that position gets no answer (a null record with reason `error`
+  under `emitNoAnswer`) and the run goes on. The failure is cached like an
+  answer, so a parked vehicle does not hammer a failing provider. The node
+  fails only once failed lookups exceed `maxErrorRatio` of all lookups. In
+  point mode the ratio is enforced from the tenth lookup on; with fewer, the
+  node fails only if every lookup failed. In trace mode it is checked once, at
+  the end, with no minimum.
+
+A rejected key fails the node under both settings.
+
+### No-answer records
+
+Some positions have no limit: an untagged OSM way, no HERE match, no Google
+coverage. By default those emit nothing and are counted in the step summary.
+With `emitNoAnswer: true` (0.5.1) they emit a record whose limit is `null`:
+
+```json
+{
+  "ts": 1792269472000,
+  "speedLimitKph": null,
+  "source": "osm",
+  "reason": "no_answer"
+}
+```
+
+| `reason`      | Meaning                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| `no_answer`   | The provider answered and had no limit for the position.                    |
+| `capped`      | The position came after `maxLookupsPerRun` was used up.                     |
+| `error`       | The lookup failed under `onLookupError: "skip"`.                            |
+| `no_position` | Trace mode only: the sample had no position, so there was nothing to match. |
+
+The point of the null record is the comparator. A comparator holds its last
+reference until the next one arrives, so without a null record a road with no
+answer is compared against whatever limit was looked up last, possibly a side
+street's. A null record clears the held limit; see
+[`logic.comparator`](#logiccomparator) for what happens next.
+
+### Trace mode (HERE)
+
+`lookupMode: "trace"` (0.5.1) stops looking positions up one at a time and
+route-matches the whole drive instead:
+
+1. The node collects its entire input and sorts it by `ts`.
+2. With `traceMinSpacingM` above 0, a point closer than that to the last kept
+   point is dropped and takes that point's answer (a stationary vehicle sends
+   one point, not hundreds).
+3. The kept points go to HERE Route Matching v8 as GPS traces, one request per
+   chunk of `traceChunkPoints`. Consecutive chunks share `traceOverlapPoints`
+   so each chunk edge is matched with context; a shared point takes its answer
+   from the chunk where it sits further from the edge. Heading and speed are
+   sent too when every point carries `gps.heading` (or `gps.course`) and
+   `gps.speed`, which helps the matcher.
+4. Every matched point gets the speed limit of the road link it was matched
+   to, in the direction it was driven (mph limits are converted to km/h).
+
+Because the trace is matched as one route, a point beside an intersection
+stays on the road being driven. A point lookup snaps each position on its own,
+and near an intersection it can pick up the side street's limit for a sample
+or two; that flip is what trace mode removes.
+
+Output is **one record per input sample**, in `ts` order, null records
+included whatever `emitNoAnswer` says:
+
+```jsonl
+{ "ts": 1792269412000, "speedLimitKph": 50, "source": "here", "linkId": "1179512339", "matched": true }
+{ "ts": 1792269413000, "speedLimitKph": null, "source": "here", "matched": false, "reason": "no_answer" }
+```
+
+`linkId` is the id of the HERE link the point was matched to, as a string,
+and `matched` says whether HERE placed the point on a road at all. A matched
+point on a link with no posted limit is `matched: true` with a null limit and
+reason `no_answer`. A null record's `reason` is `no_answer`, `capped`, `error`
+or `no_position`.
+
+Errors and caps work per chunk. A failed chunk follows `onLookupError` (with
+`skip` its samples get reason `error`); `maxLookupsPerRun` counts chunk
+requests, and samples owned by chunks that were never sent get reason
+`capped`. Pacing, retries and `Retry-After` apply to each chunk request, and
+the timeout defaults to 30000 ms per chunk.
+
+<Callout title="Cost: one request per ~1000 points, not one per position">
+  Point mode makes up to one request per unique position: about one a second on
+  a 1 Hz drive, so the default `maxLookupsPerRun` of 500 covers under ten
+  minutes of fresh road. Trace mode makes one request per chunk of
+  `traceChunkPoints` (1000 by default, less the 10-point overlap). The engine's
+  test drive of an hour at 1 Hz, 3,600 samples, takes **4 requests** and about
+  0.6 s. Wherever a provider counts requests against a quota or a bill, trace
+  mode is the cheap way to cover a long drive.
+</Callout>
+
+**Where it runs.** Trace mode needs the whole input before it emits anything,
+so it runs in `batch` and `simulation` runs only. The node fails at start
+otherwise, as it does for a provider other than HERE:
+
+```
+lookupMode 'trace' collects the whole input before matching it, so it runs in batch and simulation runs only; use lookupMode 'point' in live runs
+lookupMode 'trace' supports provider 'here' only (got 'osm'); use lookupMode 'point' for osm
+```
+
+Collecting the input is safe because batch and simulation data edges are
+unbounded from 0.5.1 ([channels](/workflows/performance#channels)). Under
+`channelMode: "bounded"`, a graph that feeds the same source into the
+connector and the comparator stalls unless `channelCapacity` is above the
+sample count.
+
+### Example: overspeed in trace mode
+
+The engine's fixture `fixtures/templates/overspeed-here-trace.json`: the
+source feeds both the connector (in trace mode) and the comparator at 1 Hz,
+samples HERE cannot place are compared against an assumed 50 km/h, and an
+event fires after 10 s over the limit plus 5.
+
+```json
+{
+  "schemaVersion": 2,
+  "nodes": [
+    {
+      "id": "src",
+      "type": "source.telemetry",
+      "position": { "x": 40, "y": 120 },
+      "data": {
+        "label": "Speed + position",
+        "config": {
+          "metrics": ["gps.speed", "gps.lat", "gps.lon", "gps.heading"]
+        }
+      }
+    },
+    {
+      "id": "roads",
+      "type": "connector.third_party",
+      "position": { "x": 320, "y": 300 },
+      "data": {
+        "label": "Speed limit (HERE trace)",
+        "config": {
+          "provider": "here",
+          "lookupMode": "trace",
+          "onLookupError": "skip"
+        }
+      }
+    },
+    {
+      "id": "cmp",
+      "type": "logic.comparator",
+      "position": { "x": 600, "y": 120 },
+      "data": {
+        "label": "Speed > limit + 5 (assume 50 without one)",
+        "config": {
+          "signal": "gps.speed",
+          "operator": "gt",
+          "field": "speedLimitKph",
+          "margin": 5,
+          "fallbackReference": 50
+        }
+      }
+    },
+    {
+      "id": "deb",
+      "type": "logic.debounce",
+      "position": { "x": 880, "y": 120 },
+      "data": {
+        "label": "Held 10 s",
+        "config": { "minDurationMs": 10000, "cooldownMs": 0 }
+      }
+    },
+    {
+      "id": "evt",
+      "type": "output.event",
+      "position": { "x": 1160, "y": 120 },
+      "data": {
+        "label": "Overspeed",
+        "config": { "kind": "overspeed", "cooldownSeconds": 60 }
+      }
+    },
+    {
+      "id": "cap",
+      "type": "output.data_capture",
+      "position": { "x": 600, "y": 300 },
+      "data": {
+        "label": "Speed limits matched",
+        "config": { "format": "jsonl" }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_src_roads",
+      "source": "src",
+      "target": "roads",
+      "sourceHandle": "telemetry",
+      "targetHandle": "positions"
+    },
+    {
+      "id": "e_src_cmp",
+      "source": "src",
+      "target": "cmp",
+      "sourceHandle": "telemetry",
+      "targetHandle": "signal"
+    },
+    {
+      "id": "e_roads_cmp",
+      "source": "roads",
+      "target": "cmp",
+      "sourceHandle": "speed_limit",
+      "targetHandle": "reference"
+    },
+    {
+      "id": "e_cmp_deb",
+      "source": "cmp",
+      "target": "deb",
+      "sourceHandle": "condition",
+      "targetHandle": "condition"
+    },
+    {
+      "id": "e_deb_evt",
+      "source": "deb",
+      "target": "evt",
+      "sourceHandle": "condition",
+      "targetHandle": "condition"
+    },
+    {
+      "id": "e_roads_cap",
+      "source": "roads",
+      "target": "cap",
+      "sourceHandle": "speed_limit",
+      "targetHandle": "records"
+    }
+  ]
+}
+```
+
+```bash
+XORGATE_SECRET_HERE_API_KEY=... xwe run overspeed-here-trace.json --input telemetry=drive.csv
+```
+
+Two things make this graph work in trace mode. The comparator needs no
+`maxReferenceAgeMs`, because trace mode answers every sample, null included,
+so a held limit is always the current sample's. And `fallbackReference` covers
+the null ones, so an unmatched stretch is judged against 50 rather than
+skipped. `outputs/cap/records.jsonl` holds the per-sample limits with
+`linkId` and `matched`, which is the first thing to read when an event looks
+wrong.
+
+## `logic.comparator`
+
+In `signal:telemetry` and `reference:json`, out `condition:condition`, runs
+on any target. It merges the two inputs by timestamp: a reference record holds
+until the next one, and a record stamped at the same `ts` as a sample applies
+to that sample.
+
+| Key                 | Default      | Meaning                                                                                                                       |
+| ------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `signal`            | the only one | The telemetry signal to compare, e.g. `gps.speed`. Required when the input carries more than one.                             |
+| `operator`          | `gt`         | `gt`, `gte`, `lt` or `lte`.                                                                                                   |
+| `field`             | `value`      | The field on the reference record, e.g. `speedLimitKph`.                                                                      |
+| `margin`            | 0            | Slack added to the reference before comparing, fallback included.                                                             |
+| `maxReferenceAgeMs` | none         | 0.5.1. A held reference older than this (sample `ts` minus record `ts`) is stale. Without it, a reference holds indefinitely. |
+| `fallbackReference` | none         | 0.5.1. The value compared against when there is no usable reference. Without it, such samples are skipped.                    |
+
+How each input is handled:
+
+- A reference record whose `field` is a number becomes the held reference.
+- A record whose `field` is `null` **clears** the held reference (0.5.1; before,
+  it was ignored and the old value held). The connector sends these only with
+  `emitNoAnswer` or in trace mode, so existing graphs are unaffected.
+- A record without the field, or with a non-numeric one, is ignored.
+- For each sample, the reference is **usable** when one is held and it is not
+  stale. Then the sample is compared against it plus `margin`. Otherwise the
+  sample is compared against `fallbackReference` plus `margin` when that is
+  set, and skipped (no condition emitted) when it is not.
+
+Each condition's `meta` says what the sample was compared against:
+
+```json
+{
+  "value": true,
+  "meta": {
+    "signal": "obd.speed",
+    "observed": 70,
+    "operator": "gt",
+    "reference": 50,
+    "margin": 5,
+    "record": {
+      "ts": 1792269530000,
+      "speedLimitKph": null,
+      "source": "osm",
+      "reason": "no_answer"
+    },
+    "referenceSource": "fallback",
+    "referenceAgeMs": 0
+  }
+}
+```
+
+`reference` is the value actually used. `referenceSource` (0.5.1) is
+`record` or `fallback`; `referenceAgeMs` (0.5.1) is the sample's `ts` minus the
+last reference record's, or `null` before any record arrived. `record` is that
+last record as received. An `output.event` downstream copies `meta` into the
+event payload, so every overspeed event says whether it was judged against a
+looked-up limit or the assumed one, and how old the limit was.
+
+### Example: the stale limit
+
+The production overspeed graph resamples the drive to a 10 s grid with
+`hold`, looks the limit up on OSM, and compares `obd.speed` against it. On a
+road OSM has no tag for, the connector used to say nothing, so the comparator
+kept comparing against the last limit it heard, often a side street's.
+
+The engine's test drive for this (fixture
+`fixtures/templates/overspeed-osm-fallback.json`) is 200 s long:
+
+| Segment      | Road                         | Speed   | Before 0.5.1                     | With the config below                    |
+| ------------ | ---------------------------- | ------- | -------------------------------- | ---------------------------------------- |
+| 0 to 60 s    | near a side street tagged 30 | 30 km/h | no event                         | no event                                 |
+| 60 to 90 s   | no tagged way                | 45 km/h | **false overspeed**: 45 > 30 + 5 | no event: 45 is under the assumed 50 + 5 |
+| 90 to 130 s  | the tagged side street again | 30 km/h | no event                         | no event                                 |
+| 130 to 200 s | no tagged way                | 70 km/h | overspeed                        | overspeed, `referenceSource: "fallback"` |
+
+The two node configs that fix it:
+
+```json
+{
+  "id": "roads",
+  "type": "connector.third_party",
+  "data": {
+    "config": {
+      "provider": "osm",
+      "maxLookupsPerRun": 500,
+      "cacheTtlSeconds": 3600,
+      "emitNoAnswer": true,
+      "onLookupError": "skip"
+    }
+  }
+}
+```
+
+```json
+{
+  "id": "cmp",
+  "type": "logic.comparator",
+  "data": {
+    "config": {
+      "signal": "obd.speed",
+      "operator": "gt",
+      "field": "speedLimitKph",
+      "margin": 5,
+      "fallbackReference": 50,
+      "maxReferenceAgeMs": 5000
+    }
+  }
+}
+```
+
+The rule they encode: **a limit older than the grid interval is stale, and a
+stale or missing limit is assumed to be 50 km/h**. On a 10 s grid a record
+from the current tick is 0 ms old and a held one is at least 10 s old, so
+`maxReferenceAgeMs: 5000` means "only this tick's answer counts". Either half
+alone is enough for this drive: the null records clear the held 30, and the
+age rule catches a held limit even from a connector that stays silent. Use
+both; the null record also keeps the comparator's timestamp merge moving.

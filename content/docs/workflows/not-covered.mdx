@@ -51,7 +51,8 @@ Lambda function for telemetry-only graphs and a container image (with ffmpeg,
 ONNX Runtime and `python3`) for graphs with media or code function nodes, and
 calls `createEngine({ host })` exactly as [Using the engine as a
 library](/workflows/library) shows. The catalog the editor fetches is the
-package's, at the same `catalogVersion` (`08c8c39436928e5e`) `xwe` reports.
+package's, at the same `catalogVersion` `xwe` reports for the version the
+platform pins (`92697a69913738c4` for 0.5.1).
 
 What that does not give you is a round trip from a local run: there is no
 publishing of a locally authored template and no ingesting of a local run's
@@ -126,16 +127,34 @@ scheduling around recording, no fleet distribution of templates.
 
 ### What is distributed, and what is not
 
-The engine is published as `@xorgate/workflow-engine` 0.2.0 on npm, with the
+The engine is published as `@xorgate/workflow-engine` on npm, with the
 `xwe` command inside it, and as the multi-arch image `ghcr.io/epyelabs/xwe`;
 [Installing the engine](/workflows/installation),
 [Using the engine as a library](/workflows/library),
 [Models and the registry](/workflows/models) and
 [Extending the catalog](/workflows/extending) describe those artifacts as
 verified. The license is MIT, the same as the SDKs. There is no licensing or
-metering of runs, and none is planned. Every documented feature is in the
-published 0.2.0, code function nodes included; 0.3.0 adds only the exports the
-platform's shell consumes.
+metering of runs, and none is planned. These pages describe 0.5.1: the
+connector's pacing, retries, error budget, no-answer records and trace mode,
+the comparator's stale-reference handling, unbounded batch channels, the
+stall detector and the `cancelled` step status are new in it, and an older
+engine has none of them. Each feature's page names the release it arrived in.
+
+### Unknown config keys are not rejected
+
+A node's config is parsed when a template is validated for publishing and at
+run time, and keys the schema does not know are dropped, not reported. A
+misspelt key (`maxRefernceAgeMs`) is therefore silently ignored, and so is a
+key from a newer engine on an older one. A publish-time check for unknown keys
+is planned; until then, compare the [catalog](/workflows/catalog) hash and
+read the node's step summary.
+
+### Trace mode is batch only
+
+The connector's [trace mode](/workflows/speed-limits#trace-mode-here) matches
+a whole drive at once, so it runs in batch and simulation runs only, and only
+with HERE. A live run, or another provider, fails the node at start. Live
+graphs use point mode.
 
 ## Bindings that only resolve on the platform
 
