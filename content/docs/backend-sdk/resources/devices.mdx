@@ -648,11 +648,27 @@ How to observe each outcome, since the ack cannot tell you:
 | `reboot`       | owner/admin | `status` goes `offline` then `online`. Expires 60 s after issue.                                              |
 | `powerOff`     | owner/admin | `status` goes `offline` and stays. **Not remotely recoverable**: someone has to physically power it on.       |
 | `refreshState` | member      | `reportedAt` advances. Rate-limited on the device to roughly one per 30 s; a re-probe takes up to about 45 s. |
-| `updateAgent`  | owner/admin | `agentVersion` changes. Unchanged after the device returns online means the install failed and rolled back.   |
+| `updateAgent`  | owner/admin | `agentVersion` changes when a different build was installed. Unchanged has two meanings: see below.           |
 
-`updateAgent()` installs the latest published build. There is no version
-parameter. The device drops offline for a minute or two. Pressing it twice is
-harmless: an already-running one-shot coalesces.
+`updateAgent()` installs the latest published build of the agent the device
+runs. There is no version parameter. The device drops offline while the agent
+restarts: typically seconds on a Rust device, roughly a minute or two on a JS
+device, longer on a slow link. Pressing it twice is harmless: an
+already-running one-shot coalesces.
+
+On a Rust device the same run then installs the
+[extra OS packages](/device-sdk/cameras#installing-the-imx335-packages) a
+declared camera sensor needs. That can add minutes and never fails the update.
+
+An unchanged `agentVersion` after the device returns online has two meanings.
+Either the device was already on the latest build, which is a legitimate run: it
+reinstalls that build, and on a Rust device it is how missing camera packages
+get installed. Or the install failed and rolled back. Compare `agentVersion`
+with the latest build of the device's own agent to tell them apart
+(`latestAgentBuild()` below is the JS agent's;
+`devices.agentChannel(device.agent)` answers for either). The updater's journal
+on the device has the detail: `journalctl -u xorgate-updater-rs` on a Rust
+device, `journalctl -u xorgate-updater` on a JS device.
 
 ### `latestAgentBuild()`
 

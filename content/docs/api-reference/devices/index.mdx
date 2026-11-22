@@ -91,8 +91,22 @@ Watch the outcome, do not assume it. Reboot and power-off show up as a status
 transition. `refresh-state` is read-only and lands when `reportedAt` advances,
 typically within about 45 seconds and rate-limited to roughly one per 30
 seconds. `update` is the one to be careful with: the agent restarts mid-update,
-so no acknowledgement can be trusted. Poll `GET /devices/{id}` until
-`agentVersion` changes, and compare it against
+so no acknowledgement can be trusted. Poll `GET /devices/{id}` and compare
+`agentVersion` against
 [`GET /device-dist/latest`](/api-reference/devices/get-latest-agent-build)
-by string equality only. An unchanged build after the device comes back online
-means the install failed and rolled back.
+(with `?agent=rust` for a device whose `agent` is `rust`) by string equality
+only.
+
+`agentVersion` changes when a different build was installed. An unchanged build
+after the device comes back online has two meanings: the device was already on
+the latest build, which is a legitimate run, or the install failed and rolled
+back. The comparison tells them apart, and the updater's journal on the device
+has the detail: `journalctl -u xorgate-updater-rs` on a Rust device,
+`journalctl -u xorgate-updater` on a JS device.
+
+How long the device is offline depends on its agent: typically seconds on a Rust
+device, roughly a minute or two on a JS device, longer on a slow link. On a Rust
+device the same run then installs the
+[extra OS packages](/device-sdk/cameras#installing-the-imx335-packages) a
+declared camera sensor needs. That can add minutes, never fails the update, and
+is the reason to update a device that is already on the latest build.

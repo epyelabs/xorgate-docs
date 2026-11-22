@@ -379,8 +379,10 @@ Updating an agent is one call, but it is not a status you can read back:
 
 ```ts
 await xg.devices.updateAgent(deviceId) // 202: reached the broker, nothing more
-// Poll devices.get(id) until agentVersion changes. Unchanged after the device
-// comes back online means the install failed and rolled back.
+// Poll devices.get(id): agentVersion changes when a different build was
+// installed. Unchanged after the device comes back online means either that it
+// was already on the latest build (a legitimate run) or that the install
+// failed and rolled back; compare with the latest build to tell them apart.
 ```
 
 ## 9. Handle the errors that actually happen
