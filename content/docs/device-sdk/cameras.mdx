@@ -233,8 +233,8 @@ xorgate-rs set cameraSensors.cam1.sensor unmanaged   # stop managing the port
 
 ```
 ✓ cameraSensors.cam0.sensor = imx708 (persisted to settings.json)
-  the agent rewrites the camera line in /boot/firmware/config.txt within ~a minute,
-  then a REBOOT is required before the camera changes (the agent never reboots itself).
+  the agent makes the camera line in /boot/firmware/config.txt match within ~a minute;
+  a REBOOT may then be required before the camera changes (the agent never reboots itself): `xorgate-rs status` says so.
 ```
 
 Options are set one at a time, after the sensor. `default` takes an option out of
@@ -245,8 +245,9 @@ xorgate-rs set cameraSensors.cam1.options.clockFrequency 74250000
 xorgate-rs set cameraSensors.cam1.options.clockFrequency default
 ```
 
-Then reboot the device and check the port with `xorgate-rs status`
-([Camera status](/device-sdk/camera-status#on-the-device)).
+`xorgate-rs status` then says whether the port waits for a reboot
+([Camera status](/device-sdk/camera-status#on-the-device)). Reboot the device
+if it does.
 
 ## What the device does with a declaration
 
@@ -341,6 +342,14 @@ it costs the device no processing.
 Like a sensor change, it takes effect at the next boot, and the device reports
 that a reboot is required.
 
+The mounting setting needs a camera on the port to read the rotation in force.
+When none answers, because of a wrong sensor choice for example, its status
+says so instead of asking for a reboot that would not help:
+
+> no camera answers on cam0, so the rotation in force cannot be read — look at
+> the camera sensor setting (cameraSensors) and the camera report of the port;
+> nothing here waits for a reboot
+
 This works on every sensor that can turn its own picture: IMX290, IMX219 and
 IMX708. The **IMX335 cannot be rotated**. The device refuses the setting with
 "the imx335 sensor cannot be rotated: mount the camera the right way up", and
@@ -399,6 +408,8 @@ the view of a sensor is not something a setting can do today.
   cast, because the stock tuning is made for that lens. One such board on the
   bench showed a green centre and magenta edges.
 
+{/* TODO(cm4-imx219): a known-limitations note may go here; a decision is pending. */}
+
 ### IMX708 (Camera Module 3)
 
 - **Option `linkFrequency`:** `450000000` (the default), `447000000` or
@@ -422,41 +433,94 @@ the view of a sensor is not something a setting can do today.
   chosen, and the port's sentence says so too.
 - **It needs two OS packages that a stock device does not have:**
   `libcamera0.5` and `libcamera-ipa` in Arducam's build, version
-  `0.5.2+rpt20250909-1`. They replace the stock packages of the same names.
-  Without them the camera silently does not appear, and the port reads
+  `0.5.2+rpt20250909-1`. They replace the stock packages of the same names, and
+  other cameras on the device keep working with them. Without them the camera
+  silently does not appear, and the port reads
   [`requirements-missing`](/device-sdk/camera-status#verdicts) with a sentence
-  that names both packages and the versions installed.
+  that names both packages, the versions installed, and what to run.
 
-{/* TODO(camera-packages): replace this paragraph and the manual steps below once the automatic install of the IMX335 packages has shipped (by the installer and by `xorgate-rs update`), with the command a reader runs. */}
+#### Installing the IMX335 packages
 
-Installing those packages automatically, at registration and with
-`sudo xorgate-rs update`, is being built and is not in agent 0.2.0. Until it is,
-install them by hand on the device:
+The device installs the two packages itself, as root. It downloads them from the
+address pinned in the sensor catalog that is compiled into the agent (Arducam's
+release on GitHub) and checks each file against the pinned size and sha256
+before anything is installed. Three things run the install:
+
+- **The installer,** at registration, when the code declares an IMX335.
+- **An update:** `sudo xorgate-rs update`, or the **Update** button in the
+  console, which does the same. The packages are installed after the update
+  itself is complete.
+- **You:** `sudo xorgate-rs camera requirements --install`.
+
+After an install by an update or by hand, the agent is restarted and the camera
+is listed again. No reboot is needed.
+
+To see what a device needs and has, without root:
 
 ```bash
-BASE=https://github.com/ArduCAM/Arducam-Pivariety-V4L2-Driver/releases/download/libcamera-v0.0.5
-curl -fLO "$BASE/libcamera0.5_0.5.2+rpt20250909-1_arm64.deb"
-curl -fLO "$BASE/libcamera-ipa_0.5.2+rpt20250909-1_arm64.deb"
-
-sha256sum -c <<'EOF'
-85ae12c0f8c2809d97ecd8b0cb7ca641a178f5e5e5b6a1fa81ff61afc43763dd  libcamera0.5_0.5.2+rpt20250909-1_arm64.deb
-247961da888ab177dfac1ceb8e0e75edf2cd2f8722be2fd46984041e87d12503  libcamera-ipa_0.5.2+rpt20250909-1_arm64.deb
-EOF
-
-sudo apt-get install -y \
-  ./libcamera0.5_0.5.2+rpt20250909-1_arm64.deb \
-  ./libcamera-ipa_0.5.2+rpt20250909-1_arm64.deb
-sudo apt-mark hold libcamera0.5 libcamera-ipa
+xorgate-rs camera requirements
 ```
 
-Do not continue if the checksum fails. The hold keeps a later stock libcamera
-from replacing the packages on an upgrade, which would remove IMX335 support
-again; it also keeps later stock libcamera fixes off that device. Other cameras
-on the device keep working with these packages.
+```
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam0):
+  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1  MISSING
+  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1  MISSING
+to install what is missing: sudo xorgate-rs camera requirements --install (or sudo xorgate-rs update)
+```
 
-With the agent running, the camera comes up by itself the next time the agent
-checks the port again, which can take up to five minutes. Another camera on the
-device restarts once when it does, for a few seconds.
+Four things to know:
+
+- **A device updated into 0.2.0 from an older agent needs a second update.**
+  The first update is run by the old build, which has no such step. The port
+  reads `requirements-missing` until you update once more or run the install
+  command by hand.
+- **The packages are put on apt hold,** so that a later `apt upgrade` does not
+  replace them with stock ones and take IMX335 support away. The price is that
+  apt holds back stock libcamera updates on such a device, together with
+  whatever needs the newer libcamera, until an agent update brings a newer
+  pinned build.
+- **What was replaced is recorded** in
+  `/var/lib/xorgate-packages/camera-packages.json`: the packages installed, the
+  versions they replaced and the holds set.
+- **There is no uninstall command.** Once the packages are installed, the
+  listing ends with the two commands that go back, filled in from that record:
+
+  ```
+    to go back: sudo apt-mark unhold libcamera0.5 libcamera-ipa
+    to go back: sudo apt-get install --allow-downgrades libcamera0.5=0.5.2+rpt20250903-1 libcamera-ipa=0.5.2+rpt20250903-1
+  ```
+
+  Choose another sensor for the port as well, or the next update installs the
+  packages again.
+
+Every line the install prints starts with `camera packages:`. After an update
+started from the console they are in the updater's log
+(`sudo journalctl -u xorgate-updater-rs`). A failed install never fails the
+update. Two lines ask something of you:
+
+> camera packages: WARN arducam-libcamera NOT installed: not enough time left
+> in this run; run
+> `sudo xorgate-rs camera requirements --install`
+> (the install is only started when it can finish; nothing was changed)
+
+An update started from the console has 45 minutes in all, and an install is
+never interrupted once begun, so it is only started when it can finish in what
+is left. A very slow update leaves too little. Run the command by hand, or
+update again.
+
+> camera packages: WARN arducam-libcamera NOT installed: dpkg was interrupted
+> on this device (libcamera0.5 is unpacked, not configured). Run
+> `sudo dpkg --configure -a` there, then
+> `sudo xorgate-rs camera requirements --install`
+> again; nothing was downloaded or changed
+
+An earlier package operation on the device was cut off, by a power cut for
+example, and apt does nothing until that is repaired. Run
+`sudo dpkg --configure -a`, then the install again. The part in brackets names
+what was left unfinished; the port's sentence and the listing say the same.
+
+A line with `was not accepted` means a download failed or a file was not the
+pinned one. Nothing was changed; run the install again.
 
 ## Devices that cannot choose a sensor
 

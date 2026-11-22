@@ -35,7 +35,9 @@ its sentence on the next line:
              cam0: The camera line of csi0 in config.txt was changed since this device booted (it booted with `dtoverlay=imx708,cam0,rotation=180`, the file now says `dtoverlay=imx708,cam0,link-frequency=447000000,rotation=180`). Reboot to apply.
 ```
 
-A healthy camera reads `streaming` (or `recording` while it records to disk).
+A healthy camera reads `streaming` (or `recording` while it records to disk)
+and has no second line, except when the chosen video preset cannot run on its
+sensor: that note is printed under it.
 
 ### Through the API
 
@@ -114,9 +116,9 @@ tolerantly: a newer agent can add a verdict, a state or a field.
 | `no-frames`            | A camera is listed and its capture keeps failing.                                                                                                                                                                           | Read `capture.lastError`. With `imx290` declared, the camera on the port may be a different sensor, since that driver cannot check. Check the declaration and the cable. |
 | `mismatch`             | What is on the port is not what is declared. On a managed port the line still names another sensor because the setting could not be applied. On a port that is not managed, the camera found is not the one the line names. | Read [the setting's status](#the-settings-own-status) for the reason. On a port that is not managed, declare the sensor: that leaves exactly one line for the port.      |
 | `empty`                | No camera is configured on the port: it is declared `none`, or it has no camera line.                                                                                                                                       | Nothing if the port is unused. Otherwise declare its sensor.                                                                                                             |
-| `requirements-missing` | The declared sensor needs OS packages, in versions the sentence names, that are not installed. The camera will not appear until they are.                                                                                   | [Install them](/device-sdk/cameras#imx335-arducam). If the sentence also says the camera line waits for a reboot, reboot afterwards.                                     |
+| `requirements-missing` | The declared sensor needs OS packages, in versions the sentence names, that are not installed. The camera will not appear until they are.                                                                                   | Run what the sentence ends with; see [the IMX335 packages](/device-sdk/cameras#installing-the-imx335-packages). Reboot too if it says the line waits for one.            |
 | `unknown-sensor`       | The declared sensor is not one this agent build knows. The line in `config.txt` is left as it is.                                                                                                                           | Update the agent, or choose another sensor.                                                                                                                              |
-| `unchecked`            | The agent cannot judge the port: it cannot list cameras on this device, or the port runs a pipeline the agent does not supervise.                                                                                           | Follow the sentence. When cameras cannot be listed, it asks you to install `rpicam-apps` and restart the agent.                                                          |
+| `unchecked`            | The agent cannot judge the port: it cannot list cameras on this device, or the port runs a pipeline the agent does not supervise.                                                                                           | Follow the sentence. When cameras cannot be listed, it asks you to install `rpicam-apps`.                                                                                |
 
 When a port has both a real fault and a change that waits for a reboot, the
 fault is the verdict and the sentence adds that the line also waits for a
@@ -138,6 +140,19 @@ but "did the device do what the setting asked".
 
 Read `detail` for `adjusted` and `reason` for `rejected`; each state fills only
 its own field.
+
+The device says "written to the boot config" only for a line the agent itself
+wrote. When something else changed the line, a hand edit for example, `detail`
+reads:
+
+> the camera line was changed outside the agent since this boot (not written by
+> this setting) — REBOOT REQUIRED to apply: cam0 imx335
+
+In the boot in which the agent was updated from a build that kept no record of
+its own writes, it cannot tell the two apart and says neither:
+
+> the camera line was changed since this boot — REBOOT REQUIRED to apply: cam0
+> imx708
 
 <Callout title="`applied` is about the boot configuration, not about the camera">
   A wrong declaration still ends `applied`: the device did set the port up for
@@ -170,7 +185,18 @@ frames. A cable that is reversed or not seated reads exactly like an empty
 port. Fix the declaration or the cable, then reboot.
 
 **`requirements-missing`.** The sensor needs OS packages the device does not
-have. Today that is the IMX335: [install its two packages](/device-sdk/cameras#imx335-arducam).
+have. Today that is the IMX335, and the sentence ends with what to run:
+
+> csi0 is set to imx335, which needs extra packages that are not installed in
+> the required versions: libcamera0.5 0.5.2+rpt20250909-1 (not installed),
+> libcamera-ipa 0.5.2+rpt20250909-1 (not installed). The camera will not appear
+> until they are installed: run `sudo xorgate-rs update` on the device (the
+> console's Update button does the same), or
+> `sudo xorgate-rs camera requirements --install`.
+
+[Installing the IMX335 packages](/device-sdk/cameras#installing-the-imx335-packages)
+has the details, including what to do when the sentence says that dpkg was
+interrupted.
 
 **The setting's status is `rejected`.** The device would not change the port's
 line, so the port still runs whatever the old line brings up. The reason is in
