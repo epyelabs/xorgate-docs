@@ -17,6 +17,10 @@ The bottom two layers write the same file. That is deliberate, and the
 [reported-config loop](/device-sdk/cloud-contract/configuration#local-edits-flow-back)
 is what stops them from fighting.
 
+Two cloud-managed settings are not live: the camera namespaces, `cameraMount`
+and `cameraSensors`, change what the device boots with, so they take effect at
+the next reboot.
+
 ## Layer 1: environment and flags
 
 Read once at startup by `loadConfig`. On a provisioned device these come from
@@ -85,9 +89,11 @@ message rather than spawning a worker that would crash-loop.
 
 ## Layer 2: cloud-managed settings
 
-Six namespaces arrive on the retained `config` topic and are persisted into
+Ten namespaces can arrive on the retained `config` topic and are persisted into
 `settings.json`. Each is REPLACE, never merge. Full semantics are on
-[Configuration sync](/device-sdk/cloud-contract/configuration).
+[Configuration sync](/device-sdk/cloud-contract/configuration). Three of them
+are not for every device: `cameraSensors`, `obd` and `simulation` are accepted
+only where they apply, and are never sent to a device where they do not.
 
 ### `gnssAntBias` (boolean)
 
@@ -149,10 +155,52 @@ applied with confirm-and-rollback. The value must match
 `^[A-Za-z0-9.-]{0,100}$`, and an invalid one is **dropped rather than repaired**:
 a wrong APN can strand a device.
 
+### `cameraMount`
+
+`{ cameras: { <streamKey>: { rotationDeg } } }`, where `rotationDeg` is `0` or
+`180`. How each camera is mounted: `180` means upside down, and the picture is
+turned back at the sensor. A camera with no key is left as the device found it.
+Takes effect at the **next boot**: the agent prepares the change, reports that
+a reboot is required, and never reboots the device itself. Which sensors can be
+rotated is on [Cameras](/device-sdk/cameras#a-camera-mounted-upside-down).
+
+### `cameraSensors`
+
+`{ cameras: { <streamKey>: { sensor, options? } } }`. Which image sensor is
+attached to each camera port. **Rust agent 0.2.0 or newer only**; the platform
+refuses it for any other device.
+
+| Field     | Value                                                                                                                                                                                                                        |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sensor`  | One of the [supported sensors](/device-sdk/cameras#supported-sensors) (`imx290`, `imx219`, `imx708`, `imx335`), or `none` for a port with no camera.                                                                         |
+| `options` | Optional. That sensor's per-board parameters by key, each set to one of the values listed for it, for example `{ "clockFrequency": 74250000 }`. An option left out is taken as found on the device. Not allowed with `none`. |
+
+A port with no key is **not managed**: its camera line in
+`/boot/firmware/config.txt` is left exactly as found. `{ "cameras": {} }` is
+valid and means no port is managed. A key must be a camera port of the device's
+model.
+
+Takes effect at the **next boot**, like `cameraMount`. How to use it, what each
+sensor needs and what the device reports back are on
+[Cameras](/device-sdk/cameras).
+
+### `obd`
+
+The OBD-II adapter a device reads its vehicle through. Accepted only for a
+device whose model declares an OBD reader. Its fields are in the request schema
+of [`PATCH /devices/{id}/config`](/api-reference/devices/patch-device-config).
+
+### `simulation`
+
+Which scenario a [simulated device](/platform-concepts/simulated-devices#switching-scenario)
+replays. Accepted only for simulated devices.
+
 ## Layer 3: local `xorgate set`
 
-The [CLI reference](/device-sdk/cli#set) has the full key catalog. The
-important property is what happens afterwards.
+The [CLI reference](/device-sdk/cli#set) has the full key catalog. On a device
+that runs the Rust agent the CLI is `xorgate-rs`, and its `cameraSensors` keys
+are on [Cameras](/device-sdk/cameras#on-the-device). The important property is
+what happens afterwards.
 
 **Local edits are detected and reported upstream.** A fingerprint watcher over
 `settings.json` notices any change the config applier did not make, and publishes

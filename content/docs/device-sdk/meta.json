@@ -3,6 +3,8 @@
   "pages": [
     "index",
     "installation",
+    "cameras",
+    "camera-status",
     "cloud-contract",
     "media",
     "recording",

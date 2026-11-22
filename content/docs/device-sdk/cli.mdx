@@ -140,6 +140,12 @@ xorgate set recording.telemetry.rateHz 10
 xorgate set recording.video.cameras.cam1 off
 ```
 
+Camera sensors are not in this catalog. Which sensor sits on a camera port is
+set with the Rust agent's CLI, `xorgate-rs set cameraSensors.<streamKey>.sensor`,
+on a device that runs that agent: see
+[Cameras](/device-sdk/cameras#on-the-device). The `xorgate` CLI on this page
+belongs to the JS agent, whose devices use IMX290 cameras and have no such key.
+
 <Callout type="warn" title="`set media` was removed">
   The media master switch is gone. `xorgate set media` is kept as a tombstone
   that errors with a pointer to the replacement, because it lived in muscle

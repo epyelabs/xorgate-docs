@@ -119,6 +119,7 @@ path so a log line is useful on its own. It is not stable. Never branch on it.
 | `FORBIDDEN`                   | 403    | Not a member of the requested organization.                                                                                          |
 | `INSUFFICIENT_ROLE`           | 403    | A member, without the role this operation needs.                                                                                     |
 | `BAD_REQUEST`                 | 400    | Invalid body or query parameters.                                                                                                    |
+| `INVALID_CAMERAS`             | 400    | A device registration's `cameras` names an unknown sensor or option, or was sent with a JS registration.                             |
 | `NOT_FOUND`                   | 404    | No such resource, **or** it belongs to another organization.                                                                         |
 | `METHOD_NOT_ALLOWED`          | 405    | The path exists, not with this method. Carries an `Allow` header.                                                                    |
 | `CONFLICT`                    | 409    | The resource refuses this operation in its current state.                                                                            |

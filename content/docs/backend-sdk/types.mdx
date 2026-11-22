@@ -161,6 +161,10 @@ interface DeviceConfig {
   lteRecovery?: LteRecoveryConfig
   timeSync?: TimeSyncConfig
   cellular?: CellularConfig
+  cameraMount?: CameraMountConfig
+  simulation?: SimulationConfig
+  obd?: ObdConfig
+  cameraSensors?: CameraSensorsConfig
 }
 
 type DeviceConfigPatch = {
@@ -209,8 +213,39 @@ interface DeviceReportedConfig {
 
 `effective` is typed loosely on purpose: it mixes config namespaces with
 **reported-only** blocks that are not config at all (`agent.mode`, `sim`,
-`uplink`, `apn`), and an absent block means unknown rather than absent hardware.
-Typing it strictly would assert a shape the device does not promise.
+`uplink`, `apn`, `cameras`), and an absent block means unknown rather than
+absent hardware. Typing it strictly would assert a shape the device does not
+promise.
+
+{/* TODO(sdk-version): confirm the `@xorgate/sdk` release number below once the release that carries the camera types is published. */}
+
+One block is typed, from `@xorgate/sdk` 0.18.0: `effective.cameras`, the
+device's report on each camera port.
+
+```ts
+type DeviceReportedCameras = Record<string, DeviceReportedCamera> // by stream key
+
+interface DeviceReportedCamera {
+  connector: string
+  declared: { sensor: string; source: CameraDeclaredSource } | null
+  bootConfig: { overlay: string | null; line: string | null; lines: number } | null
+  bound: {
+    driver: boolean | null
+    node: string | null
+    listed: string | null
+    path: string | null
+    identity: CameraIdentity | null
+  }
+  capture: { state: CameraCaptureState; backoffStep: number; lastError: string | null }
+  verdict: CameraVerdict
+  detail: string
+}
+```
+
+`CameraVerdict`, `CameraCaptureState` and `CameraDeclaredSource` are open
+unions: a newer agent can send a word this SDK does not list, so a `switch`
+over them needs a default branch. What each field and verdict means is on
+[Camera status](/device-sdk/camera-status).
 
 There is no `pending` state on the wire. `devices.getConfig()` computes it as
 `configRev > reportedConfig.rev` on an online device.

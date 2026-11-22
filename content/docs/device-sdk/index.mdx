@@ -19,6 +19,14 @@ agent's own README and its code disagreed, the code won.
   is not.
 </Callout>
 
+<Callout title="There are two device agents, and these pages describe the JS one">
+  A device runs either the JS agent described here or the Rust agent
+  (`xorgate-rs`), depending on the registration code it was installed from.
+  [Cameras](/device-sdk/cameras) and [Camera status](/device-sdk/camera-status)
+  cover what only the Rust agent does: a camera sensor chosen per port. The
+  other pages of this section have not been rewritten for the Rust agent.
+</Callout>
+
 ## The two components
 
 | Component                     | Language               | Role                                                                                                                                            |
@@ -119,6 +127,11 @@ a bare checkout.
     title="Install and provisioning"
     href="/device-sdk/installation"
     description="The zero-touch claim flow, the stable serial, and the dev path."
+  />
+  <Card
+    title="Cameras"
+    href="/device-sdk/cameras"
+    description="Supported sensors, choosing one per port, mounting, and field of view."
   />
   <Card
     title="Cloud contract"

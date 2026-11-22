@@ -1,0 +1,204 @@
+---
+title: "Camera status"
+description: "What a device reports about each camera port, every verdict with what it means and what to do, and a checklist for a camera that does not appear."
+---
+
+When a camera does not show up, read what the device says about the port before
+you change anything. For each camera port the device reports what was declared,
+what its boot configuration says, what it found, whether frames arrive, one
+verdict word and one sentence written for a person.
+
+The report comes from the Rust agent, from version 0.2.0. A device on the JS
+agent does not send it. It is also absent when the device's model lists no
+camera ports, and on a simulated device.
+
+## Where to read it
+
+### In the console
+
+Open the device, then **Settings**, then **Media**. Each port of the **Camera
+sensors** card shows one state (**Working**, **Reboot required**, **No camera**
+and so on). For anything but a working or deliberately empty port it also shows
+the device's sentence, what was detected and whether frames arrive.
+
+### On the device
+
+```bash
+xorgate-rs status
+```
+
+The `video` line has one word per camera, and a port that is not healthy gets
+its sentence on the next line:
+
+```
+  video      cam0 reboot-required
+             cam0: The camera line of csi0 in config.txt was changed since this device booted (it booted with `dtoverlay=imx708,cam0,rotation=180`, the file now says `dtoverlay=imx708,cam0,link-frequency=447000000,rotation=180`). Reboot to apply.
+```
+
+A healthy camera reads `streaming` (or `recording` while it records to disk).
+
+### Through the API
+
+The report is `reportedConfig.effective.cameras` on the device, from
+[`GET /devices/{id}`](/api-reference/devices/get-device). It is reported only:
+you cannot write it. It arrives with the device's
+[configuration report](/device-sdk/cloud-contract/configuration#the-reported-document),
+after a boot, after a settings change, and when the state of a port changes.
+
+```ts
+const device = await xg.devices.get(deviceId)
+const cameras = device.reportedConfig?.effective.cameras ?? {}
+
+for (const [port, camera] of Object.entries(cameras)) {
+  console.log(port, camera.verdict, camera.detail)
+}
+```
+
+## The per-port report
+
+One entry per camera port of the device's model, keyed by stream key:
+
+```json
+{
+  "cam0": {
+    "connector": "csi0",
+    "declared": { "sensor": "imx708", "source": "config" },
+    "bootConfig": {
+      "overlay": "imx708",
+      "line": "dtoverlay=imx708,cam0,rotation=180",
+      "lines": 1
+    },
+    "bound": {
+      "driver": true,
+      "node": "imx708@1a",
+      "listed": "imx708",
+      "path": "/base/soc/i2c0mux/i2c@0/imx708@1a",
+      "identity": "chip-id"
+    },
+    "capture": { "state": "streaming", "backoffStep": 0, "lastError": null },
+    "verdict": "ok",
+    "detail": "imx708 on csi0 is detected and streaming."
+  }
+}
+```
+
+| Field                 | What it says                                                                                                                                                                                                                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connector`           | The port's connector, `csi0` or `csi1`.                                                                                                                                                                                                                                                             |
+| `declared.sensor`     | The sensor the device takes as declared for the port. `declared` is `null` when nothing declares one.                                                                                                                                                                                               |
+| `declared.source`     | Where that came from: `config` is the [sensor setting](/device-sdk/cameras#declare-a-sensor); `boot-config` is the port's line in `config.txt`, on a port that is [not managed](/device-sdk/cameras#a-port-that-is-not-managed); `model` is the device model's default sensor, when neither exists. |
+| `bootConfig.line`     | The port's camera line in `/boot/firmware/config.txt`, verbatim. This is where an option taken [as found](/device-sdk/cameras#options) shows its value. `bootConfig` is `null` when the file could not be read.                                                                                     |
+| `bootConfig.overlay`  | The sensor that line names.                                                                                                                                                                                                                                                                         |
+| `bootConfig.lines`    | How many camera lines target the port. More than one is a fault; `line` is then the last of them.                                                                                                                                                                                                   |
+| `bound.driver`        | Whether a kernel driver bound to the sensor on the port. `null` means unknown.                                                                                                                                                                                                                      |
+| `bound.node`          | The sensor's device-tree node, for example `imx708@1a`.                                                                                                                                                                                                                                             |
+| `bound.listed`        | The name libcamera lists for the camera, for example `imx708_wide`. `null` means no camera is listed.                                                                                                                                                                                               |
+| `bound.path`          | libcamera's id of the camera. This is the `camera-name` a [pipeline](/device-sdk/extending#gstreamer-pipelines) uses.                                                                                                                                                                               |
+| `bound.identity`      | How far a bound driver proves the sensor type: `chip-id` (the driver checked the chip: IMX219, IMX708), `weak` (IMX335) or `none` (IMX290: the driver binds to anything).                                                                                                                           |
+| `capture.state`       | `streaming`, `starting`, `failing`, `absent` (no capture is run because the port has no camera) or `off` (none by choice: the camera is switched off, or video is off).                                                                                                                             |
+| `capture.backoffStep` | How far the capture is into its retry ladder. `0` when it is not failing.                                                                                                                                                                                                                           |
+| `capture.lastError`   | The last error line of the capture process, cut at 240 characters.                                                                                                                                                                                                                                  |
+| `verdict`             | One word, from the table below.                                                                                                                                                                                                                                                                     |
+| `detail`              | The device's sentence about the port. Show it beside the verdict: it is the explanation.                                                                                                                                                                                                            |
+
+The block is written by the device and passed through as sent. Read it
+tolerantly: a newer agent can add a verdict, a state or a field.
+
+## Verdicts
+
+| Verdict                | What it means                                                                                                                                                                                                               | What to do                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ok`                   | The port works as declared.                                                                                                                                                                                                 | Nothing. If the sentence ends by saying the video preset cannot run on this sensor, choose another preset.                                                               |
+| `reboot-required`      | The port's line in `config.txt` is not the one the device booted with. A sensor, option or mounting change is waiting, or the file was edited by hand.                                                                      | Reboot the device.                                                                                                                                                       |
+| `not-detected`         | A sensor is declared and none answered as that sensor. Either no driver bound, or one bound and libcamera lists no camera. No capture is started on the port.                                                               | Check the ribbon cable, and that the declared sensor is the one attached. Correct it, then reboot.                                                                       |
+| `no-frames`            | A camera is listed and its capture keeps failing.                                                                                                                                                                           | Read `capture.lastError`. With `imx290` declared, the camera on the port may be a different sensor, since that driver cannot check. Check the declaration and the cable. |
+| `mismatch`             | What is on the port is not what is declared. On a managed port the line still names another sensor because the setting could not be applied. On a port that is not managed, the camera found is not the one the line names. | Read [the setting's status](#the-settings-own-status) for the reason. On a port that is not managed, declare the sensor: that leaves exactly one line for the port.      |
+| `empty`                | No camera is configured on the port: it is declared `none`, or it has no camera line.                                                                                                                                       | Nothing if the port is unused. Otherwise declare its sensor.                                                                                                             |
+| `requirements-missing` | The declared sensor needs OS packages, in versions the sentence names, that are not installed. The camera will not appear until they are.                                                                                   | [Install them](/device-sdk/cameras#imx335-arducam). If the sentence also says the camera line waits for a reboot, reboot afterwards.                                     |
+| `unknown-sensor`       | The declared sensor is not one this agent build knows. The line in `config.txt` is left as it is.                                                                                                                           | Update the agent, or choose another sensor.                                                                                                                              |
+| `unchecked`            | The agent cannot judge the port: it cannot list cameras on this device, or the port runs a pipeline the agent does not supervise.                                                                                           | Follow the sentence. When cameras cannot be listed, it asks you to install `rpicam-apps` and restart the agent.                                                          |
+
+When a port has both a real fault and a change that waits for a reboot, the
+fault is the verdict and the sentence adds that the line also waits for a
+reboot.
+
+## The setting's own status
+
+The sensor setting has a status of its own, at
+`reportedConfig.status.cameraSensors`, like every
+[configuration namespace](/device-sdk/cloud-contract/configuration#the-reported-document).
+It answers a different question from the verdict: not "does the camera work"
+but "did the device do what the setting asked".
+
+| `state`    | Meaning                                                                                                                                                                                                              |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `applied`  | Every managed port's line is as declared, and the device has booted with it.                                                                                                                                         |
+| `adjusted` | The setting is on its way. `detail` reads "saved; the device has not reconciled its boot config yet" right after a save, then "written to the boot config — REBOOT REQUIRED to apply: cam0 imx708" until the reboot. |
+| `rejected` | At least one port could not be set up as declared. `reason` has one sentence per such port, each starting with its stream key. The other ports are still applied.                                                    |
+
+Read `detail` for `adjusted` and `reason` for `rejected`; each state fills only
+its own field.
+
+<Callout title="`applied` is about the boot configuration, not about the camera">
+  A wrong declaration still ends `applied`: the device did set the port up for
+  the sensor you named, and booted with it. That the sensor is not there is the
+  port's verdict, `not-detected` or `no-frames`. Read both.
+</Callout>
+
+## My camera does not appear
+
+Work down the list. Each entry starts with what the device reports.
+
+**Nothing is reported for the port at all.** The device runs the JS agent, a
+Rust agent older than 0.2.0, or its model does not list the port. See
+[Devices that cannot choose a sensor](/device-sdk/cameras#devices-that-cannot-choose-a-sensor).
+
+**`reboot-required`.** The change is prepared and waiting. Reboot the device:
+the device never does it itself.
+
+**`not-detected`, or `no-frames` with `imx290` declared.** The declared sensor
+is not what is on the port, or the cable is the problem. A wrong declaration
+reads like this after the reboot:
+
+> csi0 is set to imx219, but no imx219 answered on this port (the kernel driver
+> did not bind). Check the ribbon cable and the selected sensor.
+
+Which of the two verdicts you get depends on the sensor you declared, not on
+the mistake: the IMX219 and IMX708 drivers check the chip and refuse a wrong
+one, while the IMX290 driver accepts anything and the camera then delivers no
+frames. A cable that is reversed or not seated reads exactly like an empty
+port. Fix the declaration or the cable, then reboot.
+
+**`requirements-missing`.** The sensor needs OS packages the device does not
+have. Today that is the IMX335: [install its two packages](/device-sdk/cameras#imx335-arducam).
+
+**The setting's status is `rejected`.** The device would not change the port's
+line, so the port still runs whatever the old line brings up. The reason is in
+`status.cameraSensors.reason`:
+
+- _"…holds "4lane", which the sensor catalog does not list…"_ The line has a
+  parameter someone wrote by hand, and the agent will not drop it. Remove it
+  from the line, or make the change in the line yourself. See
+  [A line you wrote by hand](/device-sdk/cameras#a-line-you-wrote-by-hand).
+- _"…the xorgate-camcfg helper is not installed on this device yet…"_ The device
+  was updated once from an older agent. Run `sudo xorgate-rs update` a second
+  time; the change is then made without anything else from you.
+- _"…sits under [name], a section the agent cannot evaluate for this board…"_
+  The line is inside a conditional section of `config.txt`. The agent edits
+  lines outside any section, under `[all]`, and under the section of its own
+  board. Move the line, or edit it by hand.
+- _"…a dtparam= line follows the camera line…"_ Replacing the line would make
+  that `dtparam=` apply to another overlay. Move it into the `dtoverlay` line or
+  remove it, as the sentence says.
+
+**`empty` on a port that has a camera.** Nothing configures the port: it is not
+managed and `config.txt` has no camera line for it, or it was declared `none`.
+Declare its sensor.
+
+**`ok`, capture `off`.** The camera is switched off in the device's settings
+(`recording.video.cameras`), not missing.
+
+**`ok`, and video recording still does not start.** If the port's sentence ends
+by saying the video preset cannot run on this sensor, the preset is the cause.
+Today that is `1080p30-4mbps` on the IMX335: choose `1080p15-2mbps` or a 720p
+preset.
