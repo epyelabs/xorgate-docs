@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Xorgate Core API",
-    "version": "0.18.0",
+    "version": "0.19.0",
     "description": "The REST API behind xorgate: organizations, workspaces, devices, device configuration,\nrecorded media, and stored telemetry.\n\n**Versioning.** Every path in this document is served under `/v1`, and that prefix is part\nof the path rather than of the host, so a base URL is a bare origin such as\n`https://api-dev.xorgate.io` and the operations below append `/v1/...` to it. There is no\nunversioned surface: a request without the prefix is a 404.\n\n**Authentication.** Every endpoint except `/health` and this document requires\n`Authorization: Bearer <credential>`, and there are three kinds, told apart by their prefix in\nthat one header. A Cognito **ID** token (not an access token) authenticates a person; a user\nrow is created on first successful verification. An **API key** from `POST /api-keys` (`xg_`)\nauthenticates a program and acts inside the organization it was minted from with its own\n`role`; it is a server-side credential and must never reach a browser. A **session token**\nfrom `POST /auth/session-tokens` (`xgs_`) is what a browser or a mobile app holds instead: your\nserver exchanges its key for one, it expires within the hour, it is never more privileged than\nthe key, and it can be confined to a single workspace.\n\nMost operations take any of the three. The exceptions are narrow and deliberate: eight\noperations accept only an ID token, because they describe or act on a person (the four `/me`\noperations, `GET`/`POST /organizations`, and the two live-access operations), and\n`POST /auth/session-tokens` accepts only an API key.\n\n**Tenancy.** Org-scoped endpoints resolve the active organization from the `X-Organization-Id`\nheader, falling back to your sole membership if you have exactly one. A caller in more than one\norganization who omits the header gets `400 ORGANIZATION_REQUIRED`, so clients should always\nsend it. An API key or session token needs no header at all: its organization is fixed by the\nrow behind it, and a header naming a different organization is `403 FORBIDDEN`.\n`X-Workspace-Id` narrows `GET /devices` and is required by `POST /device-registrations`.\n\n**Workspaces are a filter, with one exception.** For a person or an API key, every workspace in\nthe organization is visible and `X-Workspace-Id` merely narrows a list. For a session token\nminted with a `workspaceId` it is an enforced BOUNDARY: device reads and writes are confined to\nthat workspace, a contradicting `X-Workspace-Id` is `403 WORKSPACE_MISMATCH`, and\norganization-wide operations (memberships, API keys, organization settings, workspace writes)\nare `403 WORKSPACE_SCOPED` whatever role the token carries. That is how a consumer running its\nown multi-tenancy maps its customers onto workspaces and hands each one a credential that\ncannot reach the others.\n\n**Envelopes.** Responses are always a named object, never a bare array: `{devices, page}`,\n`{device}`, `{organizations}`. Fields are camelCase; three envelope KEYS are snake_case\n(`api_keys`, `api_key`/`plaintext_key`, `device_model`/`device_models`) because they mirror\ntheir Postgres table names, and that stays as-is on the wire. DELETE returns `204` with an\nempty body, device commands return `202`, and errors are uniformly\n`{\"error\": {\"code\", \"message\", \"details?\"}}`.\n\n**Pagination.** Only `GET /devices`, `GET /devices/{id}/sessions`,\n`GET /devices/{id}/telemetry/readings`, `GET /devices/{id}/telemetry/sessions` and\n`GET /workflow-templates`, `GET /webhooks` and `GET /webhooks/{id}/deliveries` paginate; they accept\n`limit`/`offset`/`order`/`sort`\nand return a `page` block. Every other list endpoint returns its whole collection unbounded:\norganizations, memberships, workspaces, device models, API keys, video channels, the\nworkflow-template tag vocabulary, and a session\nsegment index `GET /devices/{id}/telemetry` is not a list endpoint either. It caps rows and\nreports `truncated`.\n\n**The live plane.** Live telemetry and live video do not flow through this API: they are\nstreaming protocols the client speaks directly, entered with a signed connection rather than\nwith a bearer token. `POST /auth/live-credentials` is what signs it, and any of the three\ncredentials may call it. What comes back is confined to the same tenant the calling credential\nis: a credential vended for a workspace receives that workspace's devices and is refused a\nsibling workspace's, on both planes and by the credential itself. Treat the response as\nopaque. The two operations in the Live section are the first-party dashboard's own path and\nare not part of a third-party integration.\n\n**What is not here.** The Workflows and AI surface is deliberately undocumented while it is\nstill moving. The three exceptions are the workflow-template READS below, which exist because\na program discovers templates by tag and acts on them; authoring a template, publishing it,\nattaching it to a device and reading its runs are all still editor-side and undocumented."
   },
   "servers": [
@@ -1771,7 +1771,8 @@
           "workspaceId",
           "deviceModelId",
           "serial",
-          "status"
+          "status",
+          "agent"
         ],
         "properties": {
           "id": {
@@ -1803,6 +1804,14 @@
             "nullable": true,
             "deprecated": true,
             "description": "DEPRECATED alias for agentVersion; removed once clients migrate."
+          },
+          "agent": {
+            "type": "string",
+            "enum": [
+              "js",
+              "rust"
+            ],
+            "description": "Which device agent the device runs. Set from its registration at claim, then promoted to `rust` (never demoted) when the device reports `effective.agent.runtime: \"rust\"`. Compare `agentVersion` against `GET /device-dist/latest?agent=<this>`. Read-only."
           },
           "status": {
             "type": "string",
@@ -2403,6 +2412,41 @@
         "additionalProperties": false,
         "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` says how the tracker device (not the adapter) is powered, which selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`."
       },
+      "CameraSensorsConfig": {
+        "type": "object",
+        "properties": {
+          "cameras": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "sensor": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9]{1,31}$",
+                  "description": "The image sensor on this port: an id of the camera catalog (camera-catalog.json, `sensors[].id`), or \"none\" for a port declared empty. The catalog, not this schema, is the list of valid ids, so that adding a sensor does not change the config contract. An id the catalog does not list is a 400 naming the ones it does."
+                },
+                "options": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "description": "Per-board overlay parameters of the chosen sensor, by the option keys the catalog lists for it (`sensors[].options[].key`), each set to one of that option's `values`. An option left out uses the overlay default. Not allowed with \"sensor\": \"none\"."
+                }
+              },
+              "required": [
+                "sensor"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Per-port sensor declaration keyed by stream key, e.g. {\"cam0\": {\"sensor\": \"imx708\"}, \"cam1\": {\"sensor\": \"none\"}}. An ABSENT key is UNMANAGED: the device leaves that port's camera line in /boot/firmware/config.txt exactly as it found it. A key must be a camera port the device's model declares. Takes effect on the next boot: the device reports that a reboot is required and never reboots itself."
+          }
+        },
+        "required": [
+          "cameras"
+        ],
+        "additionalProperties": false,
+        "description": "Camera sensor per port (`cameraSensors` namespace): which image sensor is attached to each camera port of this device, keyed by stream key. `sensor` is an id of the camera catalog or \"none\" for an empty port; `options` are that sensor's per-board overlay parameters. The agent makes the port's `dtoverlay=` line in /boot/firmware/config.txt match. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports that a reboot is required; it never reboots the device itself. An absent port key is unmanaged (the line is left as found). Accepted only for a real (not simulated) device running the Rust agent that either has not reported yet or advertises the `camera.sensors` capability; otherwise a 400 naming the agent version needed. Replaced WHOLE on write, so send every port you want to keep managed."
+      },
       "DeviceConfig": {
         "type": "object",
         "additionalProperties": false,
@@ -2468,6 +2512,13 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/ObdConfig"
+              }
+            ]
+          },
+          "cameraSensors": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CameraSensorsConfig"
               }
             ]
           }
@@ -2548,6 +2599,38 @@
           }
         }
       },
+      "DeviceRegistrationCameras": {
+        "type": "object",
+        "description": "A camera sensor per port, keyed by stream key (`cam0`, `cam1`): the `cameras` map of the `cameraSensors` config namespace (see `CameraSensorsConfig`), validated by the same rules. `sensor` is an id of the camera catalog or \"none\" for an empty port; `options` are that sensor's per-board overlay parameters.",
+        "additionalProperties": {
+          "type": "object",
+          "required": [
+            "sensor"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "sensor": {
+              "type": "string",
+              "description": "A camera catalog sensor id, or \"none\" for a port with no camera."
+            },
+            "options": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              },
+              "description": "Option values by the keys the catalog lists for the sensor. Not allowed with \"none\"."
+            }
+          }
+        },
+        "example": {
+          "cam0": {
+            "sensor": "imx708"
+          },
+          "cam1": {
+            "sensor": "none"
+          }
+        }
+      },
       "DeviceRegistration": {
         "type": "object",
         "required": [
@@ -2555,7 +2638,8 @@
           "status",
           "deviceId",
           "expiresAt",
-          "installUrl"
+          "installUrl",
+          "agent"
         ],
         "description": "A short-lived onboarding code. The operator runs `installUrl` on the device; the install script claims the code, which creates the device row and provisions its IoT identity.",
         "properties": {
@@ -2587,6 +2671,23 @@
             "type": "string",
             "format": "uri",
             "description": "The one-liner target: `<api base>/get/{code}`, which serves the install script. That route is internal to the installer and is not part of the public API."
+          },
+          "agent": {
+            "type": "string",
+            "enum": [
+              "js",
+              "rust"
+            ],
+            "description": "Which device agent `installUrl` installs."
+          },
+          "cameras": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeviceRegistrationCameras"
+              }
+            ],
+            "nullable": true,
+            "description": "Present on `rust` registrations only; a `js` registration has no such key. The camera sensor chosen per port, which the claim stores as the new device's `cameraSensors` config namespace when the installer declares the `camera.sensors` capability. null = no choice was made: the device starts on its model's own sensors. The claim does not change this field, so it shows what was chosen, not what was applied."
           }
         }
       },
@@ -2707,6 +2808,11 @@
             "format": "date-time",
             "nullable": true,
             "description": "Server-side arrival time of the most recent segment (upload can lag recording)."
+          },
+          "clockCorrectionMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Clock-step correction: the cumulative forward shift (ms) the server applied to this session's segments because the device recorded them on a stale boot clock (no RTC) that NTP/GPS/NITZ later stepped. startedAt/endedAt and the segment startTs values are already corrected. NULL = never corrected."
           },
           "createdAt": {
             "type": "string",
@@ -2952,6 +3058,11 @@
                   "type": "integer",
                   "nullable": true
                 },
+                "clockCorrectionMs": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Cumulative forward shift (ms) applied to this session for a device clock step (see `MediaSession.clockCorrectionMs`); the timeline is already corrected. NULL = never corrected; absent from servers older than 0.19.0."
+                },
                 "segments": {
                   "type": "array",
                   "description": "Ordered by startTs. Segment i covers [startTs, startTs + effectiveDurationMs).",
@@ -2974,7 +3085,7 @@
                       },
                       "effectiveDurationMs": {
                         "type": "integer",
-                        "description": "Next-segment startTs delta when contiguous, else the recorded durationMs. Deltas beat durations (rotation timestamps are accurate; durations drift)."
+                        "description": "Next-segment startTs delta when contiguous, else the recorded durationMs. Deltas beat durations (rotation timestamps are accurate; durations drift). A recorded durationMs is capped at the nominal segment length + 10 s, so a segment inflated by an uncorrected device clock step never bridges the step (the remainder becomes a missing-segments gap)."
                       },
                       "finalized": {
                         "type": "boolean",
@@ -3747,6 +3858,11 @@
             "type": "integer",
             "nullable": true,
             "description": "Gzipped size of the overview; `null` until built or backfilled."
+          },
+          "clockCorrectionMs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Clock-step correction: the cumulative forward shift (ms) the server applied to samples the device stamped on a stale boot clock (no RTC) before NTP/GPS/NITZ stepped it. `from`/`to` and the stored samples are already corrected. `null` = never corrected."
           },
           "insights": {
             "nullable": true,
@@ -8017,6 +8133,15 @@
                     ],
                     "nullable": true,
                     "description": "Vehicle OBD-II adapter settings (`obd` namespace). Accepted only for devices whose model declares `peripherals.obd` (400 otherwise). Every field is optional and an omitted field falls back to the device default, but the namespace is replaced WHOLE on write (send the fields you want to keep). `adapterMac` names the ELM327 Bluetooth adapter the device pairs with (stored uppercase; the device never pairs by name), `enabled` is the polling kill switch, `fields` narrows the polled set below the model's declared list (empty = all), and `powerSource` says how the tracker device (not the adapter) is powered, which selects the battery policy. Applied live by the agent's OBD collector on its settings poll and on every cloud config message; a changed adapter restarts the helper. Pairing outcome, probe profile and scan candidates come back in the config report under `effective.obd`. Apply class: `agent-poll`. null reverts to device defaults."
+                  },
+                  "cameraSensors": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/CameraSensorsConfig"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Camera sensor per port (`cameraSensors` namespace): which image sensor is attached to each camera port of this device, keyed by stream key. `sensor` is an id of the camera catalog or \"none\" for an empty port; `options` are that sensor's per-board overlay parameters. The agent makes the port's `dtoverlay=` line in /boot/firmware/config.txt match. ⚠️ Applies on the NEXT BOOT: the agent edits the boot config and reports that a reboot is required; it never reboots the device itself. An absent port key is unmanaged (the line is left as found). Accepted only for a real (not simulated) device running the Rust agent that either has not reported yet or advertises the `camera.sensors` capability; otherwise a 400 naming the agent version needed. Replaced WHOLE on write, so send every port you want to keep managed. Apply class: `agent-poll`. null reverts to device defaults."
                   }
                 }
               }
@@ -9276,58 +9401,151 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/OrganizationIdHeader"
+        },
+        {
+          "name": "agent",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "js",
+              "rust"
+            ]
+          },
+          "description": "Select one agent's channel. WITH it the response is self-describing (`{agent, latest | null, registrationEnabled}`, always 200 for a readable or missing manifest). WITHOUT it the response is the historical `{latest}` for the JS agent, with 404 when unpublished. A backend that predates this parameter ignores it and answers in the historical shape, which carries no `agent`: read that as \"this API does not support the Rust agent\"."
+        },
+        {
+          "name": "X-Workspace-Id",
+          "in": "header",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "With `?agent=`: the workspace `registrationEnabled` is evaluated for. Without it, Rust registration counts as enabled only when the stage enables it everywhere."
         }
       ],
       "get": {
         "operationId": "getLatestAgentBuild",
         "summary": "The newest published device-agent build",
-        "description": "Returns the manifest the device-agent CI publishes alongside the `latest` tarball alias, which is exactly what a device update would install for this stage. Fleet-wide, not per-device. Compare `version` against a device's reported build (`agentVersion`) by STRING EQUALITY only: shas do not order, and a dev sha and a prod release tag are not comparable. 404 means CI has not published a manifest for this stage yet, which is \"latest unknown\" rather than an error.",
+        "description": "Returns the manifest the device-agent CI publishes alongside the `latest` tarball alias, which is exactly what a device update would install for this stage. Fleet-wide, not per-device. Compare `version` against a device's reported build (`agentVersion`) by STRING EQUALITY only: shas do not order, and a dev sha and a prod release tag are not comparable. 404 means CI has not published a manifest for this stage yet, which is \"latest unknown\" rather than an error. Pass `?agent=js|rust` for one agent's channel (the Rust agent has its own manifest); compare a device against the channel of its own `agent`.",
         "tags": [
           "Devices"
         ],
         "responses": {
           "200": {
-            "description": "The latest published build.",
+            "description": "The latest published build. Without `agent`: `{latest}` (the JS agent). With `agent`: `{agent, latest | null, registrationEnabled}`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "latest"
-                  ],
-                  "properties": {
-                    "latest": {
+                  "oneOf": [
+                    {
                       "type": "object",
+                      "title": "LatestAgentBuild",
                       "required": [
-                        "version"
+                        "latest"
                       ],
                       "properties": {
-                        "version": {
+                        "latest": {
+                          "type": "object",
+                          "required": [
+                            "version"
+                          ],
+                          "properties": {
+                            "version": {
+                              "type": "string",
+                              "example": "a1b2c3d"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "nullable": true,
+                              "example": "dev"
+                            },
+                            "builtAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "packageVersion": {
+                              "type": "string",
+                              "nullable": true,
+                              "example": "0.2.0"
+                            },
+                            "tarball": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "title": "AgentChannel",
+                      "required": [
+                        "agent",
+                        "latest",
+                        "registrationEnabled"
+                      ],
+                      "properties": {
+                        "agent": {
                           "type": "string",
-                          "example": "a1b2c3d"
+                          "enum": [
+                            "js",
+                            "rust"
+                          ]
                         },
-                        "channel": {
-                          "type": "string",
+                        "latest": {
+                          "type": "object",
+                          "required": [
+                            "version"
+                          ],
+                          "properties": {
+                            "version": {
+                              "type": "string",
+                              "example": "a1b2c3d"
+                            },
+                            "channel": {
+                              "type": "string",
+                              "nullable": true,
+                              "example": "dev"
+                            },
+                            "builtAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "packageVersion": {
+                              "type": "string",
+                              "nullable": true,
+                              "example": "0.2.0"
+                            },
+                            "tarball": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
                           "nullable": true,
-                          "example": "dev"
+                          "description": "null = no manifest is published for this agent on this stage."
                         },
-                        "builtAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "nullable": true
-                        },
-                        "packageVersion": {
-                          "type": "string",
-                          "nullable": true,
-                          "example": "0.2.0"
-                        },
-                        "tarball": {
-                          "type": "string",
-                          "nullable": true
+                        "registrationEnabled": {
+                          "type": "boolean",
+                          "description": "Whether `POST /device-registrations` accepts this agent here. Always true for `js`; for `rust`, the stage flag evaluated for `X-Workspace-Id`."
                         }
                       }
                     }
-                  }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An `agent` other than `js` or `rust` (`INVALID_AGENT`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -9339,7 +9557,14 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "$ref": "#/components/responses/NotFound"
+            "description": "Without `agent` only: no manifest is published for this stage yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
@@ -9379,7 +9604,7 @@
       "post": {
         "operationId": "createDeviceRegistration",
         "summary": "Mint a device registration code",
-        "description": "Starts onboarding: returns a short-lived code and the `installUrl` to run on the device. `X-Workspace-Id` is REQUIRED here (unlike on `GET /devices`, where it is a filter), because the code carries the workspace the future device will land in. Idempotent per workspace: while a pending, un-expired code exists it is returned again instead of minting a new one, so reloading a dialog does not burn codes. The device model defaults to the most recently created one, and a deployment with no device models is a 400 — but the default is only a FALLBACK: the claim maps the device's own hardware probe to a model row (probe-at-claim), unless `deviceModelId` is passed here to pin the model explicitly (the claim then skips the probe). Passing `deviceModelId` while a pending code exists re-pins that code's model in place. Note the success status is 200, not 201, even when a code is created.",
+        "description": "Starts onboarding: returns a short-lived code and the `installUrl` to run on the device. `X-Workspace-Id` is REQUIRED here (unlike on `GET /devices`, where it is a filter), because the code carries the workspace the future device will land in. Idempotent per workspace: while a pending, un-expired code exists it is returned again instead of minting a new one, so reloading a dialog does not burn codes. The device model defaults to the most recently created one, and a deployment with no device models is a 400 — but the default is only a FALLBACK: the claim maps the device's own hardware probe to a model row (probe-at-claim), unless `deviceModelId` is passed here to pin the model explicitly (the claim then skips the probe). Passing `deviceModelId` while a pending code exists re-pins that code's model in place. `agent` picks the installer the code serves (`js`, the default, or `rust`); a pending code is reused only for the SAME agent, so changing the agent mints a new code. `rust` is gated per stage, and optionally per workspace: while it is not enabled the request is a 409 `AGENT_NOT_ENABLED`. `cameras` (Rust registrations only) carries the camera sensor chosen per port; like the model pick it is re-pinned in place on a pending code. Note the success status is 200, not 201, even when a code is created.",
         "tags": [
           "Device Registrations"
         ],
@@ -9394,6 +9619,24 @@
                     "type": "string",
                     "format": "uuid",
                     "description": "Pin the device model explicitly instead of probe-at-claim mapping. Unknown ids are a 400."
+                  },
+                  "agent": {
+                    "type": "string",
+                    "enum": [
+                      "js",
+                      "rust"
+                    ],
+                    "default": "js",
+                    "description": "Which device agent the installer installs. Absent = `js`. Any other value is a 400 `INVALID_AGENT`; `rust` while this stage does not enable it for the workspace is a 409 `AGENT_NOT_ENABLED` (see `GET /device-dist/latest?agent=rust` `registrationEnabled`)."
+                  },
+                  "cameras": {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/DeviceRegistrationCameras"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Rust registrations only (`agent: \"rust\"`): the camera sensor on each port, which the claim stores as the new device's `cameraSensors` config namespace. A port left out starts on the device model's own sensor. Absent = leave a reused pending code's choice as it is; `null` or `{}` = clear it. Passing it while a pending code exists re-pins that code's choice in place. On a JS registration, and for a sensor or option the camera catalog does not list, it is a 400 `INVALID_CAMERAS`. A key the model resolved at claim does not declare is dropped at claim. The choice is applied only when the installer that claims the code declares the `camera.sensors` capability (Rust agent 0.2.0 or newer); an older installer leaves the device on its model's sensors, unmanaged."
                   }
                 }
               }
@@ -9412,7 +9655,14 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "description": "Bad request, including an unknown `agent` (`INVALID_AGENT`) or `deviceModelId`, and a `cameras` value that is not valid or not allowed (`INVALID_CAMERAS`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -9422,6 +9672,16 @@
           },
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "description": "`agent: \"rust\"` while Rust-agent registration is not enabled on this stage for this workspace (`AGENT_NOT_ENABLED`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -9477,7 +9737,7 @@
       "post": {
         "operationId": "claimDeviceRegistration",
         "summary": "Claim a registration code (internal, installer only)",
-        "description": "INTERNAL. Called unauthenticated by the install script running on the device. It flips the code to `claimed`, creates the device row, provisions its AWS IoT identity, and returns the certificate and PRIVATE KEY once. The body may carry a hardware probe (`dtModel` = /proc/device-tree/model, `cameras` = libcamera count, 0 = unknown) that picks the device model unless the registration pinned one; an ambiguous probe keeps the registration's model and flags the device `needsModel`. The response embeds the resolved model's device-facing `hardware` block (null for schemaVersion-1 models), which the installer writes to /etc/xorgate/hardware.json. Not part of the public API surface: treat the installer as the only client.",
+        "description": "INTERNAL. Called unauthenticated by the install script running on the device. It flips the code to `claimed`, creates the device row, provisions its AWS IoT identity, and returns the certificate and PRIVATE KEY once. The body may carry a hardware probe (`dtModel` = /proc/device-tree/model, `cameras` = libcamera count, 0 = unknown) that picks the device model unless the registration pinned one; an ambiguous probe keeps the registration's model and flags the device `needsModel`. The response embeds the resolved model's device-facing `hardware` block (null for schemaVersion-1 models), which the installer writes to /etc/xorgate/hardware.json. The body may also carry `capabilities`, a list of capability strings the installer and the agent it installs can act on (at most 32 items of at most 64 characters; anything else, and any string the backend does not know, is ignored and is never an error). For a Rust registration whose claim lists `camera.sensors`, the claim seeds the device's `cameraSensors` config namespace (per camera port of the resolved model: the registration's `cameras` choice, else the model's sensor) and returns it as `cameraSensors`. Without that string nothing is seeded or returned and the registration's `cameras` choice is not applied; a JS claim never stores or returns anything new. When the probe reports 0 cameras, the number of sensors the registration declares stands in as the count. Not part of the public API surface: treat the installer as the only client.",
         "tags": [
           "Device Registrations"
         ],
@@ -9511,7 +9771,7 @@
       "get": {
         "operationId": "getInstallScript",
         "summary": "Device install script (internal, installer only)",
-        "description": "INTERNAL. Serves the bash installer for a registration code as `text/x-shellscript`, unauthenticated. Invalid, used, or expired codes still return a runnable script that prints the reason and exits non-zero, so the operator sees the problem instead of bash silently doing nothing.",
+        "description": "INTERNAL. Serves the bash installer for a registration code as `text/x-shellscript`, unauthenticated. The registration's `agent` picks it: `js` gets the JS agent installer, `rust` a bootstrap that downloads, verifies and runs the Rust agent's own provisioner. Invalid, used, or expired codes still return a runnable script that prints the reason and exits non-zero, so the operator sees the problem instead of bash silently doing nothing.",
         "tags": [
           "Device Registrations"
         ],
@@ -9533,6 +9793,9 @@
           },
           "404": {
             "description": "Unknown code. Body is a failing shell script."
+          },
+          "409": {
+            "description": "A `rust` code while Rust-agent registration is not enabled here. Body is a failing shell script."
           },
           "410": {
             "description": "Code already used or expired. Body is a failing shell script."
