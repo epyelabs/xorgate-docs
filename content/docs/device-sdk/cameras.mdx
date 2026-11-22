@@ -1,0 +1,572 @@
+---
+title: "Cameras"
+description: "Which image sensors a device can carry, how to tell it which one sits on each port, how to mount a camera upside down, and what each sensor shows at each video preset."
+---
+
+A device does not find out by itself which image sensor is plugged into a camera
+port. You tell it, once per port, at registration or later. The device then sets
+itself up for that sensor, asks for one reboot, and reports what it really found
+on the port.
+
+<Callout type="warn" title="Needs the Rust device agent, 0.2.0 or newer">
+  Choosing a sensor works only on a device that runs the Rust agent
+  (`xorgate-rs`) at version 0.2.0 or newer. A device on the JS agent keeps
+  working exactly as before with IMX290 cameras and cannot choose a sensor. See
+  [Devices that cannot choose a sensor](#devices-that-cannot-choose-a-sensor)
+  for how to tell which agent a device runs.
+</Callout>
+
+## Supported sensors
+
+| Sensor                        | `sensor` value | Options          | Can be mounted upside down | Extra requirements                                                              |
+| ----------------------------- | -------------- | ---------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| Sony IMX290                   | `imx290`       | `clockFrequency` | yes                        | none                                                                            |
+| Sony IMX219                   | `imx219`       | none             | yes                        | none                                                                            |
+| Sony IMX708 (Camera Module 3) | `imx708`       | `linkFrequency`  | yes                        | none                                                                            |
+| Sony IMX335 (Arducam)         | `imx335`       | `linkFrequency`  | **no**                     | [two extra OS packages](#imx335-arducam); cannot run the `1080p30-4mbps` preset |
+
+A port with nothing plugged in is declared as `none`.
+
+All four need a device image based on Debian Bookworm. The Sony IMX662 is not
+supported yet: it needs a newer OS release.
+
+No API route serves this list. A request that names any other sensor is refused
+with a message that lists the known ones.
+
+## Ports
+
+A camera port has two names, and both appear in what the device reports:
+
+| Stream key | Connector | Carrier connector |
+| ---------- | --------- | ----------------- |
+| `cam0`     | `csi0`    | CAM0              |
+| `cam1`     | `csi1`    | CAM1              |
+
+The stream key is the one you use everywhere: in settings, in the API, in video
+channel names. Which ports a device has comes from its
+[device model](/platform-concepts/device-models#cameras-on-a-model-ports-and-a-default-sensor):
+a single-camera model has `cam0` only, and a setting for a port the model does
+not have is refused.
+
+The two ports are independent. One device can carry two different sensors, and
+each port has its own setting. How many cameras a device can power is a separate
+question, answered by its [power supply](/device-sdk/hardware#power-budget).
+
+<Callout title="A ribbon cable the wrong way round looks like an empty port">
+  The device cannot tell a cable that is reversed or not seated from a port with
+  nothing on it: in both cases nothing answers. If a port reads
+  [`not-detected`](/device-sdk/camera-status#verdicts), check the cable before
+  the settings.
+</Callout>
+
+## Declare a sensor
+
+There are four places to do it, and they all write the same setting, the
+`cameraSensors` configuration namespace. Whichever you use:
+
+- **A change needs a reboot.** The device prepares the change and reports that a
+  reboot is required. It never reboots itself.
+- **A wrong choice is reported after that reboot**, in a sentence that names the
+  port. Nothing checks your choice against the hardware before then.
+
+### At registration
+
+Pick the sensors while you mint the registration code, and the installer sets
+the device up for them. See
+[Choose the agent and the cameras](/device-sdk/installation#choose-the-agent-and-the-cameras).
+
+### In the console
+
+<Steps>
+
+<Step>
+
+Open the device, then **Settings**, then the **Media** tab. The **Camera
+sensors** card has one row per port.
+
+</Step>
+
+<Step>
+
+Choose the sensor for the port. The list has the four sensors, **No camera** for
+an empty port, and **Not managed** (see
+[A port that is not managed](#a-port-that-is-not-managed)). A sensor with options
+shows them beside it; leave an option at **As found on the device** unless you
+know your board needs another value.
+
+</Step>
+
+<Step>
+
+The card's badge reads **Applying…** for a few seconds, then the port reads
+**Reboot required** with the device's sentence under it.
+
+</Step>
+
+<Step>
+
+Press **Reboot Device** at the top of the page. The card refreshes by itself
+while the device restarts. A port that works reads **Working** beside the name
+of the sensor the device detected; anything else comes with a sentence that says
+what is wrong.
+
+</Step>
+
+</Steps>
+
+### Through the API
+
+The setting is one namespace of the device's
+[configuration document](/device-sdk/cloud-contract/configuration), written with
+[`PATCH /devices/{id}/config`](/api-reference/devices/patch-device-config). This
+example declares an IMX708 on `cam0` of a device whose port was set up for
+another sensor. `$API`, `$TOKEN` and `$ORG` are the shell variables the
+[Quickstart](/getting-started/quickstart) sets, and `$DEVICE` is the device's
+id:
+
+```bash
+curl -sS -X PATCH "$API/devices/$DEVICE/config" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG" \
+  -H "Content-Type: application/json" \
+  -d '{ "cameraSensors": { "cameras": { "cam0": { "sensor": "imx708" } } } }'
+```
+
+The answer is the whole device. The part that matters here:
+
+```json
+{
+  "device": {
+    "configRev": 28,
+    "config": {
+      "cameraSensors": { "cameras": { "cam0": { "sensor": "imx708" } } }
+    }
+  }
+}
+```
+
+<Callout type="warn" title="The namespace is replaced whole">
+  Send every port you want to keep. A port you leave out goes back to
+  [not managed](#a-port-that-is-not-managed). `{ "cameraSensors": null }` does
+  that for every port at once.
+</Callout>
+
+A `200` means the setting was stored and sent, not that a camera works. A few
+seconds later, read the device back with
+[`GET /devices/{id}`](/api-reference/devices/get-device) and look at
+`reportedConfig`:
+
+```json
+{
+  "status": {
+    "cameraSensors": {
+      "state": "adjusted",
+      "detail": "written to the boot config — REBOOT REQUIRED to apply: cam0 imx708"
+    }
+  },
+  "effective": {
+    "cameraSensors": {
+      "cameras": { "cam0": { "sensor": "imx708" } },
+      "rebootRequired": true
+    },
+    "cameras": {
+      "cam0": {
+        "verdict": "reboot-required",
+        "detail": "The camera line of csi0 in config.txt was changed since this device booted (it booted with `dtoverlay=imx219,cam0,rotation=180`, the file now says `dtoverlay=imx708,cam0,rotation=180`). Reboot to apply."
+      }
+    }
+  }
+}
+```
+
+Reboot it with
+[`POST /devices/{id}/reboot`](/api-reference/devices/reboot-device), wait for it
+to come back, and read again:
+
+```json
+{
+  "status": { "cameraSensors": { "state": "applied" } },
+  "effective": {
+    "cameraSensors": {
+      "cameras": { "cam0": { "sensor": "imx708" } },
+      "rebootRequired": false
+    },
+    "cameras": {
+      "cam0": {
+        "verdict": "ok",
+        "detail": "imx708 on csi0 is detected and streaming."
+      }
+    }
+  }
+}
+```
+
+Both blocks are trimmed. [Camera status](/device-sdk/camera-status) has every
+field of `effective.cameras` and what to do about each verdict.
+
+With the [backend SDK](/backend-sdk/resources/devices#camera-sensors) the same
+three calls are `patchConfig()`, `get()` and `reboot()`.
+
+A request the platform cannot accept is a `400` with code `BAD_REQUEST` and a
+message written for a person. The ones you are likely to meet:
+
+| You sent                                          | The message says                                                                                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A sensor that is not in the table                 | `cameraSensors.cameras.cam0.sensor: "imx999" is not a known camera sensor (known: imx290, imx219, imx708, imx335); or "none" for a port with no camera` |
+| A port the device's model does not have           | `cameraSensors.cameras.cam2: this device's model has no camera port "cam2" (its camera ports: cam0, cam1)`                                              |
+| An option value outside the sensor's list         | `cameraSensors.cameras.cam1.options.clockFrequency: must be one of 37125000, 74250000 Hz (got 24000000)`                                                |
+| `options` together with `"sensor": "none"`        | `cameraSensors.cameras.cam1.options: a port declared empty ("sensor": "none") takes no options: remove "options"`                                       |
+| Anything, to a device that cannot choose a sensor | see [Devices that cannot choose a sensor](#devices-that-cannot-choose-a-sensor)                                                                         |
+
+Match on the code and show the message. The wording can change.
+
+### On the device
+
+The Rust agent's CLI writes the same setting, and the device sends the change up
+to the platform, so the console and the API show it afterwards.
+
+```bash
+xorgate-rs set cameraSensors.cam0.sensor imx708
+xorgate-rs set cameraSensors.cam1.sensor none        # the port is empty
+xorgate-rs set cameraSensors.cam1.sensor unmanaged   # stop managing the port
+```
+
+```
+✓ cameraSensors.cam0.sensor = imx708 (persisted to settings.json)
+  the agent makes the camera line in /boot/firmware/config.txt match within ~a minute;
+  a REBOOT may then be required before the camera changes (the agent never reboots itself): `xorgate-rs status` says so.
+```
+
+Options are set one at a time, after the sensor. `default` takes an option out of
+the setting again:
+
+```bash
+xorgate-rs set cameraSensors.cam1.options.clockFrequency 74250000
+xorgate-rs set cameraSensors.cam1.options.clockFrequency default
+```
+
+`xorgate-rs status` then says whether the port waits for a reboot
+([Camera status](/device-sdk/camera-status#on-the-device)). Reboot the device
+if it does.
+
+## What the device does with a declaration
+
+A camera on a Compute Module is switched on by one line per port in
+`/boot/firmware/config.txt`, of the form `dtoverlay=imx708,cam0,…`. For a port
+with a setting, the agent owns that line: it makes the line match the declared
+sensor, and removes it for a port declared `none`. You do not edit the file.
+
+What to expect, as measured on bench devices:
+
+- **Declaring the sensor the port is already set up for changes nothing.** The
+  file is not touched, no reboot is asked for, and the setting reads `applied`
+  at once. Bringing an existing device under management is free when you declare
+  what it already carries.
+- **A real change is quick.** The file was rewritten about a second after the
+  save, and the device's report was readable through the API three to five
+  seconds after it.
+- **Nothing but camera settings in the file changes:** the port's line, and
+  `camera_auto_detect`, which is switched off if it was on. The first time the
+  agent edits the file it keeps one copy of the original beside it, as
+  `config.txt.bak-camcfg`.
+- **The running camera is left alone** until the reboot.
+
+### A port that is not managed
+
+A port with no entry in the setting is **not managed**: the device leaves its
+line in `config.txt` exactly as it found it, and uses whatever camera that line
+brings up.
+
+- Every device registered before this feature is in that state on every port,
+  and stays there until someone saves a sensor for it. Updating its agent
+  changes nothing by itself.
+- A device registered with the Rust agent 0.2.0 or newer starts with the ports
+  of its model managed: each gets the sensor you chose or, where you chose
+  none, the model's default sensor.
+- Taking a port back to not managed (**Not managed** in the console, leaving the
+  port out of the API body, `unmanaged` in the CLI) also leaves the line as it
+  is. It does not restore an earlier one.
+
+A port that is not managed still appears in the
+[per-port report](/device-sdk/camera-status), so you can see what is on it
+before you decide.
+
+### Options
+
+Options are per-board details the sensor cannot report itself, such as the
+frequency of the crystal on an IMX290 board. Each sensor's options and values
+are in the [per-sensor notes](#per-sensor-notes).
+
+An option you do not name is taken **as found**: the device keeps whatever the
+port's line already says, and the overlay's default if the line says nothing. An
+option you name is enforced, the default value included. Two consequences:
+
+- Removing an option from the setting does not change the device. To go back to
+  the default, name the default.
+- For an option taken as found, the value in force is not in the setting. It is
+  in the port's line, which the device reports as
+  [`bootConfig.line`](/device-sdk/camera-status#the-per-port-report).
+
+### A line you wrote by hand
+
+If a port's line holds a parameter the platform does not know for that sensor,
+the agent will not rewrite the line, because that would silently drop your
+parameter. Declaring the same sensor still works and reads `applied`. A change
+that needs the line rewritten, such as naming an option, is refused, and the
+setting's status names the parameter:
+
+> cam0: the camera line for cam0 holds "4lane", which the sensor catalog does
+> not list for imx290: rewriting the line would drop it, so the line is left as
+> it is. Edit the line by hand, or remove "4lane" from it
+
+Two things still go through: a [mounting](#a-camera-mounted-upside-down) change,
+which only touches the rotation and keeps your parameter, and choosing a
+different sensor, which replaces the whole line.
+
+## A camera mounted upside down
+
+If a camera is fitted upside down, say so, and the device turns the picture back
+at the sensor. Live view, recordings and replays are all corrected at once, and
+it costs the device no processing.
+
+- **Console:** Settings, Media, **Camera mounting**, the switch "Camera `cam0` is
+  mounted upside down".
+- **API:** the `cameraMount` namespace, in the same `PATCH` as any other setting:
+
+  ```json
+  { "cameraMount": { "cameras": { "cam0": { "rotationDeg": 180 } } } }
+  ```
+
+  `rotationDeg` is `0` or `180`. There is no 90 or 270.
+
+Like a sensor change, it takes effect at the next boot, and the device reports
+that a reboot is required.
+
+The mounting setting needs a camera on the port to read the rotation in force.
+When none answers, because of a wrong sensor choice for example, its status
+says so instead of asking for a reboot that would not help:
+
+> no camera answers on cam0, so the rotation in force cannot be read — look at
+> the camera sensor setting (cameraSensors) and the camera report of the port;
+> nothing here waits for a reboot
+
+This works on every sensor that can turn its own picture: IMX290, IMX219 and
+IMX708. The **IMX335 cannot be rotated**. The device refuses the setting with
+"the imx335 sensor cannot be rotated: mount the camera the right way up", and
+the console says so beside the switch. Mount that camera the right way up.
+
+You only ever say how the camera is mounted. Some sensor boards read out upside
+down by default and others do not; the agent accounts for that and writes the
+`rotation=` parameter of the camera line itself, so do not add one by hand.
+
+<Callout type="warn" title="On agents before 0.2.0 this setting did nothing on IMX219 and IMX708">
+  Older Rust agents handled the mounting setting correctly for the IMX290 only.
+  From 0.2.0 it works on every sensor in the table that can be rotated. On the
+  JS agent, with its IMX290 cameras, it works as it always has.
+
+Before you update a device that carries an IMX219 or IMX708, set the switch to
+how the camera is really mounted. A switch left on from before, where it had
+no effect, takes effect after the update: the device rewrites the camera line
+and the picture turns at the next reboot.
+
+</Callout>
+
+## Field of view
+
+A video preset does not always use the whole sensor. With some sensors a smaller
+preset shows only the centre of the picture, so the view is narrower than the
+lens could give. The table says how much of the sensor each preset size uses.
+
+| Sensor | 720p presets                                   | 1080p presets                         | What that means                                                |
+| ------ | ---------------------------------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| IMX290 | no figure published                            | no figure published                   | The sensor is 16:9, like the presets.                          |
+| IMX219 | centre 58.5% of the width, 43.8% of the height | the same                              | The same narrow view at both sizes.                            |
+| IMX708 | centre 66.7% of the width and height           | the full sensor                       | The view changes with the preset: 720p is the middle of 1080p. |
+| IMX335 | full width, 75.9% of the height                | 98.8% of the width, 75% of the height | Practically the same view at both sizes.                       |
+
+The presets are `720p15-1mbps` (the default), `720p15-2mbps`, `720p30-2mbps`,
+`1080p15-2mbps` and `1080p30-4mbps`, set as `recording.video.preset`. Widening
+the view of a sensor is not something a setting can do today.
+
+## Per-sensor notes
+
+### IMX290
+
+- **Option `clockFrequency`:** `37125000` (37.125 MHz, the default) or
+  `74250000` (74.25 MHz). It is the crystal on the camera board. Most boards use
+  37.125 MHz and some use 74.25 MHz; the sensor cannot report which.
+- **The device cannot confirm that an IMX290 is really attached.** Its driver
+  lists a camera for whatever is on the port. Declaring `imx290` on a port that
+  carries something else shows up only later, as a camera that
+  [delivers no frames](/device-sdk/camera-status#verdicts).
+
+### IMX219
+
+- No options.
+- The view is narrow at every preset (see the table above).
+- A board with a lens other than the Camera Module 2 lens can show a colour
+  cast, because the stock tuning is made for that lens. One such board on the
+  bench showed a green centre and magenta edges.
+
+{/* TODO(cm4-imx219): a known-limitations note may go here; a decision is pending. */}
+
+### IMX708 (Camera Module 3)
+
+- **Option `linkFrequency`:** `450000000` (the default), `447000000` or
+  `453000000`. Change it only if the camera interferes with a GPS receiver
+  beside it.
+- The wide and NoIR variants of Camera Module 3 are declared as `imx708` too.
+- **Focus is fixed.** The lens stays at its default position and there is no
+  autofocus setting. On a bench scene 2 to 4 m away that position was within 2
+  to 7% of the sharpest one; focus on things further away has not been measured.
+- The view changes between the 720p and 1080p presets (see the table above).
+
+### IMX335 (Arducam)
+
+- **Option `linkFrequency`:** `594000000` (the default) or `445500000`. Use the
+  second only if the board vendor says so.
+- **It cannot be rotated.** See
+  [A camera mounted upside down](#a-camera-mounted-upside-down).
+- **It cannot run `1080p30-4mbps`.** The sensor's full-resolution mode tops out
+  at 29.99 frames per second, so a 30 fps 1080p stream does not start. Use
+  `1080p15-2mbps` or a 720p preset. The console warns when that preset is
+  chosen, and the port's sentence says so too.
+- **It needs two OS packages that a stock device does not have:**
+  `libcamera0.5` and `libcamera-ipa` in Arducam's build, version
+  `0.5.2+rpt20250909-1`. They replace the stock packages of the same names, and
+  other cameras on the device keep working with them. Without them the camera
+  silently does not appear, and the port reads
+  [`requirements-missing`](/device-sdk/camera-status#verdicts) with a sentence
+  that names both packages, the versions installed, and what to run.
+
+#### Installing the IMX335 packages
+
+The device installs the two packages itself, as root. It downloads them from the
+address pinned in the sensor catalog that is compiled into the agent (Arducam's
+release on GitHub) and checks each file against the pinned size and sha256
+before anything is installed. Three things run the install:
+
+- **The installer,** at registration, when the code declares an IMX335.
+- **An update:** `sudo xorgate-rs update`, or the **Update** button in the
+  console, which does the same. The packages are installed after the update
+  itself is complete. An update of a device that is already up to date still
+  runs, and still installs them.
+- **You:** `sudo xorgate-rs camera requirements --install`.
+
+After an install by an update or by hand, the agent is restarted and the camera
+is listed again. No reboot is needed. On a bench device with a good link the
+install took a few seconds, and the IMX335 was streaming 15 to 20 seconds after
+it. A second camera on the device was off for 20 to 25 seconds while the agent
+restarted.
+
+To see what a device needs and has, without root:
+
+```bash
+xorgate-rs camera requirements
+```
+
+```
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam0):
+  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1~bpo12+1  MISSING
+  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1~bpo12+1  MISSING
+to install what is missing: sudo xorgate-rs camera requirements --install (or sudo xorgate-rs update)
+```
+
+Four things to know:
+
+- **A device updated into 0.2.0 from an older agent needs a second update.**
+  The first update is run by the old build, which has no such step. The port
+  reads `requirements-missing` until you update once more or run the install
+  command by hand.
+- **The packages are put on apt hold,** so that a later `apt upgrade` does not
+  replace them with stock ones and take IMX335 support away. The price is that
+  apt holds back stock libcamera updates on such a device, together with
+  whatever needs the newer libcamera, until an agent update brings a newer
+  pinned build. If the hold is ever released, the listing ends with "to set the
+  hold again: …" and the same install command puts it back.
+- **What was replaced is recorded** in
+  `/var/lib/xorgate-packages/camera-packages.json`: the packages installed, the
+  versions they replaced and the holds set.
+- **A reboot asked for while an update installs the packages waits for the
+  install.** One asked for during the download ends the download and goes
+  ahead.
+
+**Going back to the stock packages.** There is no uninstall command. Once the packages are installed, the listing
+shows the way back, filled in from the record:
+
+```
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam0):
+  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250909-1  ok
+  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250909-1  ok
+  apt hold: set on every package
+  installed by xorgate-rs; it replaced: libcamera0.5 0.5.2+rpt20250903-1~bpo12+1, libcamera-ipa 0.5.2+rpt20250903-1~bpo12+1
+  to go back: sudo apt-mark unhold libcamera0.5 libcamera-ipa
+  to go back: sudo apt-get install -y --allow-downgrades libcamera0.5=0.5.2+rpt20250903-1~bpo12+1 libcamera-ipa=0.5.2+rpt20250903-1~bpo12+1
+  to go back: then: sudo systemctl restart xorgate-agent-rs (until the agent restarts, its running captures keep the replaced library loaded and the port still reads ok)
+  (going back does not last while a port is set to a sensor that needs these packages: the next `xorgate-rs update` installs them again. Set the port to another sensor or to `none` first)
+```
+
+Do it in that order:
+
+1. Set the port to another sensor, or to `none`. While a port is set to the
+   IMX335, the next update installs the packages again.
+2. Run the two commands as printed.
+3. Restart the agent. Until then its running captures keep the replaced library
+   loaded, and the port still reads `ok`.
+
+**When the install cannot go on.** Every line the install prints starts with `camera packages:`. After an update
+started from the console they are in the updater's log
+(`sudo journalctl -u xorgate-updater-rs`). A failed install never fails the
+update. Three lines ask something of you:
+
+> camera packages: WARN arducam-libcamera NOT installed: not enough time left
+> in this run; run
+> `sudo xorgate-rs camera requirements --install`
+> (the install is only started when it can finish; nothing was changed)
+
+An update started from the console has 45 minutes in all, and an install is
+never interrupted once begun, so it is only started when it can finish in what
+is left. A very slow update leaves too little. Run the command by hand, or
+update again.
+
+> camera packages: WARN arducam-libcamera NOT installed: dpkg was interrupted
+> on this device (libcamera0.5 is unpacked, not configured). Run
+> `sudo dpkg --configure -a` there, then
+> `sudo xorgate-rs camera requirements --install`
+> again; nothing was downloaded or changed
+
+An earlier package operation on the device was cut off, by a power cut for
+example, and apt does nothing until that is repaired. Run
+`sudo dpkg --configure -a`, then the install again. The part in brackets names
+what was left unfinished; the port's sentence and the listing say the same.
+
+> camera packages: WARN arducam-libcamera NOT installed: another package
+> operation is running on this device; try again when it has finished (nothing
+> was downloaded or changed)
+
+Something else on the device is installing packages right now. Wait for it and
+run the install again.
+
+A line with `was not accepted` means a download failed or a file was not the
+pinned one. Nothing was changed; run the install again.
+
+## Devices that cannot choose a sensor
+
+To see which agent a device runs, read `agent` (`js` or `rust`) and
+`agentVersion` on the device in the API, or run `xorgate-rs -v` on the device.
+
+| Device                                | What happens                                                                                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **JS agent**                          | Works exactly as before, with IMX290 cameras. The console shows no Camera sensors card, a registration cannot carry a camera choice, and the API refuses the setting: "…needs the Rust device agent, version 0.2.0 or newer; this device runs the JS agent…" |
+| **Rust agent older than 0.2.0**       | The console shows no sensor choice, and one line asking you to update the agent. The API refuses the setting and names the build the device last reported. Update the agent, then save the sensor again: nothing is applied by itself after the update.      |
+| **Simulated device**                  | Has no camera ports. The setting is refused.                                                                                                                                                                                                                 |
+| **Device whose model lists no ports** | The setting is refused, because the platform cannot tell which ports exist. The device needs a model that describes its camera ports.                                                                                                                        |
+
+<Callout title="Updating from an older Rust agent takes two updates">
+  The agent changes camera lines through a small helper that the updater
+  installs. The first `sudo xorgate-rs update` from an older build is still run
+  by the old updater, which does not install it; the second one does. Between
+  the two, a camera that needs a change reports "the xorgate-camcfg helper is
+  not installed on this device yet — run `sudo xorgate-rs update` once more",
+  and nothing is written. Cameras that need no change are not affected.
+</Callout>

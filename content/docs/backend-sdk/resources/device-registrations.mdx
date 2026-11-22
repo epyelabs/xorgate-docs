@@ -41,6 +41,28 @@ The device model is picked automatically: the most recently created one in the
 catalog. There is no way to choose. A deployment with no device models is a
 `400`.
 
+### Choosing the agent and the cameras
+
+A code installs the JS agent unless you ask for the Rust one with
+`agent: "rust"`. A Rust code can also carry the camera sensor on each port, from
+`@xorgate/sdk` 0.18.0:
+
+```ts
+const reg = await xg.forWorkspace(yardId).deviceRegistrations.create({
+  agent: "rust",
+  cameras: { cam0: { sensor: "imx708" }, cam1: { sensor: "none" } },
+})
+// An older API ignores `cameras` and answers without the key.
+if (reg.cameras === undefined) throw new Error("This API does not take a camera choice")
+console.log(`Run on the device:\n  curl -sSL ${reg.installUrl} | sudo bash`)
+```
+
+`cameras` is refused with `INVALID_CAMERAS` on a JS registration and for a
+sensor or option the platform does not know. `reg.cameras` records what was
+chosen, not what the device ended up with. The rules, and what the installer
+does with the choice, are under
+[Choose the agent and the cameras](/device-sdk/installation#choose-the-agent-and-the-cameras).
+
 <Callout title="This one returns 200, not 201">
   Unlike every other create in the API, the underlying endpoint answers `200`
   even when it mints a code, and its body is a bare object rather than a named

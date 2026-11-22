@@ -44,8 +44,12 @@ appsink sync=TRUE emit-signals=TRUE name=appsink-video
   the element TWCC bitrate adaptation reaches for. Without it the stream still
   works but stops adapting to network feedback, which on a cellular link is
   exactly when it matters.
-- **Multiple cameras need `camera-name=`.** With two IMX290 sensors, `cam0.gst`
-  and `cam1.gst` differ only in that argument.
+- **Multiple cameras need `camera-name=`.** With two cameras of the same
+  sensor, `cam0.gst` and `cam1.gst` differ only in that argument. The name
+  depends on the port and on the sensor (the example above is an IMX290 on
+  `cam0` of a CM5 carrier), so a pipeline written for one sensor does not find
+  another. [Hardware notes](/device-sdk/hardware#cameras-nothing-is-detected-automatically)
+  shows how the name is built.
 - If the file is missing, empty or unreadable the runtime **warns and falls back**
   to its built-in default rather than failing. A typo in a filename is therefore a
   silent downgrade to `testsrc`, not an error.

@@ -139,7 +139,8 @@ wire and every consumer was deriving it the same way.
 `effective` block holds post-clamp values actually in force, and its `status`
 block carries a per-namespace `applied` / `adjusted` / `rejected` verdict.
 Several keys inside `effective` are **reported-only** and can never be written:
-`agent.mode`, `sim`, `uplink`, `apn`. A device cannot be told its own ICCID.
+`agent.mode`, `sim`, `uplink`, `apn`, `cameras`. A device cannot be told its own
+ICCID.
 
 ### `patchConfig(id, patch)`
 
@@ -155,7 +156,10 @@ console.log(device.configRev) // bumped
 ```
 
 The namespaces are `gnssAntBias`, `imuMount`, `recording`, `lteRecovery`,
-`timeSync` and `cellular`.
+`timeSync`, `cellular`, `cameraMount`, `simulation`, `obd` and `cameraSensors`.
+The last three are accepted only for the devices they apply to; the
+[configuration reference](/device-sdk/configuration-reference#layer-2-cloud-managed-settings)
+describes each.
 
 <Callout type="warn" title="Each namespace is replaced WHOLE. This has broken real hardware.">
 
@@ -249,6 +253,47 @@ for (let i = 0; i < 20; i++) {
 
 An offline device never converges, because it is not listening. The retained
 message waits for it and is applied on reconnect.
+
+### Camera sensors
+
+Which image sensor sits on each camera port is the `cameraSensors` namespace.
+It is typed from `@xorgate/sdk` 0.18.0, together with the device's per-port
+answer in `reportedConfig.effective.cameras`. It needs a device on the Rust
+agent, 0.2.0 or newer; for any other device the write throws `BAD_REQUEST` with
+a message that says why.
+
+```ts
+// Replaced whole: send every port that should stay managed. A port left out
+// goes back to unmanaged; `{ sensor: "none" }` declares it empty.
+await xg.devices.patchConfig(deviceId, {
+  cameraSensors: {
+    cameras: {
+      cam0: { sensor: "imx708" },
+      cam1: { sensor: "imx290", options: { clockFrequency: 74250000 } },
+    },
+  },
+})
+
+// Takes effect at the next boot. The device says what is really on each port.
+const device = await xg.devices.get(deviceId)
+const cameras = device.reportedConfig?.effective.cameras ?? {}
+for (const [port, camera] of Object.entries(cameras)) {
+  console.log(port, camera.verdict, camera.detail)
+}
+if (Object.values(cameras).some((c) => c.verdict === "reboot-required")) {
+  await xg.devices.reboot(deviceId)
+}
+
+// Back to unmanaged on every port.
+await xg.devices.patchConfig(deviceId, { cameraSensors: null })
+```
+
+The device's report follows the write by a few seconds, so in real code wait
+for it before reading the verdicts, as in
+[Watching a config change land](#watching-a-config-change-land). The sensors,
+their options, and what each verdict means are on
+[Cameras](/device-sdk/cameras) and
+[Camera status](/device-sdk/camera-status).
 
 ### `patchUiPrefs(id, patch)`
 

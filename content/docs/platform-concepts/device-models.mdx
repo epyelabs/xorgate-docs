@@ -48,9 +48,10 @@ carries an `io_capabilities` document describing what that kit can do.
 }
 ```
 
-`schemaVersion: 1` is required and is a literal. Every section is optional, so a
-partial-capability kit validates: a telemetry-only tracker with no cameras simply
-omits `media`.
+`schemaVersion` is required. The example is version 1, where every section is
+optional, so a partial-capability kit validates: a telemetry-only tracker with
+no cameras simply omits `media`. Version 2 adds facts about the hardware; the
+ones about cameras are [below](#cameras-on-a-model-ports-and-a-default-sensor).
 
 Each declared leaf names a metric under the corresponding
 [`group.field`](/platform-concepts/metrics) namespace. So
@@ -59,6 +60,38 @@ Each declared leaf names a metric under the corresponding
 older accel-only models.
 
 The canonical media stream keys are `cam0`, `cam1` and `audio0`.
+
+## Cameras on a model: ports and a default sensor
+
+In a `schemaVersion: 2` model, each `media.video` entry also says which
+connector the camera port sits on and names a sensor:
+
+```json
+{
+  "key": "cam0",
+  "codec": "h264",
+  "maxWidth": 1920,
+  "maxHeight": 1080,
+  "maxFps": 30,
+  "connector": "csi0",
+  "sensor": "imx290"
+}
+```
+
+- **`key` and `connector` are the model's camera ports.** A device's per-port
+  camera settings accept these keys and no others.
+- **`sensor` is the model's default sensor for the port,** not a statement about
+  any one device. It is what the console pre-selects when you register a device,
+  and what a new device is set up for when nobody chose. Each device then
+  carries its own choice per port and reports what is really attached: see
+  [Cameras](/device-sdk/cameras). The console shows this field as **Default
+  sensor**.
+- **`maxWidth`, `maxHeight` and `maxFps` are declarations only.** Nothing on the
+  platform reads or enforces them. What a sensor delivers at each video preset
+  is in the [field of view table](/device-sdk/cameras#field-of-view).
+
+A version 1 model has neither field, so the platform does not know its devices'
+camera ports and refuses a per-port sensor setting for them.
 
 ## The three things it actually controls
 

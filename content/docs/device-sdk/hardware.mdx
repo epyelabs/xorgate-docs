@@ -1,6 +1,6 @@
 ---
 title: "Hardware notes"
-description: "The IMU's CircuitPython shell-out and why, the GNSS and LTE daemon, the status LED ladder, the audio overlay that steals LED pins, and the IMX290 camera overlay requirement."
+description: "The IMU's CircuitPython shell-out and why, the GNSS and LTE daemon, the status LED ladder, the audio overlay that steals LED pins, and why a camera needs a line in config.txt."
 ---
 
 Five things about the reference hardware that are not obvious from the code and
@@ -182,22 +182,30 @@ repository's `docs/audio-i2s.md`.
 
 </Callout>
 
-## Cameras: the IMX290 overlay is not automatic
+## Cameras: nothing is detected automatically
 
-The CM5 fleet ships dual IMX290 sensors, and they are **not auto-detected**. Both
-need an explicit overlay in `/boot/firmware/config.txt` and a reboot:
+A Compute Module does not detect camera sensors. Each camera port needs a line
+in `/boot/firmware/config.txt` that names the sensor on it, and a reboot. For
+two IMX290 sensors:
 
 ```
 dtoverlay=imx290,cam0
 dtoverlay=imx290,cam1
 ```
 
-Without these the sensors do not appear to libcamera at all, so a correct
-pipeline referencing a correct `camera-name` still produces nothing. The
-installer now sets the overlays and writes default pipelines, but a device
-imaged before that, or one where the cameras were added later, needs it by hand.
+Without the right line the sensor does not appear to libcamera at all, so a
+correct pipeline referencing a correct `camera-name` still produces nothing.
 
-The two sensors sit on different I2C buses, which is what distinguishes them in a
+Who writes those lines depends on the agent:
+
+- **Rust agent, 0.2.0 or newer.** You declare the sensor on each port and the
+  agent keeps the line in step, for any of the supported sensors. Do not edit
+  the file. [Cameras](/device-sdk/cameras) is the page for this.
+- **JS agent.** The installer writes the IMX290 lines once. A device imaged
+  before the installer did that, or one where cameras were added later, needs
+  them by hand.
+
+The two ports sit on different I2C buses, which is what distinguishes them in a
 pipeline's `camera-name`:
 
 ```
@@ -205,8 +213,12 @@ cam0  /base/axi/pcie@1000120000/rp1/i2c@88000/imx290@1a
 cam1  /base/axi/pcie@1000120000/rp1/i2c@70000/imx290@1a
 ```
 
-Note `i2c@88000` versus `i2c@70000`. The agent records the resolved name in
-`<streamKey>.camera` next to the pipeline files so it survives a bridge rewrite.
+Note `i2c@88000` versus `i2c@70000`. The last segment follows the sensor: an
+IMX219 on the second port of the same board is `…/i2c@70000/imx219@10`. A Rust
+agent reports each port's name as `bound.path` in its
+[camera report](/device-sdk/camera-status#the-per-port-report). The agent also
+records the resolved name in `<streamKey>.camera` next to the pipeline files so
+it survives a bridge rewrite.
 
 ## Power budget
 

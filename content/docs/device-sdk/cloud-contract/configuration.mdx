@@ -35,26 +35,39 @@ idempotent by design, which is what makes retention safe.
     "stepThresholdSecs": 10,
     "maxStepsPerBoot": 4
   },
-  "cellular": { "apn": "" }
+  "cellular": { "apn": "" },
+  "cameraMount": { "cameras": { "cam0": { "rotationDeg": 180 } } },
+  "cameraSensors": { "cameras": { "cam0": { "sensor": "imx708" } } }
 }
 ```
 
-There are **six** cloud-managed namespaces:
+There are **ten** cloud-managed namespaces. A device receives the ones that
+apply to it:
 
-| Namespace     | Apply class  | Applied by                                                                   |
-| ------------- | ------------ | ---------------------------------------------------------------------------- |
-| `gnssAntBias` | `modem-poll` | the SIM7600 daemon, re-reading the file roughly every 30 s                   |
-| `imuMount`    | `agent-poll` | the IMU collector, re-reading per sample                                     |
-| `recording`   | `agent-poll` | the recording manager, 5 s poll plus a forced re-read on every cloud message |
-| `lteRecovery` | `modem-poll` | the SIM7600 daemon, at each recovery decision                                |
-| `timeSync`    | `agent-poll` | the clock stepper, roughly every 30 s                                        |
-| `cellular`    | `modem-poll` | the SIM7600 daemon, with confirm-and-rollback                                |
+| Namespace       | Apply class  | Applied by                                                                                                       |
+| --------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `gnssAntBias`   | `modem-poll` | the SIM7600 daemon, re-reading the file roughly every 30 s                                                       |
+| `imuMount`      | `agent-poll` | the IMU collector, re-reading per sample                                                                         |
+| `recording`     | `agent-poll` | the recording manager, 5 s poll plus a forced re-read on every cloud message                                     |
+| `lteRecovery`   | `modem-poll` | the SIM7600 daemon, at each recovery decision                                                                    |
+| `timeSync`      | `agent-poll` | the clock stepper, roughly every 30 s                                                                            |
+| `cellular`      | `modem-poll` | the SIM7600 daemon, with confirm-and-rollback                                                                    |
+| `cameraMount`   | `agent-poll` | the agent, which rewrites the camera line in the boot configuration; in force at the next boot                   |
+| `cameraSensors` | `agent-poll` | the same way; [Rust agent 0.2.0 or newer only](#camerasensors-a-namespace-a-device-must-qualify-for)             |
+| `obd`           | `agent-poll` | the OBD collector, on its settings poll and on every cloud message; only for a model that declares an OBD reader |
+| `simulation`    | `agent-poll` | the replay source of a [simulated device](/platform-concepts/simulated-devices); only for simulated devices      |
 
 **No namespace requires an agent restart.** The `agent-restart` apply class
 exists in the type so a future key has somewhere to declare itself, and nothing
 uses it. Never restart the modem daemon to apply a setting either: it drops the
 LTE link, and every one of its namespaces is polled precisely so that is
 unnecessary.
+
+Two namespaces need a **reboot of the device** instead: `cameraMount` and
+`cameraSensors` change the boot configuration, which the system reads once, at
+boot. The agent makes the change, reports that a reboot is required, and never
+reboots the device itself. [Cameras](/device-sdk/cameras) is the user's view of
+both.
 
 `uploadBucket` may also appear at the top level. It is a backfill for devices
 fielded before provisioning wrote it, and it is persisted into `kvs.json` rather
@@ -129,6 +142,52 @@ A missing or zero `rev` means the backend predates the field. The worker then
 applies unconditionally, exactly as it did before, which is what keeps a new
 agent working against an old backend.
 
+## `cameraSensors`: a namespace a device must qualify for
+
+`cameraSensors` says which image sensor is attached to each camera port. Its
+value is described in the
+[configuration reference](/device-sdk/configuration-reference#camerasensors).
+What sets it apart on this channel is that only some devices may hold it.
+
+**The gate.** The platform accepts the namespace for a device that runs the Rust
+agent, is not simulated, and either has never reported or reports the capability
+`camera.sensors`. It checks this when the namespace is written through the API,
+when a device reports a local edit of it, and before every publish. For any
+other device the write is a `400` that says why, and the key is left out of the
+document the device receives.
+
+**The capability.** A Rust agent lists what its build can act on in
+`effective.agent.capabilities` of every report:
+
+```json
+["sms.read", "sms.clear", "obd.scan", "obd.forget", "camera.sensors"]
+```
+
+`camera.sensors` is there from agent 0.2.0. It has to be in every report that
+has an `agent` block, because the platform treats a list without it as proof
+that the agent cannot act on the setting: the stored value is then removed, the
+`rev` is bumped and the document is republished without the key. That is what
+happens when a device is taken back to an older agent. Nothing is put back when
+the agent is updated again; the device's ports stay
+[not managed](/device-sdk/cameras#a-port-that-is-not-managed) until someone
+saves the setting.
+
+**What the agent does with it.** The usual three cases apply: an absent key
+keeps the local value, `{}` drops it, a value replaces it whole. Unlike its
+siblings, the value is held as delivered rather than cleaned up, so that the
+agent can refuse one port with a sentence and still act on the others. Its
+report then carries:
+
+- `status.cameraSensors`: `applied`, `adjusted` (saved or written, waiting for a
+  reboot) or `rejected`, with one sentence per refused port. The states are
+  explained on [Camera status](/device-sdk/camera-status#the-settings-own-status).
+- `effective.cameraSensors`: the namespace as held, plus `rebootRequired`
+  (`true` while a change waits for a reboot), or `reconciled: false` when the
+  agent has not looked at a new value yet.
+- `effective.cameras`: what is really on each port. It is not a namespace and
+  never has a `status` entry; see
+  [Camera status](/device-sdk/camera-status#the-per-port-report).
+
 ## The reported document
 
 The device answers on `config/reported`, QoS 1 and **not** retained, because
@@ -174,7 +233,7 @@ lifecycle.
     status: {
       type: "Record<namespace, NamespaceStatus>",
       description:
-        '{ state, at, detail?, reason? } where state is "applied", "adjusted" or "rejected".',
+        '{ state, at, detail?, reason? } where state is "applied", "adjusted" or "rejected". "adjusted" explains itself in detail, "rejected" in reason. Each is at most 500 characters: the platform drops a whole report that carries a longer one.',
     },
     changed: {
       type: "Record<namespace, unknown> | undefined",
@@ -186,6 +245,13 @@ lifecycle.
 
 `pending` is a cloud-side computation and is never reported by a device: from the
 device's point of view a namespace is in force or it is not.
+
+`effective` also carries blocks that are not namespaces: facts the device
+reports and nobody can set. `effective.agent` is one (its `capabilities` list is
+described [above](#camerasensors-a-namespace-a-device-must-qualify-for)), and
+`effective.cameras`, the
+[per-port camera report](/device-sdk/camera-status#the-per-port-report), is
+another. A reported-only block never has a `status` entry.
 
 ### Local edits flow back
 

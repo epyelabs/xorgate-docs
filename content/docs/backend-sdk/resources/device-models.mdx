@@ -89,6 +89,13 @@ videoStreamKeys(model) // ["cam0", "cam1"]
 declaredMetrics(model) // ["imu.accel_x", ..., "gps.lat", ..., "system.cpu_temp"]
 ```
 
+A `schemaVersion: 2` model also gives each `media.video` entry a `connector`
+and a `sensor`. That `sensor` is the model's **default sensor** for the port:
+what a new device is set up for when nobody chose. It is not what a given device
+carries, which is the device's own
+[`cameraSensors` setting](/backend-sdk/resources/devices#camera-sensors). See
+[Cameras on a model](/platform-concepts/device-models#cameras-on-a-model-ports-and-a-default-sensor).
+
 ## Client-side validation
 
 <Callout type="warn" title="This is the one place the SDK does real work the API does not">

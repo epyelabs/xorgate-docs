@@ -78,6 +78,85 @@ sudoers drop-in. Then it starts the service.
   response bodies are deliberately not documented anywhere public.
 </Callout>
 
+## Choose the agent and the cameras
+
+A registration code installs one of two device agents: the JS agent, which is
+the default, or the Rust agent. Only a Rust registration can say which
+[camera sensor](/device-sdk/cameras) sits on each port. A device installed from
+a JS code works with IMX290 cameras, as it always has.
+
+**In the console,** the Register device dialog has a **Language** choice. With
+**Rust** picked, a **Cameras** row shows one list per camera port of the device
+model, each already set to the model's default sensor. Pick what is really
+plugged in, or **No camera** for an empty port. The code on screen stays the
+same; it now carries your choice.
+
+**Through the API,** send `agent` and `cameras` when you mint the code (the
+shell variables are the ones the [Quickstart](/getting-started/quickstart)
+sets):
+
+```bash
+curl -sS -X POST "$API/device-registrations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-Id: $ORG" \
+  -H "X-Workspace-Id: $WS" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": "rust",
+    "cameras": { "cam0": { "sensor": "imx708" }, "cam1": { "sensor": "none" } }
+  }'
+```
+
+```json
+{
+  "code": "…",
+  "status": "pending",
+  "deviceId": null,
+  "expiresAt": "2026-08-10T18:30:00.000Z",
+  "installUrl": "…",
+  "agent": "rust",
+  "cameras": { "cam0": { "sensor": "imx708" }, "cam1": { "sensor": "none" } }
+}
+```
+
+`cameras` has the shape of the `cameras` map of the
+[`cameraSensors` setting](/device-sdk/configuration-reference#camerasensors):
+a sensor per stream key, with that sensor's options if it has any.
+
+- **A port you leave out gets the model's default sensor.** To declare a port
+  empty, say `"sensor": "none"`.
+- **You can change your mind until the installer runs.** Sending `cameras` again
+  while the code is pending replaces the choice on the same code. `null` or `{}`
+  clears it. Leaving the field out keeps what the code already carries.
+- **A choice that cannot be accepted is a `400` with code `INVALID_CAMERAS`:** a
+  sensor or option value the platform does not know, or `cameras` on a JS
+  registration.
+- **`agent: "rust"` can be a `409` with code `AGENT_NOT_ENABLED`,** when Rust
+  registration is not switched on for the workspace.
+- A choice for a port the device's model turns out not to have is dropped when
+  the device claims the code.
+
+Then run the installer as usual. It sets the device up for the chosen sensors,
+and installs the [extra packages](/device-sdk/cameras#installing-the-imx335-packages)
+of a sensor that needs them. When it changed a camera line, its last line says
+so:
+
+```
+[xorgate] REBOOT REQUIRED before the cameras stream: the camera lines in /boot/firmware/config.txt were changed (sudo reboot)
+```
+
+Reboot the device once, then check each port in the console or with
+[`xorgate-rs status`](/device-sdk/camera-status#on-the-device).
+
+<Callout title="The choice needs the 0.2.0 installer">
+  The choice is applied by the Rust agent's installer from version 0.2.0. An
+  older installer ignores it: the device comes up on its model's default
+  sensors, with its ports [not
+  managed](/device-sdk/cameras#a-port-that-is-not-managed). The registration
+  still shows the `cameras` you sent, because that field records what was
+  chosen, not what was applied.
+</Callout>
+
 ## Why it is safe to re-run
 
 The installer is idempotent per physical host, and the mechanism is a **stable
