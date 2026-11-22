@@ -67,7 +67,9 @@ There are four places to do it, and they all write the same setting, the
 - **A change needs a reboot.** The device prepares the change and reports that a
   reboot is required. It never reboots itself.
 - **A wrong choice is reported after that reboot**, in a sentence that names the
-  port. Nothing checks your choice against the hardware before then.
+  port. Nothing checks your choice against the hardware before then. A port
+  with the wrong sensor declared reads `not-detected` or `no-frames`, never
+  `ok`.
 
 ### At registration
 
@@ -351,9 +353,10 @@ says so instead of asking for a reboot that would not help:
 > nothing here waits for a reboot
 
 This works on every sensor that can turn its own picture: IMX290, IMX219 and
-IMX708. The **IMX335 cannot be rotated**. The device refuses the setting with
-"the imx335 sensor cannot be rotated: mount the camera the right way up", and
-the console says so beside the switch. Mount that camera the right way up.
+IMX708. The **IMX335 cannot be rotated**. Asked to, the device changes nothing
+and the mounting status reads `rejected`, with the reason "cam0: the imx335
+sensor cannot be rotated: mount the camera the right way up". The console says
+so beside the switch. Mount that camera the right way up.
 
 You only ever say how the camera is mounted. Some sensor boards read out upside
 down by default and others do not; the agent accounts for that and writes the
@@ -454,10 +457,18 @@ before anything is installed. Three things run the install:
 - **You:** `sudo xorgate-rs camera requirements --install`.
 
 After an install by an update or by hand, the agent is restarted and the camera
-is listed again. No reboot is needed. On a bench device with a good link the
-install took a few seconds, and the IMX335 was streaming 15 to 20 seconds after
-it. A second camera on the device was off for 20 to 25 seconds while the agent
-restarted.
+is listed again. No reboot is needed. On a CM5 bench device with a good link
+the install took a few seconds, and the IMX335 was streaming 15 to 20 seconds
+after it. A second camera on the device was off for 20 to 25 seconds while the
+agent restarted. On a CM4 the install took about 20 seconds.
+
+The one case that still needs a reboot is a port whose camera line was changed
+and not booted yet, because you declared the IMX335 a moment ago. The install's
+last line then says so:
+
+> camera packages: the packages are in place and the agent was restarted, but a
+> reboot is still needed: the camera line of cam0 in config.txt was changed
+> since this device booted (sudo reboot)
 
 To see what a device needs and has, without root:
 
@@ -488,8 +499,8 @@ Four things to know:
   `/var/lib/xorgate-packages/camera-packages.json`: the packages installed, the
   versions they replaced and the holds set.
 - **A reboot asked for while an update installs the packages waits for the
-  install.** One asked for during the download ends the download and goes
-  ahead.
+  install,** and so does stopping the update. Either one during the download
+  ends the download and goes ahead.
 
 **Going back to the stock packages.** There is no uninstall command. Once the packages are installed, the listing
 shows the way back, filled in from the record:
@@ -514,8 +525,22 @@ Do it in that order:
 3. Restart the agent. Until then its running captures keep the replaced library
    loaded, and the port still reads `ok`.
 
-**When the install cannot go on.** Every line the install prints starts with `camera packages:`. After an update
-started from the console they are in the updater's log
+If you only do step 1, the packages stay installed and held. The listing keeps
+showing them, with the way back, for as long as they are in place:
+
+```
+no declared camera sensor needs extra packages
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), the set imx335 needs: no declared sensor needs it any more, but what xorgate-rs installed for it is still in place:
+  libcamera0.5   installed 0.5.2+rpt20250909-1  held  (installed by xorgate-rs; it replaced 0.5.2+rpt20250903-1~bpo12+1)
+  libcamera-ipa  installed 0.5.2+rpt20250909-1  held  (installed by xorgate-rs; it replaced 0.5.2+rpt20250903-1~bpo12+1)
+  while they are held, apt does not update these packages: the OS's own updates of them do not reach this device
+  to go back: sudo apt-mark unhold libcamera0.5 libcamera-ipa
+  to go back: sudo apt-get install -y --allow-downgrades libcamera0.5=0.5.2+rpt20250903-1~bpo12+1 libcamera-ipa=0.5.2+rpt20250903-1~bpo12+1
+  to go back: then: sudo systemctl restart xorgate-agent-rs (until the agent restarts, its running captures keep the replaced library loaded and the port still reads ok)
+```
+
+**When the install cannot go on.** Every line the install prints starts with
+`camera packages:`. After an update started from the console they are in the updater's log
 (`sudo journalctl -u xorgate-updater-rs`). A failed install never fails the
 update. Three lines ask something of you:
 

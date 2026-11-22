@@ -113,7 +113,7 @@ tolerantly: a newer agent can add a verdict, a state or a field.
 | `ok`                   | The port works as declared.                                                                                                                                                                                                 | Nothing. If the sentence ends by saying the video preset cannot run on this sensor, choose another preset.                                                               |
 | `reboot-required`      | The port's line in `config.txt` is not the one the device booted with. A sensor, option or mounting change is waiting, or the file was edited by hand.                                                                      | Reboot the device.                                                                                                                                                       |
 | `not-detected`         | A sensor is declared and none answered as that sensor. Either no driver bound, or one bound and libcamera lists no camera. No capture is started on the port.                                                               | Check the ribbon cable, and that the declared sensor is the one attached. Correct it, then reboot.                                                                       |
-| `no-frames`            | A camera is listed and its capture keeps failing.                                                                                                                                                                           | Read `capture.lastError`. With `imx290` declared, the camera on the port may be a different sensor, since that driver cannot check. Check the declaration and the cable. |
+| `no-frames`            | A camera is listed and its capture keeps failing.                                                                                                                                                                           | Read `capture.lastError`. The camera on the port may be a different sensor: the IMX290 and IMX335 drivers do not always refuse one. Check the declaration and the cable. |
 | `mismatch`             | What is on the port is not what is declared. On a managed port the line still names another sensor because the setting could not be applied. On a port that is not managed, the camera found is not the one the line names. | Read [the setting's status](#the-settings-own-status) for the reason. On a port that is not managed, declare the sensor: that leaves exactly one line for the port.      |
 | `empty`                | No camera is configured on the port: it is declared `none`, or it has no camera line.                                                                                                                                       | Nothing if the port is unused. Otherwise declare its sensor.                                                                                                             |
 | `requirements-missing` | The declared sensor needs OS packages, in versions the sentence names, that are not installed. The camera will not appear until they are.                                                                                   | Run what the sentence ends with; see [the IMX335 packages](/device-sdk/cameras#installing-the-imx335-packages). Reboot too if it says the line waits for one.            |
@@ -171,17 +171,20 @@ Rust agent older than 0.2.0, or its model does not list the port. See
 **`reboot-required`.** The change is prepared and waiting. Reboot the device:
 the device never does it itself.
 
-**`not-detected`, or `no-frames` with `imx290` declared.** The declared sensor
-is not what is on the port, or the cable is the problem. A wrong declaration
-reads like this after the reboot:
+**`not-detected` or `no-frames`.** The declared sensor is not what is on the
+port, or the cable is the problem. A port with the wrong sensor declared never
+reads `ok`. It reads like this after the reboot:
 
 > csi0 is set to imx219, but no imx219 answered on this port (the kernel driver
 > did not bind). Check the ribbon cable and the selected sensor.
 
 Which of the two verdicts you get depends on the sensor you declared, not on
 the mistake: the IMX219 and IMX708 drivers check the chip and refuse a wrong
-one, while the IMX290 driver accepts anything and the camera then delivers no
-frames. A cable that is reversed or not seated reads exactly like an empty
+one, while the IMX290 driver accepts anything, and the IMX335 driver can accept
+another sensor too. The camera is then listed and delivers no frames, and on a
+port with a sensor setting the `no-frames` sentence ends "Check the ribbon
+cable and that the camera sensor setting names the sensor that is really
+attached." A cable that is reversed or not seated reads exactly like an empty
 port. Fix the declaration or the cable, then reboot.
 
 **`requirements-missing`.** The sensor needs OS packages the device does not
