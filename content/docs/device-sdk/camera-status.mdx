@@ -188,10 +188,11 @@ port. Fix the declaration or the cable, then reboot.
 have. Today that is the IMX335, and the sentence ends with what to run:
 
 > csi0 is set to imx335, which needs extra packages that are not installed in
-> the required versions: libcamera0.5 0.5.2+rpt20250909-1 (not installed),
-> libcamera-ipa 0.5.2+rpt20250909-1 (not installed). The camera will not appear
-> until they are installed: run `sudo xorgate-rs update` on the device (the
-> console's Update button does the same), or
+> the required versions: libcamera0.5 0.5.2+rpt20250909-1 (installed:
+> 0.5.2+rpt20250903-1~bpo12+1), libcamera-ipa 0.5.2+rpt20250909-1 (installed:
+> 0.5.2+rpt20250903-1~bpo12+1). The camera will not appear until they are
+> installed: run `sudo xorgate-rs update` on the device (the console's Update
+> button does the same), or
 > `sudo xorgate-rs camera requirements --install`.
 
 [Installing the IMX335 packages](/device-sdk/cameras#installing-the-imx335-packages)

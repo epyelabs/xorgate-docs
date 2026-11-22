@@ -136,9 +136,16 @@ a sensor per stream key, with that sensor's options if it has any.
 - A choice for a port the device's model turns out not to have is dropped when
   the device claims the code.
 
-Then run the installer as usual. It sets the device up for the chosen sensors
-and says that a reboot is required before the cameras stream. Reboot the device
-once, then check each port in the console or with
+Then run the installer as usual. It sets the device up for the chosen sensors,
+and installs the [extra packages](/device-sdk/cameras#installing-the-imx335-packages)
+of a sensor that needs them. When it changed a camera line, its last line says
+so:
+
+```
+[xorgate] REBOOT REQUIRED before the cameras stream: the camera lines in /boot/firmware/config.txt were changed (sudo reboot)
+```
+
+Reboot the device once, then check each port in the console or with
 [`xorgate-rs status`](/device-sdk/camera-status#on-the-device).
 
 <Callout title="The choice needs the 0.2.0 installer">

@@ -449,11 +449,15 @@ before anything is installed. Three things run the install:
 - **The installer,** at registration, when the code declares an IMX335.
 - **An update:** `sudo xorgate-rs update`, or the **Update** button in the
   console, which does the same. The packages are installed after the update
-  itself is complete.
+  itself is complete. An update of a device that is already up to date still
+  runs, and still installs them.
 - **You:** `sudo xorgate-rs camera requirements --install`.
 
 After an install by an update or by hand, the agent is restarted and the camera
-is listed again. No reboot is needed.
+is listed again. No reboot is needed. On a bench device with a good link the
+install took a few seconds, and the IMX335 was streaming 15 to 20 seconds after
+it. A second camera on the device was off for 20 to 25 seconds while the agent
+restarted.
 
 To see what a device needs and has, without root:
 
@@ -463,8 +467,8 @@ xorgate-rs camera requirements
 
 ```
 arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam0):
-  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1  MISSING
-  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1  MISSING
+  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1~bpo12+1  MISSING
+  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1~bpo12+1  MISSING
 to install what is missing: sudo xorgate-rs camera requirements --install (or sudo xorgate-rs update)
 ```
 
@@ -478,25 +482,42 @@ Four things to know:
   replace them with stock ones and take IMX335 support away. The price is that
   apt holds back stock libcamera updates on such a device, together with
   whatever needs the newer libcamera, until an agent update brings a newer
-  pinned build.
+  pinned build. If the hold is ever released, the listing ends with "to set the
+  hold again: …" and the same install command puts it back.
 - **What was replaced is recorded** in
   `/var/lib/xorgate-packages/camera-packages.json`: the packages installed, the
   versions they replaced and the holds set.
-- **There is no uninstall command.** Once the packages are installed, the
-  listing ends with the two commands that go back, filled in from that record:
+- **A reboot asked for while an update installs the packages waits for the
+  install.** One asked for during the download ends the download and goes
+  ahead.
 
-  ```
-    to go back: sudo apt-mark unhold libcamera0.5 libcamera-ipa
-    to go back: sudo apt-get install --allow-downgrades libcamera0.5=0.5.2+rpt20250903-1 libcamera-ipa=0.5.2+rpt20250903-1
-  ```
+**Going back to the stock packages.** There is no uninstall command. Once the packages are installed, the listing
+shows the way back, filled in from the record:
 
-  Choose another sensor for the port as well, or the next update installs the
-  packages again.
+```
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam0):
+  libcamera0.5   required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250909-1  ok
+  libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250909-1  ok
+  apt hold: set on every package
+  installed by xorgate-rs; it replaced: libcamera0.5 0.5.2+rpt20250903-1~bpo12+1, libcamera-ipa 0.5.2+rpt20250903-1~bpo12+1
+  to go back: sudo apt-mark unhold libcamera0.5 libcamera-ipa
+  to go back: sudo apt-get install -y --allow-downgrades libcamera0.5=0.5.2+rpt20250903-1~bpo12+1 libcamera-ipa=0.5.2+rpt20250903-1~bpo12+1
+  to go back: then: sudo systemctl restart xorgate-agent-rs (until the agent restarts, its running captures keep the replaced library loaded and the port still reads ok)
+  (going back does not last while a port is set to a sensor that needs these packages: the next `xorgate-rs update` installs them again. Set the port to another sensor or to `none` first)
+```
 
-Every line the install prints starts with `camera packages:`. After an update
+Do it in that order:
+
+1. Set the port to another sensor, or to `none`. While a port is set to the
+   IMX335, the next update installs the packages again.
+2. Run the two commands as printed.
+3. Restart the agent. Until then its running captures keep the replaced library
+   loaded, and the port still reads `ok`.
+
+**When the install cannot go on.** Every line the install prints starts with `camera packages:`. After an update
 started from the console they are in the updater's log
 (`sudo journalctl -u xorgate-updater-rs`). A failed install never fails the
-update. Two lines ask something of you:
+update. Three lines ask something of you:
 
 > camera packages: WARN arducam-libcamera NOT installed: not enough time left
 > in this run; run
@@ -518,6 +539,13 @@ An earlier package operation on the device was cut off, by a power cut for
 example, and apt does nothing until that is repaired. Run
 `sudo dpkg --configure -a`, then the install again. The part in brackets names
 what was left unfinished; the port's sentence and the listing say the same.
+
+> camera packages: WARN arducam-libcamera NOT installed: another package
+> operation is running on this device; try again when it has finished (nothing
+> was downloaded or changed)
+
+Something else on the device is installing packages right now. Wait for it and
+run the install again.
 
 A line with `was not accepted` means a download failed or a file was not the
 pinned one. Nothing was changed; run the install again.
