@@ -146,6 +146,14 @@ on a device that runs that agent: see
 [Cameras](/device-sdk/cameras#on-the-device). The `xorgate` CLI on this page
 belongs to the JS agent, whose devices use IMX290 cameras and have no such key.
 
+<Callout title="`xorgate-rs set wifi` needs `sudo` where the user has no passwordless sudo">
+  The Rust agent's `xorgate-rs set wifi on|off` switches the interface through
+  `sudo nmcli`. Current Raspberry Pi OS Trixie images do not give the default
+  user passwordless sudo. On such a device run it as `sudo xorgate-rs set wifi
+  off`. From agent 0.2.1, run without `sudo` it fails at once with `sudo: a
+  password is required` instead of waiting for a password.
+</Callout>
+
 <Callout type="warn" title="`set media` was removed">
   The media master switch is gone. `xorgate set media` is kept as a tombstone
   that errors with a pointer to the replacement, because it lived in muscle

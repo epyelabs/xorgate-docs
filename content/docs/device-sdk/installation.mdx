@@ -157,6 +157,16 @@ Reboot the device once, then check each port in the console or with
   chosen, not what was applied.
 </Callout>
 
+<Callout
+  type="warn"
+  title="Raspberry Pi OS Trixie: the installer is not tried there yet"
+>
+  The cameras run on Bookworm, and on Trixie from Rust agent 0.2.1. On Trixie
+  that was seen on a device upgraded in place from Bookworm only; a freshly
+  flashed Trixie image set up with this installer has not been tried. See [OS
+  releases](/device-sdk/cameras#os-releases).
+</Callout>
+
 ## Why it is safe to re-run
 
 The installer is idempotent per physical host, and the mechanism is a **stable
