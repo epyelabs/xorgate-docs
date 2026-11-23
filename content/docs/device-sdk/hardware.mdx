@@ -33,6 +33,17 @@ sudo raspi-config nonint do_i2c 0
 sudo usermod -aG i2c "$USER"
 ```
 
+<Callout type="warn" title="After an in-place upgrade from Bookworm to Trixie">
+  The Adafruit libraries are installed for the system's Python: 3.11 on
+  Bookworm. Trixie runs Python 3.13, so a device upgraded in place (a path
+  Raspberry Pi does not support) no longer finds them, and the Rust agent logs
+  `[imu] import failed: No module named 'board'. Install
+  adafruit-circuitpython-bno08x and adafruit-blinka.` An agent update does not
+  install them again. Run the `pip` line above once more, then restart the agent
+  (`sudo systemctl restart xorgate-agent-rs`). Under Python 3.13 that line
+  installed in seconds on the bench, and the IMU streamed again.
+</Callout>
+
 `XORGATE_MOCK=1`, or any non-Linux host, makes detection report a synthetic
 sensor emitting a slowly rotating mock signal, so the path can be exercised
 off-hardware.

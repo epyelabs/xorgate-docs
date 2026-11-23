@@ -27,16 +27,72 @@ on the port.
 
 A port with nothing plugged in is declared as `none`.
 
-All four need a device image based on Debian Bookworm. The Sony IMX662 is not
-supported yet: it needs a newer OS release.
+All four run on a device image based on Debian Bookworm, and from agent 0.2.1
+on one based on Debian Trixie. [OS releases](#os-releases) says what has been
+tried on Trixie and what has not.
 
-Besides the IMX290, which was the only sensor before this feature, the IMX219,
-IMX708 and IMX335 have each run on bench hardware on a CM4 and on both ports of
-a CM5. For the IMX219 on a CM4 that holds for the official module only: see the
-[IMX219 notes](#imx219).
+The Sony IMX662 is not supported. It is planned, but the one board tried did
+not answer on its I2C bus, so nothing about the sensor has been verified.
+
+On Bookworm, besides the IMX290, which was the only sensor before this feature,
+the IMX219, IMX708 and IMX335 have each run on bench hardware on a CM4 and on
+both ports of a CM5. For the IMX219 on a CM4 that holds for the official module
+only: see the [IMX219 notes](#imx219).
 
 No API route serves this list. A request that names any other sensor is refused
 with a message that lists the known ones.
+
+### OS releases
+
+| OS release (Raspberry Pi OS) | Rust agent     | The four sensors on bench hardware                                       |
+| ---------------------------- | -------------- | ------------------------------------------------------------------------ |
+| Bookworm                     | 0.2.0 or newer | all four, on a CM4 and on both ports of a CM5                            |
+| Trixie                       | 0.2.1 or newer | all four, on one CM5 upgraded in place from Bookworm; not tried on a CM4 |
+
+The agent reads the release from `VERSION_CODENAME` in `/etc/os-release`. The
+sensors and their settings are the same on both. The one difference is the
+IMX335's [extra packages](#imx335-arducam): Trixie needs a different pair.
+
+What was seen on Trixie, on a CM5 with kernel 6.18.60 and libcamera 0.8.0:
+
+- **IMX290 and IMX708,** one on each port, under agent 0.2.1: both streamed at
+  15 fps at 720p and at 30 fps at 1080p. The
+  [upside-down setting](#a-camera-mounted-upside-down) was applied on each port
+  and taken back again (the picture itself was not judged), and both cameras
+  were streaming again after each of five reboots.
+- **IMX219:** streamed on the stock libcamera.
+- **IMX335:** streamed with Arducam's Trixie packages, installed by hand. The
+  agent's own install of those packages under 0.2.1, and the way back to the
+  stock ones, ran on the same device.
+- **`sudo xorgate-rs update`** works on Trixie.
+
+<Callout type="warn" title="Not tried on Trixie yet">
+  A freshly flashed Trixie image set up with the xorgate installer (the device
+  above was upgraded in place from Bookworm), Trixie on a CM4, and a series of
+  cold boots (the five reboots above were warm restarts). Treat these as
+  untested.
+</Callout>
+
+**A Trixie device on agent 0.2.0.** Agent 0.2.0 knows Bookworm only. A camera
+that appears is not affected (an IMX219 read `ok` on it), but every port with a
+declared sensor whose camera does not appear reads
+[`requirements-missing`](/device-sdk/camera-status#verdicts) for the OS release,
+whatever the real reason is:
+
+> csi1 is set to imx335, which needs an OS release this device does not run
+> (needs bookworm; this device runs trixie). The camera cannot work on this OS
+> release.
+
+It also cannot install the IMX335's Trixie packages; `xorgate-rs camera
+requirements` ends with "REFUSED: the catalog lists no packages of this set for
+trixie/arm64; nothing can be installed on this device". Update the agent to
+0.2.1 or newer with `sudo xorgate-rs update`. If an IMX335 port still reads
+`requirements-missing` afterwards, run
+`sudo xorgate-rs camera requirements --install`.
+
+A device upgraded in place from Bookworm (a path Raspberry Pi does not support)
+also loses its IMU until one install step is run again: see
+[the IMU notes](/device-sdk/hardware#imu-a-circuitpython-shell-out).
 
 ## Ports
 
@@ -55,7 +111,8 @@ not have is refused.
 
 The two ports are independent. One device can carry two different sensors, and
 each port has its own setting. These pairs have run together on a CM5 bench
-device: IMX335 with IMX219, IMX335 with IMX708, and IMX708 with IMX219. How many cameras a device can power is a separate
+device: IMX335 with IMX219, IMX335 with IMX708, IMX708 with IMX219, and IMX290
+with IMX708. How many cameras a device can power is a separate
 question, answered by its [power supply](/device-sdk/hardware#power-budget).
 
 <Callout title="A ribbon cable the wrong way round looks like an empty port">
@@ -456,11 +513,17 @@ the generic one on a CM5.
   at 29.99 frames per second, so a 30 fps 1080p stream does not start. Use
   `1080p15-2mbps` or a 720p preset. The console warns when that preset is
   chosen, and the port's sentence says so too.
-- **It needs two OS packages that a stock device does not have:**
-  `libcamera0.5` and `libcamera-ipa` in Arducam's build, version
-  `0.5.2+rpt20250909-1`. They replace the stock packages of the same names, and
-  other cameras on the device keep working with them. Without them the camera
-  silently does not appear, and the port reads
+- **It needs two OS packages that a stock device does not have,** in Arducam's
+  build. The pair depends on the [OS release](#os-releases):
+
+  | OS release | Packages                        | Version               |
+  | ---------- | ------------------------------- | --------------------- |
+  | Bookworm   | `libcamera0.5`, `libcamera-ipa` | `0.5.2+rpt20250909-1` |
+  | Trixie     | `libcamera0.8`, `libcamera-ipa` | `0.8.0+rpt20261106-2` |
+
+  The device picks the pair for its release by itself. They replace the stock
+  packages of the same names, and other cameras on the device keep working with
+  them. Without them the camera silently does not appear, and the port reads
   [`requirements-missing`](/device-sdk/camera-status#verdicts) with a sentence
   that names both packages, the versions installed, and what to run.
 
@@ -504,6 +567,20 @@ arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), n
   libcamera-ipa  required 0.5.2+rpt20250909-1  installed 0.5.2+rpt20250903-1~bpo12+1  MISSING
 to install what is missing: sudo xorgate-rs camera requirements --install (or sudo xorgate-rs update)
 ```
+
+That is a Bookworm device, like the other examples in this section. On Trixie
+the same listing names the Trixie pair:
+
+```
+arducam-libcamera (Arducam's libcamera build (adds the IMX335 camera helper)), needed by imx335 (cam1):
+  libcamera0.8   required 0.8.0+rpt20261106-2  installed 0.8.0+rpt20261104-1  MISSING
+  libcamera-ipa  required 0.8.0+rpt20261106-2  installed 0.8.0+rpt20261104-1  MISSING
+to install what is missing: sudo xorgate-rs camera requirements --install (or sudo xorgate-rs update)
+```
+
+The install, the hold, the record and the way back work the same on both
+releases; on Trixie every line names `libcamera0.8` where the examples here say
+`libcamera0.5`, with the versions of that device.
 
 Four things to know:
 
