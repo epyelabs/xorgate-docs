@@ -30,6 +30,11 @@ A port with nothing plugged in is declared as `none`.
 All four need a device image based on Debian Bookworm. The Sony IMX662 is not
 supported yet: it needs a newer OS release.
 
+Besides the IMX290, which was the only sensor before this feature, the IMX219,
+IMX708 and IMX335 have each run on bench hardware on a CM4 and on both ports of
+a CM5. For the IMX219 on a CM4 that holds for the official module only: see the
+[IMX219 notes](#imx219).
+
 No API route serves this list. A request that names any other sensor is refused
 with a message that lists the known ones.
 
@@ -49,7 +54,8 @@ a single-camera model has `cam0` only, and a setting for a port the model does
 not have is refused.
 
 The two ports are independent. One device can carry two different sensors, and
-each port has its own setting. How many cameras a device can power is a separate
+each port has its own setting. These pairs have run together on a CM5 bench
+device: IMX335 with IMX219, IMX335 with IMX708, and IMX708 with IMX219. How many cameras a device can power is a separate
 question, answered by its [power supply](/device-sdk/hardware#power-budget).
 
 <Callout title="A ribbon cable the wrong way round looks like an empty port">
@@ -411,7 +417,23 @@ the view of a sensor is not something a setting can do today.
   cast, because the stock tuning is made for that lens. One such board on the
   bench showed a green centre and magenta edges.
 
-{/* TODO(cm4-imx219): a known-limitations note may go here; a decision is pending. */}
+<Callout type="warn" title="On a CM4, use an official Camera Module 2">
+  On the bench, an official Raspberry Pi Camera Module 2 on a CM4 started on
+  every boot: one cold boot and twelve more. One generic IMX219 module on the
+  same port did not start on any of 20 boots, although the same module started
+  on every boot on a CM5, on either port. One module of each kind and one CM4
+  were tested, so read this as what was observed, not as a rule for every
+  generic board.
+
+You recognise it by a port that reads `not-detected` ("csi0 is set to imx219,
+but no imx219 answered on this port (the kernel driver did not bind). Check the
+ribbon cable and the selected sensor.") although the cable and the setting are
+right, and by the line `imx219 0-0010: Error reading reg 0x0000: -121` in the
+kernel log. The kernel's driver asks the sensor once at boot, gets no answer and
+gives up. The agent has no workaround: use an official module on a CM4, or put
+the generic one on a CM5.
+
+</Callout>
 
 ### IMX708 (Camera Module 3)
 
